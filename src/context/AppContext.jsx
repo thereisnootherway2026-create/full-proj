@@ -26,10 +26,29 @@ export function AppProvider({ children }) {
 
   const [patients, setPatients] = useState(MOCK_PATIENTS)
   const [rdvList, setRdvList] = useState(MOCK_RDV)
-  const [visits, setVisits] = useState(MOCK_VISITS)
+  const [visits, setVisits] = useState(() => {
+    try {
+      const cached = localStorage.getItem('macromedica_visits_cache')
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      }
+    } catch (e) {
+      console.warn('Visits cache load error:', e)
+    }
+    return MOCK_VISITS
+  })
   const [doctors, setDoctors] = useState(MOCK_DOCTORS)
   const [consultations, setConsultations] = useState(MOCK_CONSULTATIONS)
   const cabinetId = profile?.cabinet_id ?? profile?.clinic_id
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('macromedica_visits_cache', JSON.stringify(visits))
+    } catch (e) {
+      console.warn('Visits cache save error:', e)
+    }
+  }, [visits])
 
   // Derived operational waiting list from visits
   const waitingList = useMemo(() => {
@@ -82,13 +101,11 @@ export function AppProvider({ children }) {
       const { data, error } = await supabase.from('patients').select('*').eq('cabinet_id', cId).order('created_at', { ascending: false })
       if (error) {
         console.error('Patients load error:', error)
-        setPatients(MOCK_PATIENTS)
         return
       }
-      setPatients(data && data.length > 0 ? data : MOCK_PATIENTS)
+      if (data && data.length > 0) setPatients(data)
     } catch (err) {
       console.error('Patients load error:', err)
-      setPatients(MOCK_PATIENTS)
     }
   }, [])
 
@@ -104,13 +121,11 @@ export function AppProvider({ children }) {
         .order('date_rdv', { ascending: true })
       if (error) {
         console.error('Rdv load error:', error)
-        setRdvList(MOCK_RDV)
         return
       }
-      setRdvList(data && data.length > 0 ? data : MOCK_RDV)
+      if (data && data.length > 0) setRdvList(data)
     } catch (err) {
       console.error('Rdv load error:', err)
-      setRdvList(MOCK_RDV)
     }
   }, [])
 
@@ -119,23 +134,20 @@ export function AppProvider({ children }) {
       const { data, error } = await supabase.from('consultations').select(`*, patients(nom, prenom)`).eq('cabinet_id', cId).order('date_consult', { ascending: false })
       if (error) {
         console.error('Consultations load error:', error)
-        setConsultations(MOCK_CONSULTATIONS)
         return
       }
-      setConsultations(data && data.length > 0 ? data : MOCK_CONSULTATIONS)
+      if (data && data.length > 0) setConsultations(data)
     } catch (err) {
       console.error('Consultations load error:', err)
-      setConsultations(MOCK_CONSULTATIONS)
     }
   }, [])
 
   const loadVisits = useCallback(async (cId) => {
     try {
       const data = await getTodayVisits(cId)
-      setVisits(data && data.length > 0 ? data : MOCK_VISITS)
+      if (data && data.length > 0) setVisits(data)
     } catch (err) {
       console.error('Visits load error:', err?.message || err?.code || err)
-      setVisits(MOCK_VISITS)
     }
   }, [])
 
@@ -356,12 +368,56 @@ export function AppProvider({ children }) {
   const role = toLegacyRole(canonicalRole)
 
   // Optimistically update a single visit's status
-  const updateVisitStatus = useCallback((visitId, newStatus) => {
-    setVisits(current => current.map(visit => 
-      visit.id === visitId 
-        ? { ...visit, status: newStatus }
-        : visit
-    ))
+  const updateVisitStatus = useCallback((visitId, newStatus, extra = {}) => {
+    const rawId = String(visitId || '').replace(/^pay_/, '').replace(/^consult_/, '')
+    setVisits(current => {
+      let found = false
+      const updated = current.map(visit => {
+        const vId = String(visit.id || '')
+        const isMatch = vId === visitId || vId === rawId || `pay_${vId}` === visitId || visit.visit_id === rawId || (visit.rdv && (visit.rdv.id === visitId || visit.rdv.id === rawId))
+        if (isMatch) {
+          found = true
+          return {
+            ...visit,
+            status: newStatus,
+            billing_type: extra.method || visit.billing_type || 'cash',
+            billing_amount: extra.amount !== undefined ? Number(extra.amount) : (visit.billing_amount || 300),
+            updated_at: new Date().toISOString(),
+            ...extra
+          }
+        }
+        return visit
+      })
+
+      if (!found && visitId) {
+        const newEntry = {
+          id: visitId,
+          patient_id: extra.patient_id || 'pat_01',
+          status: newStatus,
+          billing_amount: extra.amount !== undefined ? Number(extra.amount) : 300,
+          billing_type: extra.method || 'cash',
+          motif: extra.motif || 'Consultation médicale',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          patients: extra.patient_name ? { prenom: extra.patient_name.split(' ')[0], nom: extra.patient_name.split(' ').slice(1).join(' ') } : { prenom: 'Karima', nom: 'Benali' },
+          ...extra
+        }
+        return [newEntry, ...updated]
+      }
+
+      return updated
+    })
+  }, [])
+
+  // Update patient debt (solde_impaye)
+  const updatePatientDebt = useCallback((patientId, debtAmount) => {
+    if (!patientId) return
+    setPatients(current => current.map(p => {
+      if (p.id === patientId || p.id === String(patientId)) {
+        return { ...p, solde_impaye: Math.max(0, Number(debtAmount || 0)) }
+      }
+      return p
+    }))
   }, [])
 
   const value = useMemo(() => ({
@@ -407,6 +463,7 @@ export function AppProvider({ children }) {
     getPatientName: () => 'Patient...',
 
     updateVisitStatus,
+    updatePatientDebt,
 
     refreshPatients: () => profile?.cabinet_id && loadPatients(profile.cabinet_id),
     refreshRdv: () => profile?.cabinet_id && loadRdv(profile.cabinet_id),
@@ -422,7 +479,7 @@ export function AppProvider({ children }) {
         loadDoctors(profile.cabinet_id)
       }
     },
-  }), [user, profile, role, canonicalRole, isAuthenticated, isInitializing, toasts, globalModal, confirmDialog, notificationPrefs, patients, rdvList, consultations, visits, doctors, waitingList, updateVisitStatus])
+  }), [user, profile, role, canonicalRole, isAuthenticated, isInitializing, toasts, globalModal, confirmDialog, notificationPrefs, patients, rdvList, consultations, visits, doctors, waitingList, updateVisitStatus, updatePatientDebt])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }

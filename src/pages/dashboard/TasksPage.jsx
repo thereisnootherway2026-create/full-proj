@@ -1,207 +1,127 @@
-import { useState, useEffect } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import React, { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { AlertCircle, FileText, Pill, MessageSquare, Plus } from 'lucide-react'
+import { useAppContext } from '../../context/AppContext'
+import { AlertCircle, FileText, Pill, MessageSquare } from 'lucide-react'
 import AddTaskModal from '../../components/forms/AddTaskModal'
-import {
-  getCategoryColor,
-  getCategoryIcon,
-  taskToLegacy,
-  loadTasks,
-  saveTasks,
-} from '../../lib/taskHelpers'
+import { taskToLegacy, loadTasks, saveTasks } from '../../lib/taskHelpers'
+import TachesHub from '../../components/taches/TachesHub'
 
-// Reusable Button component with hover/pressed effects
-function ButtonWithEffect({ 
-  children, 
-  onClick, 
-  isActive = false, 
-  activeBg = '#1e293b', 
-  activeText = '#ffffff', 
-  activeBorder = '#0f172a',
-  defaultBg = '#ffffff', 
-  defaultText = '#475569', 
-  defaultBorder = '#e2e8f0',
-  hoverBg = '#f8fafc', 
-  hoverBorder = '#cbd5e1',
-  shadowColor = 'rgba(148,163,184,0.15)',
-  ...rest 
-}) {
-  const [hovered, setHovered] = useState(false)
-  const [pressed, setPressed] = useState(false)
-
-  return (
-    <button
-      onClick={onClick}
-      className="px-4 py-2 rounded-[0.625rem] font-semibold text-sm"
-      style={{
-        backgroundColor: isActive ? activeBg : (hovered ? hoverBg : defaultBg),
-        color: isActive ? activeText : defaultText,
-        border: '2px solid ' + (isActive ? activeBorder : (hovered ? hoverBorder : defaultBorder)),
-        padding: '0.625rem 1rem',
-        minHeight: '44px',
-        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-        whiteSpace: 'nowrap',
-        fontSize: '14px',
-        width: 'auto',
-        fontWeight: 'bold',
-        transform: pressed ? 'translateY(-1px) scale(0.98)' : hovered ? 'translateY(-2px)' : 'translateY(0)',
-        boxShadow: hovered ? `0 6px 16px -4px ${shadowColor}` : 'none',
-        ...rest.style
-      }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setPressed(false); }}
-      onMouseDown={() => setPressed(true)}
-      onMouseUp={() => setPressed(false)}
-      {...rest}
-    >
-      {children}
-    </button>
-  )
-}
-
-function TasksPage() {
+export default function TasksPage() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [showAddModal, setShowAddModal] = useState(false)
+  const { role, canonicalRole, devRoleOverride, notify } = useAppContext()
 
-  // Handle new Task schema submission: convert to legacy display shape
-  const handleTaskSubmit = (task) => {
-    const legacyTask = taskToLegacy(task)
-    setTasks((prev) => [{
-      ...legacyTask,
-      icon: getCategoryIcon(legacyTask.category),
-    }, ...prev])
-    // Persist
-    const existing = loadTasks()
-    saveTasks([task, ...existing])
-    setShowAddModal(false)
-  }
-  
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [isSpinning, setIsSpinning] = useState(false)
+
+  // Role view toggle (doctor vs secretary)
+  const isUserDoctor = (canonicalRole || role) === 'doctor' || (canonicalRole || role) === 'docteur' || devRoleOverride === 'doctor'
+  const [roleView, setRoleView] = useState(isUserDoctor ? 'doctor' : 'secretary')
+
+  // Initial mock tasks matching rich 5-pane requirements
   const [tasks, setTasks] = useState([
     {
-      id: 1,
+      id: 'task_01',
       category: 'urgences',
       patientName: 'Meryem Tazi',
       description: 'Tension artérielle 185/110',
-      metadata: 'En consultation',
+      metadata: 'Salle d\'attente',
       actionText: 'Traiter',
-      icon: AlertCircle,
-      status: 'En consultation'
+      status: 'En consultation',
+      labData: [
+        { param: 'Tension Artérielle', value: '185/110 mmHg', norm: '120/80 mmHg', status: 'high', label: 'CRITIQUE' },
+        { param: 'Fréquence Cardiaque', value: '102 bpm', norm: '60-90 bpm', status: 'high', label: 'ÉLEVÉ' },
+      ]
     },
     {
-      id: 2,
+      id: 'task_02',
       category: 'resultats',
       patientName: 'Sarah Benali',
-      description: 'ECG reçu',
-      metadata: "Aujourd'hui",
+      description: 'Bilan sanguin complet & HbA1c',
+      metadata: 'Aujourd\'hui 09:30',
       actionText: 'Consulter',
-      icon: FileText
+      status: 'Nouveau'
     },
     {
-      id: 3,
+      id: 'task_03',
       category: 'resultats',
       patientName: 'Marc Dupont',
-      description: 'Bilan sanguin en attente',
-      metadata: "Aujourd'hui",
+      description: 'ECG & Bilan Lipidique en attente',
+      metadata: 'Aujourd\'hui 08:45',
       actionText: 'Consulter',
-      icon: FileText
+      status: 'À relire'
     },
     {
-      id: 4,
+      id: 'task_04',
       category: 'prescriptions',
       patientName: 'Ahmed Benali',
-      description: 'Ordonnance antihypertenseurs',
+      description: 'Ordonnance antihypertenseurs (Amlor 5mg)',
       metadata: 'À signer',
       actionText: 'Signer',
-      icon: Pill
+      status: 'À signer'
     },
     {
-      id: 5,
+      id: 'task_05',
       category: 'prescriptions',
       patientName: 'Fatima El Amrani',
-      description: 'Renouvellement',
+      description: 'Renouvellement Diabète & HTA',
       metadata: 'À signer',
       actionText: 'Signer',
-      icon: Pill
+      status: 'À signer'
     },
     {
-      id: 6,
+      id: 'task_06',
       category: 'messages',
       patientName: 'Soufiane Kadiri',
-      description: 'Message reçu',
+      description: 'Question sur effets secondaires du traitement',
       metadata: 'Il y a 2h',
       actionText: 'Répondre',
-      icon: MessageSquare
+      status: 'Nouveau'
     },
     {
-      id: 7,
+      id: 'task_07',
       category: 'messages',
       patientName: 'Meryem Tazi',
-      description: 'Question sur le traitement',
+      description: 'Demande d\'adaptation d\'ordonnance',
       metadata: 'Il y a 4h',
       actionText: 'Répondre',
-      icon: MessageSquare
+      status: 'En attente'
+    },
+    {
+      id: 'task_08',
+      category: 'facturation',
+      patientName: 'Omar Bennani',
+      description: 'Anomalie de facturation Mutuelle CNSS',
+      metadata: 'Secrétariat',
+      actionText: 'Vérifier',
+      status: 'Anomalie'
+    },
+    {
+      id: 'task_09',
+      category: 'confirmations',
+      patientName: 'Karim Amrani',
+      description: 'Demande de confirmation RDV Demain',
+      metadata: 'Secrétariat',
+      actionText: 'Confirmer',
+      status: 'À valider'
     }
   ])
 
-  const getCategoryColor = (category) => {
-    switch(category) {
-      case 'urgences': return { 
-        bg: '#fef2f2', 
-        text: '#dc2626', 
-        badge: '#ef4444',
-        hoverBadge: '#dc2626',
-        shadow: 'rgba(239,68,68,0.15)'
-      }
-      case 'resultats': return { 
-        bg: '#eff6ff', 
-        text: '#2563eb', 
-        badge: '#3b82f6',
-        hoverBadge: '#2563eb',
-        shadow: 'rgba(59,130,246,0.15)'
-      }
-      case 'prescriptions': return { 
-        bg: '#fffbeb', 
-        text: '#d97706', 
-        badge: '#f59e0b',
-        hoverBadge: '#d97706',
-        shadow: 'rgba(245,158,11,0.15)'
-      }
-      case 'messages': return { 
-        bg: '#f1f5f9', 
-        text: '#64748b', 
-        badge: '#94a3b8',
-        hoverBadge: '#64748b',
-        shadow: 'rgba(148,163,184,0.15)'
-      }
-      default: return { 
-        bg: '#f1f5f9', 
-        text: '#64748b', 
-        badge: '#94a3b8',
-        hoverBadge: '#64748b',
-        shadow: 'rgba(148,163,184,0.15)'
-      }
-    }
-  }
-
-  const categories = [
-    { key: 'urgences', label: 'Urgences', icon: AlertCircle, count: tasks.filter(t => t.category === 'urgences').length },
-    { key: 'resultats', label: 'Résultats à consulter', icon: FileText, count: tasks.filter(t => t.category === 'resultats').length },
-    { key: 'prescriptions', label: 'Ordonnances à signer', icon: Pill, count: tasks.filter(t => t.category === 'prescriptions').length },
-    { key: 'messages', label: 'Messages patients', icon: MessageSquare, count: tasks.filter(t => t.category === 'messages').length },
-  ]
-
-  // Get initial category from search params
+  // Category filter state
   const initialCategory = searchParams.get('category') || 'all'
   const [activeCategory, setActiveCategory] = useState(initialCategory)
-  
-  // Update active category when search params change
+
+  // Selection & Mode Rafale State
+  const [selectedTaskId, setSelectedTaskId] = useState('task_01')
+  const [isBatchMode, setIsBatchMode] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
+
+  // Update active category when URL params change
   useEffect(() => {
     const category = searchParams.get('category') || 'all'
     setActiveCategory(category)
   }, [searchParams])
-  
-  // Update search params when active category changes
+
   const handleCategoryChange = (category) => {
     setActiveCategory(category)
     if (category === 'all') {
@@ -211,132 +131,170 @@ function TasksPage() {
     }
   }
 
-  const filteredTasks = activeCategory === 'all' ? tasks : tasks.filter(t => t.category === activeCategory)
+  const handleManualRefresh = () => {
+    setIsSpinning(true)
+    setTimeout(() => setIsSpinning(false), 600)
+  }
+
+  // Filter tasks based on role view & search query
+  const doctorTaskCategories = ['urgences', 'resultats', 'prescriptions', 'messages']
+  const secretaryTaskCategories = ['facturation', 'confirmations', 'cnss', 'messages']
+
+  const isDoctorView = roleView === 'doctor'
+
+  const visibleTasks = tasks.filter(t => {
+    const matchesRole = isDoctorView
+      ? doctorTaskCategories.includes(t.category)
+      : secretaryTaskCategories.includes(t.category)
+
+    if (!matchesRole) return false
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      return (
+        t.patientName?.toLowerCase().includes(q) ||
+        t.description?.toLowerCase().includes(q) ||
+        t.category?.toLowerCase().includes(q)
+      )
+    }
+
+    return true
+  })
+
+  const filteredTasks = activeCategory === 'all'
+    ? visibleTasks
+    : visibleTasks.filter(t => t.category === activeCategory)
+
+  const emergencyTasks = visibleTasks.filter(t => t.category === 'urgences')
+
+  const selectedTask = filteredTasks.find(t => t.id === selectedTaskId) || filteredTasks[0] || null
+
+  useEffect(() => {
+    if (!selectedTask && filteredTasks.length > 0) {
+      setSelectedTaskId(filteredTasks[0].id)
+    }
+  }, [filteredTasks, selectedTask])
+
+  const handleResolveTask = (taskId, successMessage = 'Tâche traitée avec succès') => {
+    setIsProcessing(true)
+    setTimeout(() => {
+      setTasks(prev => {
+        const remaining = prev.filter(t => t.id !== taskId)
+        
+        const currentIdx = filteredTasks.findIndex(t => t.id === taskId)
+        const nextTask = filteredTasks[currentIdx + 1] || filteredTasks[currentIdx - 1] || remaining[0]
+
+        if (nextTask) {
+          setSelectedTaskId(nextTask.id)
+        } else {
+          setSelectedTaskId(null)
+        }
+
+        return remaining
+      })
+
+      notify?.({
+        title: 'Tâche terminée',
+        description: successMessage,
+        variant: 'success'
+      })
+
+      setIsProcessing(false)
+    }, 200)
+  }
+
+  const handleApproveAndSend = (task, message) => {
+    handleResolveTask(task.id, `Résultat approuvé & message WhatsApp/SMS transmis à ${task.patientName}.`)
+  }
+
+  const handleArchive = (task) => {
+    handleResolveTask(task.id, `Résultat archivé au dossier médical de ${task.patientName}.`)
+  }
+
+  const handleSignNextPrescription = (task) => {
+    const remainingPrescriptions = tasks.filter(t => t.category === 'prescriptions' && t.id !== task.id)
+    if (isBatchMode && remainingPrescriptions.length > 0) {
+      setSelectedTaskId(remainingPrescriptions[0].id)
+      setTasks(prev => prev.filter(t => t.id !== task.id))
+      notify?.({
+        title: 'Ordonnance signée ⚡',
+        description: `Ordonnance de ${task.patientName} signée. Passage à la suivante (${remainingPrescriptions.length} restante(s)).`,
+        variant: 'success'
+      })
+    } else {
+      handleResolveTask(task.id, `Ordonnance de ${task.patientName} signée électroniquement.`)
+      if (isBatchMode) setIsBatchMode(false)
+    }
+  }
+
+  const handleSendReply = (task, reply) => {
+    handleResolveTask(task.id, `Réponse transmise avec succès à ${task.patientName}.`)
+  }
+
+  const handleAdminResolve = (task) => {
+    handleResolveTask(task.id, `Dossier administratif de ${task.patientName} validé et transmis.`)
+  }
+
+  const handleTaskSubmit = (newTask) => {
+    const legacyTask = taskToLegacy(newTask)
+    const formattedTask = {
+      ...legacyTask,
+      id: `task_${Date.now()}`
+    }
+    setTasks(prev => [formattedTask, ...prev])
+    setSelectedTaskId(formattedTask.id)
+
+    const existing = loadTasks()
+    saveTasks([newTask, ...existing])
+    setShowAddModal(false)
+
+    notify?.({
+      title: 'Nouvelle tâche créée',
+      description: `Tâche créée pour ${formattedTask.patientName}.`,
+      variant: 'success'
+    })
+  }
+
+  const remainingPrescriptionCount = tasks.filter(t => t.category === 'prescriptions').length
 
   return (
-    <div className="w-full">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Tâches</h1>
-          <p className="text-sm font-medium text-slate-600 mt-1">Gérez toutes vos tâches du jour</p>
-        </div>
-        <ButtonWithEffect
-          onClick={() => setShowAddModal(true)}
-          defaultBg="#2563eb"
-          defaultText="#ffffff"
-          defaultBorder="#60a5fa"
-          hoverBg="#1e40af"
-          hoverBorder="#1e3a8a"
-          shadowColor="rgba(37,99,235,0.15)"
-        >
-          <div className="flex items-center gap-2">
-            <Plus size={18} />
-            Nouvelle tâche
-          </div>
-        </ButtonWithEffect>
-      </div>
+    <>
+      <TachesHub
+        tasks={tasks}
+        visibleTasks={visibleTasks}
+        filteredTasks={filteredTasks}
+        emergencyTasks={emergencyTasks}
+        selectedTask={selectedTask}
+        selectedTaskId={selectedTaskId}
+        setSelectedTaskId={setSelectedTaskId}
+        activeCategory={activeCategory}
+        handleCategoryChange={handleCategoryChange}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        roleView={roleView}
+        setRoleView={setRoleView}
+        isBatchMode={isBatchMode}
+        setIsBatchMode={setIsBatchMode}
+        isProcessing={isProcessing}
+        handleResolveTask={handleResolveTask}
+        handleApproveAndSend={handleApproveAndSend}
+        handleArchive={handleArchive}
+        handleSignNextPrescription={handleSignNextPrescription}
+        handleSendReply={handleSendReply}
+        handleAdminResolve={handleAdminResolve}
+        remainingPrescriptionCount={remainingPrescriptionCount}
+        handleManualRefresh={handleManualRefresh}
+        isSpinning={isSpinning}
+        setShowAddModal={setShowAddModal}
+        notify={notify}
+      />
 
-      {/* Category Filters */}
-      <div className="flex gap-3 mb-6">
-        <ButtonWithEffect
-          onClick={() => handleCategoryChange('all')}
-          isActive={activeCategory === 'all'}
-          activeBg="#1e293b"
-          activeText="#ffffff"
-          activeBorder="#0f172a"
-          shadowColor="rgba(30,41,59,0.15)"
-        >
-          Toutes
-        </ButtonWithEffect>
-
-        {categories.map(cat => {
-          const Icon = cat.icon
-          const colors = getCategoryColor(cat.key)
-          return (
-            <ButtonWithEffect
-              key={cat.key}
-              onClick={() => handleCategoryChange(cat.key)}
-              isActive={activeCategory === cat.key}
-              activeBg="#1e293b"
-              activeText="#ffffff"
-              activeBorder="#0f172a"
-              shadowColor="rgba(30,41,59,0.15)"
-            >
-              <div className="flex items-center gap-2">
-                <Icon size={16} />
-                {cat.label}
-                <span 
-                  className="ml-1 text-xs px-2 py-0.5 rounded-full" 
-                  style={{ backgroundColor: colors.bg, color: colors.text }}
-                >
-                  {cat.count}
-                </span>
-              </div>
-            </ButtonWithEffect>
-          )
-        })}
-      </div>
-
-      {/* Task List */}
-      <div className="rounded-[21px] border border-slate-200 bg-white shadow-[0_6px_18px_rgba(15,23,42,0.04)] overflow-hidden">
-        {filteredTasks.map(task => {
-          const colors = getCategoryColor(task.category)
-          const Icon = task.icon
-          return (
-            <div
-              key={task.id}
-              className="flex items-center gap-3 px-5 py-4 border-b border-slate-200 last:border-b-0 hover:bg-slate-50 transition-colors cursor-pointer"
-            >
-              <div 
-                className="w-10 h-10 flex items-center justify-center rounded-[10px] flex-shrink-0"
-                style={{ backgroundColor: colors.bg }}
-              >
-                <Icon size={20} style={{ color: colors.text }} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <p className="text-sm font-semibold text-slate-900">{task.patientName}</p>
-                  <span className="text-xs text-slate-400">{task.metadata}</span>
-                  {task.status && (
-                    <span 
-                      className="text-xs font-semibold px-2 py-0.5 rounded-full" 
-                      style={{ backgroundColor: colors.bg, color: colors.text }}
-                    >
-                      {task.status}
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-slate-600 mt-1">{task.description}</p>
-              </div>
-              <ButtonWithEffect
-                style={{ width: '120px' }}
-                defaultBg={colors.badge}
-                defaultText="#ffffff"
-                defaultBorder={colors.badge}
-                hoverBg={colors.hoverBadge}
-                hoverBorder={colors.hoverBadge}
-                shadowColor={colors.shadow}
-              >
-                {task.actionText}
-              </ButtonWithEffect>
-            </div>
-          )
-        })}
-        {filteredTasks.length === 0 && (
-          <div className="px-5 py-12 text-center">
-            <p className="text-slate-500 font-medium">Aucune tâche dans cette catégorie</p>
-          </div>
-        )}
-      </div>
-      
-      {/* Add Task Modal — redesigned */}
+      {/* Add Task Modal */}
       <AddTaskModal
         open={showAddModal}
         onClose={() => setShowAddModal(false)}
         onSubmit={handleTaskSubmit}
       />
-    </div>
+    </>
   )
 }
-
-export default TasksPage

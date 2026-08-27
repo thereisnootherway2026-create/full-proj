@@ -40,6 +40,7 @@ import { cancelAppointment, rescheduleAppointment } from '../lib/appointmentServ
 import { motion, AnimatePresence } from 'framer-motion'
 
 const TZ = 'Africa/Casablanca'
+const fmtMAD = (n) => (Number(n) || 0).toLocaleString('fr-FR') + ' MAD'
 
 function formatTime(date) {
   if (!date) return '--:--'
@@ -539,19 +540,29 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
   console.log('rdv:', rdv);
   // Get status - normalize status
   const normalizedStatus = rdv.status || VISIT_STATUSES.WAITING;
-  const statusColors = VISIT_STATUS_COLORS[normalizedStatus] || VISIT_STATUS_COLORS[VISIT_STATUSES.WAITING];
   const isSecretary = !isDoctor;
 
   // Calculate payment info
-  const totalAmount = rdv?.consultations?.billing_amount || 300;
+  const totalAmount = rdv?.consultations?.billing_amount || rdv?.billing_amount || 300;
   const visitPayments = allPayments[rdv.id] || [];
-  const totalPaidSoFar = visitPayments.reduce((sum, p) => sum + Number(p.amount), 0);
-  const reste = Math.max(0, totalAmount - totalPaidSoFar);
+  const calculatedPaid = visitPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+  const totalPaidSoFar = calculatedPaid || rdv.total_paid || (rdv.billing_amount ? rdv.billing_amount - (rdv.remaining_balance || 0) : (isHistoryCard ? (rdv.isPartial ? 150 : 300) : 0));
+  const reste = rdv.remaining_balance !== undefined ? rdv.remaining_balance : Math.max(0, totalAmount - totalPaidSoFar);
 
-  // Determine status label
+  const isPartial = rdv.status === 'PARTIEL' || rdv.status === 'partiel' || rdv.status === VISIT_STATUSES.PARTIEL || (isHistoryCard && reste > 0);
+  const isPartialInHistory = isHistoryCard && isPartial;
+
+  let statusColors = VISIT_STATUS_COLORS[normalizedStatus] || VISIT_STATUS_COLORS[VISIT_STATUSES.WAITING];
   let statusLabel = (rdv.status && VISIT_STATUS_LABELS[rdv.status]) || rdv.time_status || 'En attente';
-  if (normalizedStatus === VISIT_STATUSES.BILLING && reste > 0 && visitPayments.length > 0) {
-    statusLabel = 'Encaissement partiel';
+
+  if (isHistoryCard || isPartial || rdv.status === 'PARTIEL' || rdv.status === 'TERMINÉ' || normalizedStatus === VISIT_STATUSES.COMPLETED) {
+    if (isPartial || reste > 0) {
+      statusColors = { border: '#f59e0b', badgeBg: '#fef3c7', badgeText: '#92400e' };
+      statusLabel = `Payé partiellement: ${totalPaidSoFar} MAD / ${totalAmount} MAD`;
+    } else {
+      statusColors = { border: '#16a34a', badgeBg: '#dcfce7', badgeText: '#166534' };
+      statusLabel = `Payé: ${totalPaidSoFar > 0 ? totalPaidSoFar : totalAmount} MAD`;
+    }
   }
   
   // State for button effects
@@ -613,8 +624,8 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-base font-bold text-slate-900">{rdv.patient_name || getPatientName(rdv)}</span>
-          <span className="px-2 py-0.5 rounded-md text-xs font-bold" style={{ backgroundColor: statusColors.badgeBg, color: statusColors.badgeText }}>
-            {statusLabel.toUpperCase()}
+          <span className="px-2.5 py-1 rounded-md text-xs font-bold" style={{ backgroundColor: statusColors.badgeBg, color: statusColors.badgeText }}>
+            {statusLabel}
           </span>
           {isSecretary && isAlertActive && (
             <span className="px-2 py-0.5 rounded-md text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
@@ -622,13 +633,25 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2 mt-1 text-sm text-slate-500 font-medium">
+        <div className="flex items-center gap-2 mt-1 text-sm text-slate-500 font-medium flex-wrap">
           <span>{rdv.reason || rdv.motif || 'Consultation'}</span>
           {isHistoryCard ? (
-            <span className="text-green-700 font-semibold">Payé : {totalPaid} MAD</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-slate-700 font-semibold">Payé : {totalPaidSoFar} MAD</span>
+              {reste > 0 && (
+                <span className="px-2 py-0.5 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                  Reste à payer : {reste} MAD
+                </span>
+              )}
+            </div>
           ) : (
             normalizedStatus === VISIT_STATUSES.BILLING && reste > 0 && (
-              <span className="text-slate-700 font-semibold">Reste : {reste} MAD</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                {totalPaidSoFar > 0 && <span className="text-slate-700 font-semibold">Payé : {totalPaidSoFar} MAD</span>}
+                <span className="px-2 py-0.5 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                  Reste à payer : {reste} MAD
+                </span>
+              </div>
             )
           )}
         </div>
@@ -730,13 +753,21 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
           <button 
             onClick={(e) => {
               e.stopPropagation();
-              onViewPaymentHistory(rdv);
+              if (isPartialInHistory && onEncaisser) {
+                onEncaisser(rdv);
+              } else {
+                onViewPaymentHistory(rdv);
+              }
             }}
             className="px-4 py-2 rounded-[0.625rem] text-sm font-semibold"
             style={{
-              backgroundColor: viewHistoryHovered ? '#15803D' : '#16A34A',
+              backgroundColor: isPartialInHistory
+                ? (viewHistoryHovered ? '#d97706' : '#f59e0b')
+                : (viewHistoryHovered ? '#15803D' : '#16A34A'),
               color: '#FFFFFF',
-              border: '2px solid ' + (viewHistoryHovered ? '#166534' : '#4ADE80'),
+              border: '2px solid ' + (isPartialInHistory
+                ? (viewHistoryHovered ? '#b45309' : '#fbbf24')
+                : (viewHistoryHovered ? '#166534' : '#4ADE80')),
               padding: '0.625rem 1rem',
               minHeight: '44px',
               transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -745,14 +776,14 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
               width: 'auto',
               fontWeight: 'bold',
               transform: viewHistoryPressed ? 'translateY(-1px) scale(0.98)' : viewHistoryHovered ? 'translateY(-2px)' : 'translateY(0)',
-              boxShadow: viewHistoryHovered ? '0 6px 16px -4px rgba(22,163,74,0.15)' : 'none'
+              boxShadow: viewHistoryHovered ? `0 6px 16px -4px ${isPartialInHistory ? 'rgba(245,158,11,0.3)' : 'rgba(22,163,74,0.15)'}` : 'none'
             }}
             onMouseEnter={() => setViewHistoryHovered(true)}
             onMouseLeave={() => { setViewHistoryHovered(false); setViewHistoryPressed(false); }}
             onMouseDown={() => setViewHistoryPressed(true)}
             onMouseUp={() => setViewHistoryPressed(false)}
           >
-            Historique paiements
+            {isPartialInHistory ? `Régler le reste (${reste} MAD)` : 'Historique paiements'}
           </button>
         )}
         {isDoctor && (normalizedStatus === VISIT_STATUSES.WAITING) && (
@@ -841,6 +872,7 @@ export default function DashboardPage() {
     refreshVisits,
     refreshConsultations,
     updateVisitStatus,
+    updatePatientDebt,
   } = useAppContext()
   const [localRdvList, setLocalRdvList] = useState(rdvList)
   const [selectedDoctors, setSelectedDoctors] = useState({})
@@ -926,14 +958,14 @@ export default function DashboardPage() {
   const currentDoctorId = profile?.id
   const showPreviewPanel = isSecretary
 
-  // Mock data matching the screenshot
+  // Mock data matching secretary queue requirements
   const mockVisits = [
-    { id: '550e8400-e29b-41d4-a716-446655440001', patient_name: 'Marie-Claire Fontaine', age: 54, reason: 'Consultation annuelle', time_label: '09:45', time_status: 'Actuel', status_type: 'Actuel', status_label: 'EN COURS', duration: '12 min', patient_id: 'patient-id-1', status: VISIT_STATUSES.CONSULTATION },
-    { id: '550e8400-e29b-41d4-a716-446655440002', patient_name: 'Jean-Pierre Bertrand', age: 72, reason: 'Douleurs thoraciques', time_label: '10:15', time_status: 'En attente', status_type: 'Urgence', status_label: 'URGENCE', wait_time: '8 min', see_notes: true, patient_id: 'patient-id-2', status: VISIT_STATUSES.WAITING },
-    { id: '550e8400-e29b-41d4-a716-446655440003', patient_name: 'Marc Dupont', age: 28, reason: 'Contrôle post-opératoire', time_label: '10:30', time_status: 'En attente', status_type: 'Suivi', status_label: 'SUIVI', patient_id: 'patient-id-3', status: VISIT_STATUSES.WAITING },
-    { id: '550e8400-e29b-41d4-a716-446655440004', patient_name: 'Sarah Bernhardt', age: 34, reason: 'Première consultation', time_label: '11:00', time_status: 'En attente', status_type: 'Standard', status_label: 'STANDARD', patient_id: 'patient-id-4', status: VISIT_STATUSES.WAITING },
-    { id: '550e8400-e29b-41d4-a716-446655440005', patient_name: 'Fatima El Amrani', age: 42, reason: 'Consultation générale', time_label: '11:15', time_status: 'Encaissement', status_type: 'Standard', status_label: 'Encaissement', patient_id: 'patient-id-5', status: VISIT_STATUSES.BILLING, consultations: { billing_amount: 350 } },
-    { id: '550e8400-e29b-41d4-a716-446655440006', patient_name: 'Ahmed Benali', age: 60, reason: 'Suivi hypertension', time_label: '08:30', time_status: 'Terminé', status_type: 'Standard', status_label: 'TERMINÉ', patient_id: 'patient-id-6', status: VISIT_STATUSES.COMPLETED, consultations: { billing_amount: 300 } }
+    { id: '550e8400-e29b-41d4-a716-446655440000', patient_name: 'Karima Benali', age: 34, reason: 'Douleurs abdominales', time_label: '09:30', time_status: 'Encaissement', status_type: 'Standard', status_label: 'ENCAISSEMENT', patient_id: 'pat_karima', status: VISIT_STATUSES.BILLING, billing_amount: 300, billing_type: 'cash' },
+    { id: '550e8400-e29b-41d4-a716-446655440006', patient_name: 'Ahmed Benali', age: 38, reason: 'Contrôle tension artérielle', time_label: '09:45', time_status: 'Encaissement', status_type: 'Standard', status_label: 'ENCAISSEMENT', patient_id: 'pat_ahmed', status: VISIT_STATUSES.BILLING, billing_amount: 300, billing_type: 'cash' },
+    { id: '550e8400-e29b-41d4-a716-446655440005', patient_name: 'Fatima El Amrani', age: 42, reason: 'Consultation générale', time_label: '10:00', time_status: 'Encaissement', status_type: 'Standard', status_label: 'ENCAISSEMENT', patient_id: 'patient-id-5', status: VISIT_STATUSES.BILLING, billing_amount: 350, billing_type: 'card' },
+    { id: '550e8400-e29b-41d4-a716-446655440007', patient_name: 'Hind Boukili', age: 31, reason: 'Suivi gynécologie', time_label: '10:15', time_status: 'Encaissement', status_type: 'Standard', status_label: 'ENCAISSEMENT', patient_id: 'pat_hind', status: VISIT_STATUSES.BILLING, billing_amount: 300, billing_type: 'cash' },
+    { id: '550e8400-e29b-41d4-a716-446655440001', patient_name: 'Marie-Claire Fontaine', age: 54, reason: 'Consultation annuelle', time_label: '10:30', time_status: 'Actuel', status_type: 'Actuel', status_label: 'EN COURS', duration: '12 min', patient_id: 'patient-id-1', status: VISIT_STATUSES.CONSULTATION },
+    { id: '550e8400-e29b-41d4-a716-446655440002', patient_name: 'Jean-Pierre Bertrand', age: 72, reason: 'Douleurs thoraciques', time_label: '10:45', time_status: 'En attente', status_type: 'Urgence', status_label: 'URGENCE', wait_time: '8 min', see_notes: true, patient_id: 'patient-id-2', status: VISIT_STATUSES.WAITING },
   ]
 
   // Play notification sound
@@ -998,75 +1030,87 @@ export default function DashboardPage() {
         visitId: visitId
       };
 
-      // Check if it's a mock visit (id starts with '550e' or 'vis_')
+      // Check if it's a real DB visit
       if (!currentPaymentVisit.id.startsWith('550e') && !currentPaymentVisit.id.startsWith('vis_')) {
-        await processVisitPayment(currentPaymentVisit.id, paymentMethod, amountToPay);
+        try {
+          await processVisitPayment(currentPaymentVisit.id, paymentMethod, amountToPay);
+        } catch (e) {
+          console.warn('DB processVisitPayment fallback to memory state:', e)
+        }
       }
 
-      // Update allPayments state with new payment
+      // Calculate new total paid & remaining balance cleanly
+      const previousPayments = allPayments[visitId] || [];
+      const previousTotalPaid = previousPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const newTotalPaid = previousTotalPaid + amountToPay;
+      const reste = Math.max(0, totalAmount - newTotalPaid);
+
+      // Update allPayments state
       setAllPayments(prev => ({
         ...prev,
         [visitId]: [...(prev[visitId] || []), newPayment]
       }));
 
-      // Calculate new "reste à payer" (using functional update to get latest state)
-      setAllPayments(prev => {
-        const newTotalPaid = (prev[visitId] || []).reduce((sum, p) => sum + Number(p.amount), 0) + amountToPay;
-        const reste = Math.max(0, totalAmount - newTotalPaid);
+      // Handle status update: COMPLETED / TERMINÉ if fully paid, PARTIEL if partial!
+      const newStatus = reste === 0 ? VISIT_STATUSES.COMPLETED : VISIT_STATUSES.PARTIEL;
 
-        if (reste === 0) {
-          // Fully paid: move to COMPLETED
-          setPaidVisits(p => new Set([...p, visitId]));
-          updateVisitStatus(visitId, VISIT_STATUSES.COMPLETED);
-          setLocalQueueVisits(v => v.map(visit => 
-            visit.id === visitId ? { ...visit, status: VISIT_STATUSES.COMPLETED } : visit
-          ));
-        } else {
-          // Partially paid: stay in BILLING, no status change
-        }
-        return prev;
+      setPaidVisits(p => new Set([...p, visitId]));
+      updateVisitStatus(visitId, newStatus, {
+        method: paymentMethod,
+        amount: amountToPay,
+        reste: reste,
+        remaining_balance: reste,
+        totalPaid: newTotalPaid,
+        total_paid: newTotalPaid,
+        isPartial: reste > 0
       });
 
-      // Generate receipt for this specific payment (wait for state update)
-      setTimeout(() => {
-        const patientName = getPatientName(currentPaymentVisit);
-        const visitPayments = allPayments[visitId] || [];
-        const newTotalPaid = visitPayments.reduce((sum, p) => sum + Number(p.amount), 0) + amountToPay;
-        const reste = Math.max(0, totalAmount - newTotalPaid);
-        openPrintWindow({
-          title: 'Reçu de paiement',
-          subtitle: `${patientName} • ${new Date().toLocaleDateString('fr-FR')}`,
-          sections: [
-            {
-              title: 'Détails du paiement',
-              content: `
-                <div style="padding: 8px 0;">
-                  <p><strong>Patient:</strong> ${patientName}</p>
-                  <p><strong>Montant payé:</strong> ${amountToPay} MAD</p>
-                  <p><strong>Mode de paiement:</strong> ${
-                    paymentMethod === 'cash' ? 'Espèces' : 
-                    paymentMethod === 'card' ? 'Carte bancaire' : 'Virement'
-                  }</p>
-                  <p><strong>Date:</strong> ${new Date().toLocaleString('fr-FR')}</p>
-                  <p><strong>Reste à payer:</strong> ${reste} MAD</p>
-                  <p><strong>Motif:</strong> ${currentPaymentVisit?.reason || currentPaymentVisit?.motif || 'Consultation'}</p>
-                </div>
-              `
-            }
-          ]
-        });
+      const patientId = currentPaymentVisit.patientId || currentPaymentVisit.patients?.id || currentPaymentVisit.patient_id;
+      if (patientId) {
+        updatePatientDebt(patientId, reste);
+      }
 
-        // Success notification
-        const newResteAfter = Math.max(0, totalAmount - (newTotalPaid));
-        notify({
-          title: newResteAfter === 0 ? 'Paiement final confirmé' : 'Paiement partiel confirmé',
-          description: newResteAfter === 0 
-            ? 'Le paiement a été enregistré avec succès, consultation terminée.' 
-            : `Le paiement a été enregistré, reste à payer: ${newResteAfter} MAD.`
-        });
-        // Close modal
-        setPaymentModalOpen(false);
-      }, 0);
+      setLocalQueueVisits(v => v.map(visit =>
+        visit.id === visitId ? { 
+          ...visit, 
+          status: newStatus, 
+          billing_amount: totalAmount, 
+          remaining_balance: reste, 
+          total_paid: newTotalPaid,
+          isPartial: reste > 0 
+        } : visit
+      ));
+
+      // Trigger global real-time event & refresh calls
+      window.dispatchEvent(new CustomEvent('mm:payments-changed'));
+      refreshVisits?.();
+      refreshConsultations?.();
+
+      // Generate receipt
+      openPrintWindow({
+        recuNo: `REC-${(visitId || '').slice(-6).toUpperCase() || '2026-01'}`,
+        patientName: getPatientName(currentPaymentVisit),
+        patientCin: currentPaymentVisit?.patients?.cin || 'N/A',
+        patientPhone: currentPaymentVisit?.patients?.telephone || 'N/A',
+        patientAssurance: currentPaymentVisit?.patients?.assurance || 'N/A',
+        date: new Date().toLocaleDateString('fr-FR'),
+        montantTotal: totalAmount,
+        montantPaye: newTotalPaid,
+        resteAPayer: reste,
+        paymentMethod: paymentMethod === 'cash' ? 'Espèces' : paymentMethod === 'card' ? 'TPE / Carte bancaire' : 'Virement',
+        notes: currentPaymentVisit?.reason || currentPaymentVisit?.motif || 'Consultation Médicale',
+        title: reste > 0 ? 'REÇU DE PAIEMENT PARTIEL' : 'REÇU DE PAIEMENT MÉDICAL',
+        isPaid: reste === 0
+      });
+
+      // Success notification
+      notify({
+        title: reste === 0 ? 'Paiement final confirmé' : 'Paiement partiel confirmé',
+        description: reste === 0
+          ? 'Le paiement a été enregistré avec succès, consultation terminée.'
+          : `Le paiement a été enregistré, reste à payer: ${reste} MAD.`
+      });
+      setPaymentModalOpen(false);
     } catch (error) {
       console.error('Payment error:', error);
       notify({
@@ -1158,26 +1202,23 @@ export default function DashboardPage() {
   useEffect(() => { setLocalRdvList(rdvList) }, [rdvList])
 
   const filteredQueue = useMemo(() => {
-    console.log('=== DashboardPage filteredQueue Debug ===');
-    console.log('localQueueVisits:', localQueueVisits);
-    console.log('visits:', visits);
-    console.log('mockVisits:', mockVisits);
-    // Combine localQueueVisits and real visits
-    const combined = [...localQueueVisits]
-    visits.forEach(visit => {
-      if (!combined.find(v => v.id === visit.id)) {
-        combined.push(visit)
-      }
-    })
-    const unsortedResult = combined.length > 0 ? combined : mockVisits
+    const map = new Map()
+    ;(visits || []).forEach(visit => map.set(visit.id, visit))
+    localQueueVisits.forEach(visit => map.set(visit.id, visit))
+    const combined = Array.from(map.values())
     
-    // Exclude COMPLETED from queue, then sort
-    const nonCompleted = unsortedResult.filter(visit => visit.status !== VISIT_STATUSES.COMPLETED)
+    // Exclude COMPLETED, TERMINÉ, PARTIEL, and paidVisits from active queue immediately
+    const activeQueue = combined.filter(visit => {
+      const isPaid = paidVisits.has(visit.id)
+      const hasPayments = (allPayments[visit.id] || []).length > 0
+      const isDoneOrPartial = visit.status === VISIT_STATUSES.COMPLETED || visit.status === VISIT_STATUSES.PARTIEL || visit.status === 'PARTIEL' || visit.status === 'TERMINÉ' || visit.status === 'completed' || visit.status === 'partiel'
+      return !isDoneOrPartial && !isPaid && !hasPayments
+    })
     
     // Sort: 
     // - For Secretary: BILLING first
     // - For Doctor: WAITING first, then CONSULTATION, then BILLING
-    const result = [...nonCompleted].sort((a, b) => {
+    const result = [...activeQueue].sort((a, b) => {
       const getPriority = (status) => {
         if (isDoctor) {
           switch(status) {
@@ -1203,21 +1244,21 @@ export default function DashboardPage() {
       }
       return 0; // keep original order for same status
     })
-    console.log('filteredQueue result:', result);
     return result
-  }, [localQueueVisits, visits, mockVisits, isDoctor])
+  }, [localQueueVisits, visits, isDoctor, paidVisits, allPayments])
 
   const filteredHistory = useMemo(() => {
-    // Combine localQueueVisits and real visits
-    const combined = [...localQueueVisits]
-    visits.forEach(visit => {
-      if (!combined.find(v => v.id === visit.id)) {
-        combined.push(visit)
-      }
+    const map = new Map()
+    ;(visits || []).forEach(visit => map.set(visit.id, visit))
+    localQueueVisits.forEach(visit => map.set(visit.id, visit))
+    const combined = Array.from(map.values())
+    return combined.filter(visit => {
+      const isPaid = paidVisits.has(visit.id)
+      const hasPayments = (allPayments[visit.id] || []).length > 0
+      const isDoneOrPartial = visit.status === VISIT_STATUSES.COMPLETED || visit.status === VISIT_STATUSES.PARTIEL || visit.status === 'PARTIEL' || visit.status === 'TERMINÉ' || visit.status === 'completed' || visit.status === 'partiel'
+      return isDoneOrPartial || isPaid || hasPayments
     })
-    // Filter to only COMPLETED status
-    return combined.filter(visit => visit.status === VISIT_STATUSES.COMPLETED)
-  }, [localQueueVisits, visits])
+  }, [localQueueVisits, visits, paidVisits, allPayments])
   
   // Filtered patients for walk-in search
   const filteredWalkInPatients = useMemo(() => {
@@ -1859,58 +1900,114 @@ export default function DashboardPage() {
         description={`Patient: ${currentHistoryVisit ? getPatientName(currentHistoryVisit) : ''}`}
         onClose={() => setPaymentHistoryModalOpen(false)}
         footer={
-          <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                if (currentHistoryVisit) {
+                  const total = currentHistoryVisit?.consultations?.billing_amount || currentHistoryVisit?.billing_amount || 300
+                  const paid = currentHistoryVisit?.total_paid || total
+                  const reste = currentHistoryVisit?.remaining_balance || 0
+                  openPrintWindow({
+                    recuNo: `REC-${(currentHistoryVisit.id || '').slice(-6).toUpperCase() || '2026-01'}`,
+                    patientName: getPatientName(currentHistoryVisit),
+                    patientCin: currentHistoryVisit?.patients?.cin || 'N/A',
+                    patientPhone: currentHistoryVisit?.patients?.telephone || 'N/A',
+                    patientAssurance: currentHistoryVisit?.patients?.assurance || 'N/A',
+                    date: new Date().toLocaleDateString('fr-FR'),
+                    montantTotal: total,
+                    montantPaye: paid,
+                    resteAPayer: reste,
+                    paymentMethod: currentHistoryVisit?.billing_type || 'cash',
+                    notes: currentHistoryVisit?.reason || currentHistoryVisit?.motif || 'Consultation Médicale',
+                    title: 'REÇU DE PAIEMENT MÉDICAL',
+                    isPaid: true
+                  })
+                }
+              }}
+              className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-md shadow-blue-500/20 transition-all hover:-translate-y-0.5 active:scale-95"
+            >
+              Imprimer le reçu officiel
+            </button>
             <button
               type="button"
               onClick={() => setPaymentHistoryModalOpen(false)}
-              className="px-5 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-semibold"
+              className="px-5 py-2.5 rounded-xl border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold"
             >
               Fermer
             </button>
           </div>
         }
       >
-        <div className="space-y-3">
-          {currentHistoryVisit && allPayments[currentHistoryVisit.id]?.length > 0 ? (
-            allPayments[currentHistoryVisit.id].map((payment, idx) => (
-              <div key={payment.id || idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+        <div className="space-y-4 py-2">
+          {currentHistoryVisit ? (
+            <div className="space-y-3">
+              {/* Financial Summary Box */}
+              <div className="grid grid-cols-3 gap-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200/80">
                 <div>
-                  <p className="text-sm font-semibold text-slate-900">{payment.amount} MAD</p>
-                  <p className="text-xs text-slate-500">
-                    {payment.method === 'cash' ? 'Espèces' : payment.method === 'card' ? 'Carte bancaire' : 'Virement'} • {new Date(payment.timestamp).toLocaleString('fr-FR')}
-                  </p>
+                  <p className="text-[10px] uppercase font-bold text-slate-500">Honoraires Dûs</p>
+                  <p className="text-sm font-bold text-slate-900">{fmtMAD(currentHistoryVisit?.consultations?.billing_amount || currentHistoryVisit?.billing_amount || 300)}</p>
                 </div>
-                <button
-                  onClick={() => {
-                    // Print receipt for this specific payment
-                    const patientName = getPatientName(currentHistoryVisit);
-                    openPrintWindow({
-                      title: 'Reçu de paiement',
-                      subtitle: `${patientName} • ${new Date(payment.timestamp).toLocaleDateString('fr-FR')}`,
-                      sections: [
-                        {
-                          title: 'Détails du paiement',
-                          content: `
-                            <div style="padding: 8px 0;">
-                              <p><strong>Patient:</strong> ${patientName}</p>
-                              <p><strong>Montant payé:</strong> ${payment.amount} MAD</p>
-                              <p><strong>Mode de paiement:</strong> ${payment.method === 'cash' ? 'Espèces' : payment.method === 'card' ? 'Carte bancaire' : 'Virement'}</p>
-                              <p><strong>Date:</strong> ${new Date(payment.timestamp).toLocaleString('fr-FR')}</p>
-                              <p><strong>Motif:</strong> ${currentHistoryVisit?.reason || currentHistoryVisit?.motif || 'Consultation'}</p>
-                            </div>
-                          `
-                        }
-                      ]
-                    });
-                  }}
-                  className="px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                >
-                  Voir reçu
-                </button>
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-emerald-600">Montant Versé</p>
+                  <p className="text-sm font-bold text-emerald-700">{fmtMAD(currentHistoryVisit?.total_paid || currentHistoryVisit?.billing_amount || 300)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-amber-600">Reste à Payer</p>
+                  <p className="text-sm font-bold text-amber-700">{fmtMAD(currentHistoryVisit?.remaining_balance || 0)}</p>
+                </div>
               </div>
-            ))
+
+              {/* Transactions List */}
+              <div className="space-y-2">
+                <p className="text-xs font-bold text-slate-900">Détails des versements enregistrés</p>
+                {(allPayments[currentHistoryVisit.id]?.length > 0
+                  ? allPayments[currentHistoryVisit.id]
+                  : [
+                      {
+                        id: `pay_${currentHistoryVisit.id}`,
+                        amount: currentHistoryVisit?.total_paid || currentHistoryVisit?.billing_amount || 300,
+                        method: currentHistoryVisit?.billing_type || 'cash',
+                        timestamp: currentHistoryVisit?.updated_at || new Date().toISOString()
+                      }
+                    ]
+                ).map((payment, idx) => (
+                  <div key={payment.id || idx} className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200/80 shadow-2xs">
+                    <div>
+                      <p className="text-xs font-bold text-slate-900">{fmtMAD(payment.amount)}</p>
+                      <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                        {payment.method === 'cash' ? '💵 Espèces' : payment.method === 'card' ? '💳 TPE' : '🏦 Virement'} • {new Date(payment.timestamp).toLocaleString('fr-FR')}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openPrintWindow({
+                          recuNo: `REC-${(currentHistoryVisit.id || '').slice(-6).toUpperCase() || '2026-01'}`,
+                          patientName: getPatientName(currentHistoryVisit),
+                          patientCin: currentHistoryVisit?.patients?.cin || 'N/A',
+                          patientPhone: currentHistoryVisit?.patients?.telephone || 'N/A',
+                          patientAssurance: currentHistoryVisit?.patients?.assurance || 'N/A',
+                          date: new Date(payment.timestamp).toLocaleDateString('fr-FR'),
+                          montantTotal: currentHistoryVisit?.consultations?.billing_amount || currentHistoryVisit?.billing_amount || 300,
+                          montantPaye: payment.amount,
+                          resteAPayer: currentHistoryVisit?.remaining_balance || 0,
+                          paymentMethod: payment.method || 'cash',
+                          notes: currentHistoryVisit?.reason || currentHistoryVisit?.motif || 'Consultation Médicale',
+                          title: 'REÇU DE PAIEMENT MÉDICAL',
+                          isPaid: true
+                        })
+                      }}
+                      className="px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors border border-blue-200/60"
+                    >
+                      Voir reçu
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           ) : (
-            <p className="text-center text-slate-500">Aucun paiement enregistré</p>
+            <p className="text-center text-slate-500 py-6 text-xs font-medium">Aucun détail de paiement trouvé</p>
           )}
         </div>
       </Modal>

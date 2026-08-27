@@ -21,6 +21,7 @@ export const VISIT_STATUSES = {
   CONSULTATION: 'consultation',
   BILLING: 'billing',
   COMPLETED: 'completed',
+  PARTIEL: 'partiel',
   CANCELLED: 'cancelled',
 }
 
@@ -43,6 +44,7 @@ export const VISIT_STATUS_LABELS = {
   [VISIT_STATUSES.CONSULTATION]: 'En consultation',
   [VISIT_STATUSES.BILLING]: 'Encaissement',
   [VISIT_STATUSES.COMPLETED]: 'Terminé',
+  [VISIT_STATUSES.PARTIEL]: 'Paiement partiel',
   [VISIT_STATUSES.CANCELLED]: 'Annulé',
 }
 
@@ -61,6 +63,11 @@ export const VISIT_STATUS_COLORS = {
     border: '#EAB308',
     badgeBg: '#FEF9C3',
     badgeText: '#854D0E'
+  },
+  [VISIT_STATUSES.PARTIEL]: {
+    border: '#EAB308',
+    badgeBg: '#FEF3C7',
+    badgeText: '#92400E'
   },
   [VISIT_STATUSES.COMPLETED]: {
     border: '#16A34A',

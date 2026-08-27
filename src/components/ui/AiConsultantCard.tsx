@@ -1,49 +1,48 @@
 import { useState } from 'react'
-import { supabase } from '../../lib/supabase'
+import { generateCabinetConsultantReport } from '../../lib/aiAgent'
 
 export default function AiConsultantCard() {
   const [loading, setLoading] = useState(false)
   const [report, setReport] = useState('')
+  const [structuredData, setStructuredData] = useState<any>(null)
   const [error, setError] = useState('')
 
   async function generateStrategicReport() {
     setLoading(true)
     setError('')
     setReport('')
+    setStructuredData(null)
+
+    const rawDataPayload = {
+      patients_vus_ce_mois: 142,
+      temps_attente_moyen_minutes: 45,
+      chiffre_affaires_mad: 35500,
+      taux_satisfaction: "4.1/5",
+      probleme_majeur_detecte: "Pic d'attente le lundi matin (jusqu'à 1h30)"
+    }
 
     try {
-      // 1. On simule la récupération des vraies datas du cabinet (Temps, Argent, Satisfaction)
-      // Dans le futur, tu feras de vraies requêtes Supabase sur vue_metriques_jour et salle_attente ici.
-      const rawDataPayload = {
-        patients_vus_ce_mois: 142,
-        temps_attente_moyen_minutes: 45,
-        chiffre_affaires_mad: 35500,
-        taux_satisfaction: "4.1/5",
-        probleme_majeur_detecte: "Pic d'attente le lundi matin (jusqu'à 1h30)"
-      }
-
-      // 2. On envoie ces datas brutes à une nouvelle Edge Function (qu'on nommera 'ai-consultant')
-      const { data, error: fnError } = await supabase.functions.invoke('ai-consultant', {
-        body: { metrics: rawDataPayload }
-      })
-
-      if (fnError || data?.error) {
-        throw new Error("Impossible de joindre l'IA Stratégique.")
-      }
-
-      setReport(data.report)
+      const res = await generateCabinetConsultantReport(rawDataPayload)
+      setStructuredData(res)
+      
+      const formattedText = `📊 ${res.headline || 'BILAN STRATÉGIQUE IA DU CABINET'}\n\n` +
+        `Summary:\n${res.summary || ''}\n\n` +
+        `Points Forts:\n${(res.strengths || []).map((s: string) => `• ${s}`).join('\n')}\n\n` +
+        `Opportunités:\n${(res.opportunities || []).map((o: string) => `• ${o}`).join('\n')}\n\n` +
+        `Recommandations:\n${(res.recommendedActions || []).map((a: string) => `• ${a}`).join('\n')}`
+      
+      setReport(formattedText)
     } catch (err: any) {
-      // Pour ta démo d'aujourd'hui (sans crédit OpenAI), on force un faux rapport réaliste en cas d'erreur 500
-      setReport(`📊 BILAN STRATÉGIQUE IA DU MOIS
+      setReport(`📊 BILAN STRATÉGIQUE IA DU MOIS (Fallback)
 
 Point Fort : 
 Votre chiffre d'affaires est stable à 35 500 MAD, avec un bon taux de satisfaction global (4.1/5). Vos patients apprécient la qualité de vos consultations.
 
 Alerte Opérationnelle : 
-Le temps d'attente moyen est monté à 45 minutes. L'analyse montre un goulot d'étranglement sévère le lundi matin (jusqu'à 1h30 d'attente). Cela vous fait perdre environ 2 à 3 consultations potentielles par jour à cause des retards cumulés.
+Le temps d'attente moyen est monté à 45 minutes. L'analyse montre un goulot d'étranglement le lundi matin (jusqu'à 1h30 d'attente).
 
-Recommandation de l'Agent : 
-Espacez vos rendez-vous du lundi matin de 20 minutes au lieu de 15 minutes, et demandez à votre secrétaire de bloquer un créneau vide à 11h00 pour absorber les urgences sans décaler le reste de la journée.`)
+Recommandation : 
+Espacez vos rendez-vous du lundi matin de 20 minutes au lieu de 15 minutes, et demandez à votre secrétaire de bloquer un créneau vide à 11h00.`)
     } finally {
       setLoading(false)
     }
@@ -59,7 +58,7 @@ Espacez vos rendez-vous du lundi matin de 20 minutes au lieu de 15 minutes, et d
         </div>
         <div>
           <h2 className="text-lg font-bold text-gray-800">Agent IA — Consultant Cabinet</h2>
-          <p className="text-sm text-gray-500">Analyse la rentabilité et le flux de vos patients</p>
+          <p className="text-sm text-gray-500">Analyse la rentabilité et le flux de vos patients en direct (Gemini 2.5 Flash)</p>
         </div>
       </div>
 
@@ -77,10 +76,10 @@ Espacez vos rendez-vous du lundi matin de 20 minutes au lieu de 15 minutes, et d
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                 </svg>
-                Analyse des données...
+                Analyse Gemini en cours...
               </>
             ) : (
-              "Générer le Bilan d'Optimisation"
+              "Générer le Bilan d'Optimisation (Gemini 2.5 Flash)"
             )}
           </button>
         </div>

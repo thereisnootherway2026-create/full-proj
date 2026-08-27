@@ -7,14 +7,16 @@ import { useCabinetId } from '../../hooks/useCabinetId'
 import { getPatients, createConsultation } from '../../lib/api'
 
 function InvoiceFormModal({ open, onClose, onSuccess }) {
-  const { notify } = useAppContext()
+  const { notify, patients: contextPatients } = useAppContext()
   const { cabinetId } = useCabinetId()
 
-  const { data: patients = [] } = useQuery({
+  const { data: dbPatients = [] } = useQuery({
     queryKey: ['patients'],
     queryFn: getPatients,
     enabled: open,
   })
+
+  const patients = (dbPatients && dbPatients.length > 0) ? dbPatients : (contextPatients || [])
 
   const [form, setForm] = useState({
     patient_id: '',
@@ -64,12 +66,14 @@ function InvoiceFormModal({ open, onClose, onSuccess }) {
         date_consult: form.date_consult,
         notes: form.notes || null,
       })
-      notify({ title: 'Succès', description: 'Consultation enregistrée.' })
+      window.dispatchEvent(new CustomEvent('mm:payments-changed'))
+      notify({ title: 'Succès', description: 'Consultation / facture enregistrée.' })
       onSuccess?.()
       onClose()
     } catch (err) {
       console.error('InvoiceForm submit error:', err)
-      setError(err.message || "Erreur lors de l'enregistrement")
+      const errorMsg = typeof err === 'string' ? err : (err?.message || err?.details || err?.hint || "Erreur lors de l'enregistrement")
+      setError(errorMsg)
     } finally {
       setLoading(false)
     }

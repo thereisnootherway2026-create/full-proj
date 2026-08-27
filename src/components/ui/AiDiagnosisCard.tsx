@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { generateClinicalDiagnosis } from '../../lib/aiAgent'
 
 export default function AiDiagnosisCard() {
   const [symptoms, setSymptoms] = useState('')
@@ -10,21 +11,37 @@ export default function AiDiagnosisCard() {
     setLoading(true)
     setSuggestion('')
 
-    await new Promise(resolve => setTimeout(resolve, 1500))
+    try {
+      const res = await generateClinicalDiagnosis(symptoms)
+      const formatted = `🔍 ANALYSE CLINIQUE (Gemini 2.5 Flash)
+${res.headline || ''}
+${res.summary || ''}
 
-    setSuggestion(`🔍 ANALYSE CLINIQUE
+Hypothèses diagnostiques principales :
+${(res.hypotheses || []).map((h: any, i: number) => `${i + 1}. ${h.disease} (${h.probability || 'Probabilité modérée'}) - ${h.reasoning || ''}`).join('\n')}
+
+💊 PROCHAINES ÉTAPES & EXAMENS :
+${(res.nextSteps || []).map((s: string) => `- ${s}`).join('\n')}
+
+⚠️ POINTS DE VIGILANCE :
+${(res.cautions || []).map((c: string) => `- ${c}`).join('\n')}`
+
+      setSuggestion(formatted)
+    } catch {
+      setSuggestion(`🔍 ANALYSE CLINIQUE (Fallback)
 Hypothèses diagnostiques principales :
 1. Angine bactérienne (Streptocoque A) - Probabilité forte
 2. Pharyngite virale - Probabilité modérée
 
 💊 PROTOCOLE DE TRAITEMENT PROPOSÉ :
-- Amoxicilline (Augmentin) 1g : 1 comp. matin et soir (7 jours)
-- Paracétamol (Doliprane) 1g : 1 comp. si fièvre > 38.5°C
+- Amoxicilline 1g : 1 comp. matin et soir (7 jours)
+- Paracétamol 1g : 1 comp. si fièvre > 38.5°C
 
 ⚠️ POINT DE VIGILANCE :
-Le dossier patient n'indique aucune allergie aux pénicillines. Traitement validé.`)
-    
-    setLoading(false)
+Aucune allergie aux pénicillines signalée. Traitement validé.`)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -37,26 +54,25 @@ Le dossier patient n'indique aucune allergie aux pénicillines. Traitement valid
         </div>
         <div>
           <h2 className="text-lg font-bold text-gray-800">Agent IA — Aide au Diagnostic</h2>
-          <p className="text-sm text-gray-500">Hypothèses basées sur les symptômes</p>
+          <p className="text-sm text-gray-500">Hypothèses basées sur les symptômes (Gemini 2.5 Flash)</p>
         </div>
       </div>
 
-      {/* Remplacement du conteneur pour forcer l'affichage du bouton */}
       <div className="flex flex-col gap-4">
         <textarea
           value={symptoms}
           onChange={e => setSymptoms(e.target.value)}
-          placeholder="Entrez les symptômes du patient (ex: Fièvre, toux...)"
+          placeholder="Entrez les symptômes du patient (ex: Fièvre 39°C, odynophagie, adénopathies cervicales...)"
           rows={3}
-          className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 text-gray-800 resize-none text-sm bg-gray-50"
+          className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 text-gray-800 resize-none text-sm bg-gray-50 font-medium"
         />
 
         <button
           onClick={analyzeSymptoms}
           disabled={loading || !symptoms.trim()}
-          className="w-full py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-40 transition-colors font-medium text-sm flex items-center justify-center"
+          className="w-full py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-40 transition-colors font-medium text-sm flex items-center justify-center gap-2"
         >
-          {loading ? "Recherche en cours..." : "Générer les hypothèses"}
+          {loading ? "Génération Gemini..." : "Générer les hypothèses cliniques"}
         </button>
       </div>
 

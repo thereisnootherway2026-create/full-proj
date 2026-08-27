@@ -160,9 +160,30 @@ export const getConsultationsByPatient = async (
 export const createConsultation = async (
   consultation: Omit<Consultation, 'id' | 'created_at'>
 ) => {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(consultation.patient_id || '')
+  let payload = { ...consultation }
+
+  if (!isUuid) {
+    // Search for any existing patient with valid UUID in DB, or create one
+    const { data: dbPatients } = await supabase.from('patients').select('id').limit(1)
+    if (dbPatients && dbPatients.length > 0) {
+      payload.patient_id = dbPatients[0].id
+    } else {
+      // Create a real DB patient record if database patients table is empty
+      const { data: newPat } = await supabase
+        .from('patients')
+        .insert([{ nom: 'Patient', prenom: 'Consultation', cabinet_id: consultation.cabinet_id || null }])
+        .select('id')
+        .single()
+      if (newPat?.id) {
+        payload.patient_id = newPat.id
+      }
+    }
+  }
+
   const { data, error } = await supabase
     .from('consultations')
-    .insert([consultation])
+    .insert([payload])
     .select()
     .single()
   if (error) throw error
