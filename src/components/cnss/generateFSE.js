@@ -1,110 +1,117 @@
-import { PDFDocument } from 'pdf-lib'
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+
+const FSE_CONFIG = {
+  // --- TOP SECTION (L'assuré) ---
+  nomAssure: { x: 515, y: 495 },
+  immatriculation: { x: 605, y: 482, step: 13.5 },
+  cinAssure: { x: 745, y: 468, step: 13.5 },
+  adresse: { x: 560, y: 410 },
+  montantTotal: { x: 710, y: 365 },
+  piecesJointes: { x: 730, y: 342 },
+  
+  // --- MIDDLE SECTION (Patient) ---
+  nomPatient: { x: 515, y: 298 },
+  dateNaissance: { x: 735, y: 283, step: 13.5 },
+  cinPatient: { x: 610, y: 268, step: 13.5 },
+  checkSexeM: { x: 672, y: 248 },
+  checkSexeF: { x: 772, y: 248 },
+  
+  // --- BOTTOM SECTION (Medical & Signatures) ---
+  inpeMedecin: { x: 595, y: 205, step: 13.5 },
+  checkMaladie: { x: 618, y: 155 },
+  datePatient: { x: 555, y: 92, step: 13.5 },
+  dateMedecin: { x: 785, y: 92, step: 13.5 }
+};
 
 export const generateFSE = async (dbPatient, dbDoctor, dbConsultation) => {
   try {
-    // 1. Define the URL (ensure the filename perfectly matches the file in public/assets/)
-    const fileName = 'FEUILLE-DE-SOINS-MALADIE_2.pdf';
-    const pdfUrl = `/assets/${fileName}?t=${new Date().getTime()}`;
-    
-    // 2. Fetch with error handling & strict network 404 validation
-    const response = await fetch(pdfUrl);
-    
-    if (!response.ok) {
-      throw new Error(`Fichier introuvable (404) : Le fichier ${fileName} n'existe pas dans le dossier public/assets/. Vérifiez le nom exact du fichier.`);
-    }
+    // 1. Load the Landscape JPG
+    const imageUrl = `/assets/FSE_CNSS_page1.jpg?t=${new Date().getTime()}`;
+    const response = await fetch(imageUrl);
+    if (!response.ok) throw new Error("Image introuvable.");
+    const imageBytes = await response.arrayBuffer();
 
-    // 3. Only parse if we have a valid PDF response
-    const existingPdfBytes = await response.arrayBuffer();
-    const pdfDoc = await PDFDocument.load(existingPdfBytes);
-    const form = pdfDoc.getForm();
+    // 2. Lock to Landscape A4 limits (Width is now the larger number)
+    const A4_WIDTH = 841.89;
+    const A4_HEIGHT = 595.28;
 
-    // Safe Helper Functions
-    const fillText = (fieldName, text) => {
-      if (!text) return;
-      try {
-        const field = form.getTextField(fieldName);
-        if (field) field.setText(String(text));
-      } catch (err) {
-        console.warn(`Champ introuvable : ${fieldName}`);
-      }
+    const finalDoc = await PDFDocument.create();
+    const font = await finalDoc.embedFont(StandardFonts.HelveticaBold);
+    const color = rgb(0.1, 0.1, 0.2);
+
+    // 3. Draw the JPG perfectly flat onto the Landscape canvas
+    const page1 = finalDoc.addPage([A4_WIDTH, A4_HEIGHT]);
+    const templateImage = await finalDoc.embedJpg(imageBytes);
+    
+    page1.drawImage(templateImage, {
+      x: 0,
+      y: 0,
+      width: A4_WIDTH,
+      height: A4_HEIGHT,
+    });
+
+    // 4. Drawing Helpers
+    const writeText = (text, key, size = 10) => {
+      if (!text || !FSE_CONFIG[key]) return;
+      page1.drawText(String(text), {
+        x: FSE_CONFIG[key].x,
+        y: FSE_CONFIG[key].y,
+        size,
+        font,
+        color,
+      });
     };
 
-    const checkCheckbox = (fieldName) => {
-      try {
-        const field = form.getCheckBox(fieldName);
-        if (field) field.check();
-      } catch (err) {
-        console.warn(`Case introuvable : ${fieldName}`);
-      }
-    };
-
-    // 1. Spacing Helper Function
-    const formatForBoxes = (text, spaceCount = 2) => {
-      if (!text) return '';
-      // Remove slashes, dashes, and spaces
+    const writeComb = (text, key, size = 10) => {
+      if (!text || !FSE_CONFIG[key]) return;
       const cleanText = String(text).replace(/[^a-zA-Z0-9]/g, '');
-      // Join each character with empty spaces
-      return cleanText.split('').join(' '.repeat(spaceCount));
+      const { x, y, step } = FSE_CONFIG[key];
+      for (let i = 0; i < cleanText.length; i++) {
+        page1.drawText(cleanText[i], {
+          x: x + (i * step),
+          y,
+          size,
+          font,
+          color,
+        });
+      }
     };
 
-    // 2. Variables (Cleaned and formatted)
-    const firstName = dbPatient?.prenom || dbPatient?.first_name || '';
-    const lastName = dbPatient?.nom || dbPatient?.last_name || '';
-    const fullName = `${firstName} ${lastName}`.trim().toUpperCase();
-    
-    // Format dates to DDMMYYYY without slashes, then spread them out
-    const rawDate = dbConsultation?.date || dbConsultation?.date_consult || new Date().toLocaleDateString('fr-FR');
-    const todaySpaced = formatForBoxes(rawDate, 2); 
-    const birthDateSpaced = formatForBoxes(dbPatient?.date_of_birth || dbPatient?.date_naissance, 2);
-    
-    // Format IDs
-    const immatSpaced = formatForBoxes(dbPatient?.cnss_number || dbPatient?.n_immatriculation || dbPatient?.immatriculation, 2);
-    const cinSpaced = formatForBoxes(dbPatient?.cin, 2);
-    const inpeSpaced = formatForBoxes(dbDoctor?.inpe_code || dbDoctor?.inpe, 2);
+    // 5. Inject Dynamic Data
+    const fullName = `${dbPatient?.first_name || ''} ${dbPatient?.last_name || ''}`.toUpperCase();
+    const rawDate = new Date().toLocaleDateString('fr-FR');
 
-    // 3. Fill Fields (Using the spaced variables)
-    fillText('nom_assure', fullName);
-    fillText('nom_patient', fullName);
-    fillText('immatriculation', immatSpaced);
-    fillText('cin_assure', cinSpaced);
-    fillText('cin_patient', cinSpaced);
-    fillText('adresse', dbPatient?.address || dbPatient?.adresse || '');
+    writeText(fullName, 'nomAssure');
+    writeComb(dbPatient?.cnss_number, 'immatriculation');
+    writeComb(dbPatient?.cin, 'cinAssure');
+    writeText(dbPatient?.address, 'adresse');
+    writeText(dbConsultation?.price ? String(dbConsultation.price) : '150.00', 'montantTotal');
+    writeText('1', 'piecesJointes');
     
-    // Remove the ' DH' string here so it doesn't double-print on the form
-    fillText('montant_total', String(dbConsultation?.price || dbConsultation?.montant || dbConsultation?.billing_amount || '150.00'));
+    writeText(fullName, 'nomPatient');
+    writeComb(dbPatient?.date_of_birth, 'dateNaissance');
+    writeComb(dbPatient?.cin, 'cinPatient');
     
-    fillText('pieces_jointes', '1');
-    fillText('date_naissance', birthDateSpaced);
-    fillText('inpe_medecin', inpeSpaced);
-    fillText('date_patient', todaySpaced);
-    fillText('date_medecin', todaySpaced);
-
-    // Logic for Checkboxes
-    checkCheckbox('check_maladie');
-    if (dbPatient?.gender === 'Male' || dbPatient?.gender === 'M' || dbPatient?.sexe === 'M') {
-      checkCheckbox('check_sexe_m');
-    } else if (dbPatient?.gender || dbPatient?.sexe) {
-      checkCheckbox('check_sexe_f');
+    if (dbPatient?.gender === 'Male' || dbPatient?.gender === 'M') {
+      writeText('X', 'checkSexeM', 11);
+    } else if (dbPatient?.gender) {
+      writeText('X', 'checkSexeF', 11);
     }
 
-    // Flatten to lock the data and remove invisible boxes
-    form.flatten();
+    writeComb(dbDoctor?.inpe_code, 'inpeMedecin');
+    writeText('X', 'checkMaladie', 11);
+    writeComb(rawDate, 'datePatient');
+    writeComb(rawDate, 'dateMedecin');
 
-    // Download
-    const pdfBytes = await pdfDoc.save();
+    // 6. Download
+    const pdfBytes = await finalDoc.save();
     const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-    const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = blobUrl;
-    link.download = `FSE_${lastName || dbPatient?.nom || 'Patient'}.pdf`;
-    document.body.appendChild(link);
+    link.href = URL.createObjectURL(blob);
+    link.download = `FSE_${dbPatient?.last_name || 'Patient'}.pdf`;
     link.click();
-    document.body.removeChild(link);
-
-    return blobUrl;
-
+    return link.href;
   } catch (error) {
     console.error("Erreur FSE :", error);
-    throw error;
   }
 };

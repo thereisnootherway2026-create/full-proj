@@ -48,9 +48,9 @@ export default function FeuilleDeSoinsGenerator() {
             <FileText size={22} />
           </div>
           <div>
-            <h3 className="font-bold text-lg text-gray-900">Génération Feuille de Soins CNSS (AcroForm Officielle)</h3>
+            <h3 className="font-bold text-lg text-gray-900">Génération Feuille de Soins CNSS</h3>
             <p className="text-xs text-gray-500 font-medium">
-              Génération automatique via formulaires interactifs transparents AcroForm et form.flatten().
+              Génération automatique sur modèle officiel (FSE_VIERGE1) via injection de coordonnées et espacement dynamique.
             </p>
           </div>
         </div>
@@ -72,7 +72,7 @@ export default function FeuilleDeSoinsGenerator() {
       {generatedPdfUrl && (
         <div className="pt-2">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-bold text-gray-700">Aperçu en direct du Modèle Officiel Formulaire Interatif (Cache-Busté):</p>
+            <p className="text-xs font-bold text-gray-700">Aperçu en direct de la Feuille de Soins générée :</p>
             <a href={generatedPdfUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline font-semibold">
               Ouvrir le PDF plein écran
             </a>
