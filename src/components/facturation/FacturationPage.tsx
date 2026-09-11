@@ -11,10 +11,54 @@ import { NouvelleFactureDrawer } from './NouvelleFactureDrawer';
 import { RecuPaiement } from './RecuPaiement';
 import { Download, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { praticiens, assureurs, factureHT, factureTVA, factureNet, facturePaye, factureReste } from './data';
 
 export default function FacturationPage() {
-  const { factures, filters, ui, setTab, setNouvelleFactureOpen } = useFacturationStore();
+  const { factures, filters, ui, setTab, setNouvelleFactureOpen, showToast } = useFacturationStore();
   const filteredFactures = filterFactures(factures, filters);
+
+  const handleExportCSV = () => {
+    const headers = ['Numéro', 'Date émission', 'Échéance', 'Patient', 'Réf patient', 'Praticien', 'Assureur', 'Prestations', 'HT', 'Remise %', 'TVA', 'Net', 'Payé', 'Reste', 'Statut'];
+    
+    const rows = filteredFactures.map(f => {
+      const praticien = praticiens.find(p => p.id === f.praticienId)?.nom || '';
+      const assureur = assureurs.find(a => a.id === f.assureurId)?.label || '';
+      const resumeLignes = f.lignes.map(l => `${l.qte}x ${l.libelle}`).join(', ');
+      
+      const rawHt = f.remise < 100 ? factureHT(f) / (1 - f.remise/100) : f.lignes.reduce((sum, l) => sum + (l.pu * l.qte), 0);
+      
+      return [
+        f.numero,
+        f.dateEmission.split('T')[0],
+        f.dateEcheance.split('T')[0],
+        f.patientNom,
+        f.patientRef,
+        praticien,
+        assureur,
+        `"${resumeLignes.replace(/"/g, '""')}"`,
+        rawHt.toFixed(2).replace('.', ','),
+        f.remise.toString(),
+        factureTVA(f).toFixed(2).replace('.', ','),
+        factureNet(f).toFixed(2).replace('.', ','),
+        facturePaye(f).toFixed(2).replace('.', ','),
+        factureReste(f).toFixed(2).replace('.', ','),
+        f.statut
+      ].join(';');
+    });
+    
+    const csvContent = '\uFEFF' + [headers.join(';'), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const dateStr = new Date().toISOString().split('T')[0];
+    link.href = url;
+    link.setAttribute('download', `facturation_${dateStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    showToast(`Export de ${filteredFactures.length} factures réussi.`);
+  };
 
   const renderView = () => {
     switch (ui.tab) {
@@ -46,7 +90,10 @@ export default function FacturationPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <button className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 bg-white text-slate-700 rounded-lg hover:bg-slate-50 font-medium text-sm transition-colors shadow-sm">
+            <button 
+              onClick={handleExportCSV}
+              className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 bg-white text-slate-700 rounded-lg hover:bg-slate-50 font-medium text-sm transition-colors shadow-sm"
+            >
               <Download className="w-4 h-4" />
               Exporter CSV
             </button>
