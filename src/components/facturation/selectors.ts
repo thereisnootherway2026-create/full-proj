@@ -31,18 +31,29 @@ export const filterFactures = (factures: Facture[], filters: FilterState) => {
 
 export const getTotals = (filteredFactures: Facture[]) => {
   let caNet = 0;
+  let caBrut = 0;
   let totalEncaisse = 0;
   let count = 0;
+  let facturesPayeesCount = 0;
   let enRetardAmount = 0;
   let enRetardCount = 0;
 
   filteredFactures.forEach(f => {
     if (f.statut === 'annulee' || f.statut === 'brouillon') return;
+    
+    // Calculate raw brut (before remise, but with TVA to match Net)
+    const rawSum = f.lignes.reduce((acc, l) => acc + l.pu * l.qte, 0);
+    const brut = rawSum * 1.20; // TTC without discount
+    
     const net = factureNet(f);
     const paye = facturePaye(f);
+    
     caNet += net;
+    caBrut += brut;
     totalEncaisse += paye;
     count++;
+    
+    if (f.statut === 'payee' || f.statut === 'partielle') facturesPayeesCount++;
     
     if (f.statut === 'en_retard') {
       enRetardAmount += Math.max(0, net - paye);
@@ -54,7 +65,7 @@ export const getTotals = (filteredFactures: Facture[]) => {
   const panierMoyen = count > 0 ? caNet / count : 0;
   const tauxRecouvrement = caNet > 0 ? totalEncaisse / caNet : 0;
 
-  return { caNet, totalEncaisse, resteAEncaisser, panierMoyen, tauxRecouvrement, count, enRetardAmount, enRetardCount };
+  return { caNet, caBrut, totalEncaisse, resteAEncaisser, panierMoyen, tauxRecouvrement, count, facturesPayeesCount, enRetardAmount, enRetardCount };
 };
 
 export const getMonthlySeries = (factures: Facture[]) => {

@@ -1,2 +1,12 @@
 import React from 'react';
-export function Overview() { return <div className="p-8 text-center text-slate-500">Aperçu - Placeholder</div>; }
+import { KpiCards } from './KpiCards';
+import { PilotageBand } from './PilotageBand';
+
+export function Overview() {
+  return (
+    <div className="space-y-6">
+      <KpiCards />
+      <PilotageBand />
+    </div>
+  );
+}
