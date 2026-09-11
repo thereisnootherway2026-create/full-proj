@@ -1,22 +1,22 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 const FSE_CONFIG = {
-  // --- TOP SECTION (L'assuré) ---
-  nomAssure: { x: 515, y: 495 },
-  immatriculation: { x: 605, y: 482, step: 13.5 },
-  cinAssure: { x: 745, y: 468, step: 13.5 },
-  adresse: { x: 560, y: 410 },
+  // --- MEASURED SO FAR ---
+  nomAssure: { x: 494, y: 534 },
+  immatriculation: { x: 517, y: 530, step: 13.5 }, // We will fine-tune the step later!
+  cinAssure: { x: 646, y: 525, step: 13.5 },       // We will fine-tune the step later!
+  checkConjoint: { x: 572, y: 512 },
+  checkEnfant: { x: 743, y: 513 },
+  adresse: { x: 478, y: 503 },
+  
+  // --- PLACEHOLDERS (To be measured next) ---
   montantTotal: { x: 710, y: 365 },
   piecesJointes: { x: 730, y: 342 },
-  
-  // --- MIDDLE SECTION (Patient) ---
   nomPatient: { x: 515, y: 298 },
   dateNaissance: { x: 735, y: 283, step: 13.5 },
   cinPatient: { x: 610, y: 268, step: 13.5 },
   checkSexeM: { x: 672, y: 248 },
   checkSexeF: { x: 772, y: 248 },
-  
-  // --- BOTTOM SECTION (Medical & Signatures) ---
   inpeMedecin: { x: 595, y: 205, step: 13.5 },
   checkMaladie: { x: 618, y: 155 },
   datePatient: { x: 555, y: 92, step: 13.5 },
@@ -84,6 +84,13 @@ export const generateFSE = async (dbPatient, dbDoctor, dbConsultation) => {
     writeText(fullName, 'nomAssure');
     writeComb(dbPatient?.cnss_number, 'immatriculation');
     writeComb(dbPatient?.cin, 'cinAssure');
+
+    if (dbPatient?.relation === 'conjoint' || dbPatient?.isConjoint) {
+      writeText('X', 'checkConjoint', 11);
+    } else if (dbPatient?.relation === 'enfant' || dbPatient?.isEnfant) {
+      writeText('X', 'checkEnfant', 11);
+    }
+
     writeText(dbPatient?.address, 'adresse');
     writeText(dbConsultation?.price ? String(dbConsultation.price) : '150.00', 'montantTotal');
     writeText('1', 'piecesJointes');
