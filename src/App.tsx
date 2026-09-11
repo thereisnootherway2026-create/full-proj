@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider, Navigate, Outlet } from 'react-router-dom'
 import { useAppContext } from './context/AppContext'
 import ProtectedRoute from './components/common/ProtectedRoute'
 import RoleGuard from './components/common/RoleGuard'
@@ -13,14 +13,14 @@ import SecretaryWelcomePage from './pages/SecretaryWelcomePage'
 import DashboardPage from './pages/DashboardPage' // The restored "Tableau de bord"
 import SecretaryOnboardingGate from './components/common/SecretaryOnboardingGate'
 import AiScribePage from './pages/AiScribePage'
+import ProductShowcase from './pages/ProductShowcase'
 
 // Shared Dashboard Components (Using the .jsx production versions)
 import AppointmentsPage from './pages/dashboard/AppointmentsPage'
-import BillingPage from './pages/dashboard/BillingPage'
+import FacturationPage from './pages/dashboard/FacturationPage'
 import PatientsPage from './pages/dashboard/PatientsPage'
 import SettingsPage from './pages/dashboard/SettingsPage'
 import ConsultationWorkspace from './pages/dashboard/ConsultationWorkspace'
-import DossierPatient from './pages/dashboard/DossierPatient'
 import PatientWorkspace from './pages/dashboard/PatientWorkspace'
 import TasksPage from './pages/dashboard/TasksPage'
 
@@ -39,93 +39,92 @@ function RootRedirect() {
   return <Navigate to="/dashboard" replace />
 }
 
+const router = createBrowserRouter([
+  // Public Routes
+  { path: '/', element: <RootRedirect /> },
+  { path: '/showcase', element: <ProductShowcase /> },
+  { path: '/login', element: <LoginPage /> },
+  { path: '/signup', element: <SignupPage /> },
+  { path: '/verification', element: <VerificationPage /> },
+  { path: '/bienvenue-secretaire', element: <SecretaryWelcomePage /> },
+
+  // Protected Dashboard Routes
+  {
+    element: <ProtectedRoute />,
+    children: [
+      {
+        element: <SecretaryOnboardingGate />,
+        children: [
+          {
+            element: <DashboardLayout />,
+            children: [
+              // 1. Tableau de bord
+              { path: '/dashboard', element: <DashboardPage /> },
+
+              // 2. Agenda (RDV)
+              { path: '/agenda', element: <AppointmentsPage /> },
+
+              { path: '/patients', element: <PatientsPage /> },
+              { path: '/patients/:id', element: <PatientsPage /> },
+              { path: '/patient-workspace/:id', element: <PatientWorkspace /> },
+
+              // 4. Facturation
+              {
+                path: '/facturation',
+                element: (
+                  <RoleGuard roles={['secretaire', 'docteur', 'medecin', 'admin']}>
+                    <FacturationPage />
+                  </RoleGuard>
+                ),
+              },
+              {
+                path: '/facturation/:id',
+                element: (
+                  <RoleGuard roles={['secretaire', 'docteur', 'medecin', 'admin']}>
+                    <FacturationPage />
+                  </RoleGuard>
+                ),
+              },
+
+              // 5. AI Assistant / Ai Scribe
+              {
+                path: '/ai-scribe',
+                element: (
+                  <RoleGuard role="docteur">
+                    <AiScribePage />
+                  </RoleGuard>
+                ),
+              },
+
+              // 6. Tâches
+              { path: '/taches', element: <TasksPage /> },
+
+              // 7. Paramètres
+              { path: '/parametres', element: <SettingsPage /> },
+
+              // Hidden/Helper Routes
+              {
+                path: '/consultation/:visitId',
+                element: (
+                  <RoleGuard role="docteur">
+                    <ConsultationWorkspace />
+                  </RoleGuard>
+                ),
+              },
+
+              // Fallback for old /secretaire route
+              { path: '/secretaire', element: <Navigate to="/dashboard" replace /> },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+
+  // Global Fallback
+  { path: '*', element: <Navigate to="/" replace /> },
+])
+
 export default function App() {
-  return (
-    <BrowserRouter>
-      <Routes>
-        {/* Public Routes */}
-        <Route path="/" element={<RootRedirect />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/signup" element={<SignupPage />} />
-        <Route path="/verification" element={<VerificationPage />} />
-        <Route path="/bienvenue-secretaire" element={<SecretaryWelcomePage />} />
-
-        {/* Protected Dashboard Routes */}
-        <Route element={<ProtectedRoute />}>
-          <Route element={<SecretaryOnboardingGate />}>
-          <Route element={<DashboardLayout />}>
-          
-          {/* 1. Tableau de bord (Restored Statistics/Overview Dashboard) */}
-          <Route path="/dashboard" element={<DashboardPage />} />
-          
-          {/* 2. Agenda (RDV) */}
-          <Route path="/agenda" element={<AppointmentsPage />} />
-
-          {/* 3. Patients (Registry + Profile V2) */}
-          <Route path="/patients" element={<PatientsPage />} />
-          <Route path="/patients/:id" element={<PatientsPage />} />
-          <Route path="/dossier-patient" element={<DossierPatient />} />
-          <Route path="/patient-workspace/:id" element={<PatientWorkspace />} />
-
-          {/* 4. Facturation — secretary encaisse; doctor may view queue */}
-          <Route
-            path="/facturation"
-            element={
-              <RoleGuard roles={['secretaire', 'docteur', 'medecin', 'admin']}>
-                <BillingPage />
-              </RoleGuard>
-            }
-          />
-          <Route
-            path="/facturation/:id"
-            element={
-              <RoleGuard roles={['secretaire', 'docteur', 'medecin', 'admin']}>
-                <BillingPage />
-              </RoleGuard>
-            }
-          />
-
-          {/* 5. AI Assistant / Ai Scribe */}
-          <Route
-            path="/ai-scribe"
-            element={
-              <RoleGuard role="docteur">
-                <AiScribePage />
-              </RoleGuard>
-            }
-          />
-
-          {/* 5. Tâches */}
-          <Route
-            path="/taches"
-            element={<TasksPage />}
-          />
-
-          {/* 6. Paramètres */}
-          <Route
-            path="/parametres"
-            element={<SettingsPage />}
-          />
-
-          {/* Hidden/Helper Routes */}
-          <Route
-            path="/consultation/:visitId"
-            element={
-              <RoleGuard role="docteur">
-                <ConsultationWorkspace />
-              </RoleGuard>
-            }
-          />
-
-          {/* Fallback for old /secretaire route */}
-          <Route path="/secretaire" element={<Navigate to="/dashboard" replace />} />
-          </Route>
-          </Route>
-        </Route>
-
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
-  )
+  return <RouterProvider router={router} />
 }
