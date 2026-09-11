@@ -1,26 +1,26 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 const FSE_CONFIG = {
-  // --- MEASURED SO FAR ---
-  nomAssure: { x: 494, y: 534 },
-  immatriculation: { x: 517, y: 530, step: 13.5 }, // We will fine-tune the step later!
-  cinAssure: { x: 646, y: 525, step: 13.5 },       // We will fine-tune the step later!
-  checkConjoint: { x: 572, y: 512 },
-  checkEnfant: { x: 743, y: 513 },
-  adresse: { x: 478, y: 503 },
+  // --- Y-VALUES DECREASED BY 12 POINTS ---
+  nomAssure: { x: 494, y: 518 }, 
+  immatriculation: { x: 519, y: 514, step: 14.8 }, 
+  cinAssure: { x: 648, y: 509, step: 14.8 },       
+  checkConjoint: { x: 572, y: 496 }, 
+  checkEnfant: { x: 743, y: 497 },   
+  adresse: { x: 478, y: 487 },       
   
-  // --- PLACEHOLDERS (To be measured next) ---
+  // --- PLACEHOLDERS ---
   montantTotal: { x: 710, y: 365 },
   piecesJointes: { x: 730, y: 342 },
   nomPatient: { x: 515, y: 298 },
-  dateNaissance: { x: 735, y: 283, step: 13.5 },
-  cinPatient: { x: 610, y: 268, step: 13.5 },
+  dateNaissance: { x: 735, y: 283, step: 14.8 },
+  cinPatient: { x: 610, y: 268, step: 14.8 },
   checkSexeM: { x: 672, y: 248 },
   checkSexeF: { x: 772, y: 248 },
-  inpeMedecin: { x: 595, y: 205, step: 13.5 },
+  inpeMedecin: { x: 595, y: 205, step: 14.8 },
   checkMaladie: { x: 618, y: 155 },
-  datePatient: { x: 555, y: 92, step: 13.5 },
-  dateMedecin: { x: 785, y: 92, step: 13.5 }
+  datePatient: { x: 555, y: 92, step: 14.8 },
+  dateMedecin: { x: 785, y: 92, step: 14.8 }
 };
 
 export const generateFSE = async (dbPatient, dbDoctor, dbConsultation) => {
