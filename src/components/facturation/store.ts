@@ -23,7 +23,7 @@ interface FacturationStore {
   ui: UIState;
   toastTimeout: ReturnType<typeof setTimeout> | null;
 
-  createFacture: (draft: Omit<Facture, 'id' | 'numero' | 'statut' | 'paiements'> & { brouillon?: boolean }) => void;
+  createFacture: (draft: Omit<Facture, 'id' | 'numero' | 'statut' | 'paiements'> & { brouillon?: boolean }) => string;
   updateFacture: (id: string, updates: Partial<Facture>) => void;
   deleteFacture: (id: string) => void;
   setStatut: (id: string, statut: Statut) => void;
@@ -60,21 +60,28 @@ export const useFacturationStore = create<FacturationStore>((set, get) => ({
   },
   toastTimeout: null,
 
-  createFacture: (draft) => set((state) => {
-    // Generate sequential FAC-0001
-    const nextNum = state.factures.length + 1;
-    const numero = `FAC-${String(nextNum).padStart(4, '0')}`;
-    
-    const newFacture: Facture = {
-      ...draft,
-      id: crypto.randomUUID(),
-      numero,
-      statut: draft.brouillon ? 'brouillon' : 'en_attente',
-      paiements: [],
-    };
-    
-    return { factures: [newFacture, ...state.factures] };
-  }),
+  createFacture: (draft) => {
+    let newId = '';
+    set((state) => {
+      const maxNum = state.factures.reduce((max, f) => {
+        const m = parseInt(f.numero.replace('FAC-', ''), 10);
+        return isNaN(m) ? max : Math.max(max, m);
+      }, 0);
+      const numero = `FAC-${String(maxNum + 1).padStart(4, '0')}`;
+      
+      const newFacture: Facture = {
+        ...draft,
+        id: crypto.randomUUID(),
+        numero,
+        statut: draft.brouillon ? 'brouillon' : 'en_attente',
+        paiements: [],
+      };
+      
+      newId = newFacture.id;
+      return { factures: [newFacture, ...state.factures] };
+    });
+    return newId;
+  },
 
   updateFacture: (id, updates) => set((state) => ({
     factures: state.factures.map(f => f.id === id ? { ...f, ...updates } : f)
