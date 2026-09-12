@@ -6,14 +6,11 @@ import { StatutBadge } from './ui';
 import { praticiens, assureurs } from './data';
 import { X, Trash2, Printer, CheckCircle, Ban, CreditCard, AlertCircle } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { EncaisserModal } from './EncaisserModal';
 
 export function FactureDrawer() {
   const { factures, ui, setFactureOuverteId, setStatut, addPaiement, removePaiement, showToast } = useFacturationStore();
   const [isEncaisserOpen, setIsEncaisserOpen] = useState(false);
-  const [encaisserMontant, setEncaisserMontant] = useState('');
-  const [encaisserMode, setEncaisserMode] = useState<Mode>('Carte');
-  const [encaisserDate, setEncaisserDate] = useState(new Date().toISOString().split('T')[0]);
-  const [encaisserError, setEncaisserError] = useState('');
   
   const factureId = ui.factureOuverteId;
   const facture = factures.find(f => f.id === factureId);
@@ -42,30 +39,6 @@ export function FactureDrawer() {
   const reste = factureReste(facture);
   const retard = joursRetard(facture.dateEcheance);
   const isLate = facture.statut === 'en_retard';
-
-  const handleEncaisserSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const val = parseFloat(encaisserMontant);
-    if (isNaN(val) || val <= 0) {
-      setEncaisserError('Montant invalide.');
-      return;
-    }
-    if (val > reste + 0.01) {
-      setEncaisserError(`Le montant ne peut excéder le reste à payer (${dh(reste)}).`);
-      return;
-    }
-    
-    addPaiement(facture.id, {
-      date: new Date(encaisserDate).toISOString(),
-      montant: val,
-      mode: encaisserMode
-    });
-    
-    showToast(`Paiement de ${dh(val)} ajouté avec succès.`);
-    setIsEncaisserOpen(false);
-    setEncaisserMontant('');
-    setEncaisserError('');
-  };
 
   return (
     <>
@@ -248,11 +221,7 @@ export function FactureDrawer() {
           
           {reste > 0 && facture.statut !== 'annulee' && facture.statut !== 'brouillon' && (
             <button 
-              onClick={() => {
-                setEncaisserMontant(reste.toString());
-                setEncaisserError('');
-                setIsEncaisserOpen(true);
-              }}
+              onClick={() => setIsEncaisserOpen(true)}
               className="inline-flex items-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-sm transition-colors text-sm"
             >
               <CreditCard className="w-4 h-4" />
@@ -262,74 +231,12 @@ export function FactureDrawer() {
         </div>
       </div>
 
-      {/* Modal Encaisser */}
-      {isEncaisserOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center">
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsEncaisserOpen(false)} />
-          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-900">Enregistrer un paiement</h3>
-              <button onClick={() => setIsEncaisserOpen(false)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <form onSubmit={handleEncaisserSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Montant (DH)</label>
-                <input 
-                  type="number"
-                  step="0.01"
-                  max={reste}
-                  value={encaisserMontant}
-                  onChange={(e) => {
-                    setEncaisserMontant(e.target.value);
-                    setEncaisserError('');
-                  }}
-                  className={cn(
-                    "w-full px-3 py-2 border rounded-lg outline-none focus:ring-2",
-                    encaisserError ? "border-red-300 focus:ring-red-100" : "border-slate-300 focus:ring-emerald-100 focus:border-emerald-500"
-                  )}
-                  required
-                />
-                {encaisserError && <p className="text-xs text-red-600 mt-1">{encaisserError}</p>}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Mode de paiement</label>
-                <select 
-                  value={encaisserMode}
-                  onChange={(e) => setEncaisserMode(e.target.value as Mode)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-500"
-                >
-                  <option value="Especes">Espèces</option>
-                  <option value="Carte">Carte bancaire</option>
-                  <option value="Cheque">Chèque</option>
-                  <option value="Virement">Virement</option>
-                  <option value="Tiers payant">Tiers payant</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Date</label>
-                <input 
-                  type="date"
-                  value={encaisserDate}
-                  onChange={(e) => setEncaisserDate(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-500"
-                  required
-                />
-              </div>
-              
-              <div className="pt-2">
-                <button type="submit" className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-sm transition-colors">
-                  Valider le paiement
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <EncaisserModal 
+        isOpen={isEncaisserOpen}
+        onClose={() => setIsEncaisserOpen(false)}
+        factureId={facture.id}
+        reste={reste}
+      />
     </>
   );
 }
