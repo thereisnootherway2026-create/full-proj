@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useFacturationStore } from './store';
 import { useFacturesQuery } from './queries';
 import { filterFactures, getPaiementsJournal } from './selectors';
-import { Card } from './ui';
+import { Card, Skeleton, ErrorState } from './ui';
 import { dh, fmtDateLong } from './format';
 import { Eye, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -17,7 +17,7 @@ const MODE_COLORS: Record<string, string> = {
 
 export function PaiementsView() {
   const { filters, setRecuPaiementId } = useFacturationStore();
-  const { data: factures = [], isLoading } = useFacturesQuery();
+  const { data: factures = [], isLoading, isError, error, refetch } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   const journal = getPaiementsJournal(filteredFactures);
 
@@ -27,6 +27,20 @@ export function PaiementsView() {
   useEffect(() => {
     setPage(1);
   }, [filters]);
+
+  if (isLoading) {
+    return (
+      <Card className="flex flex-col gap-4">
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+      </Card>
+    );
+  }
+
+  if (isError) {
+    return <ErrorState error={error as Error} onRetry={refetch} />;
+  }
 
   const totalPages = Math.max(1, Math.ceil(journal.length / itemsPerPage));
   const currentItems = journal.slice((page - 1) * itemsPerPage, page * itemsPerPage);

@@ -1,6 +1,7 @@
 import React from 'react';
 import { useFacturationStore } from './store';
 import { useFacturesQuery } from './queries';
+import { Skeleton, ErrorState } from './ui';
 import { getTotals, filterFactures } from './selectors';
 import { Card } from './ui';
 import { dh, num, pct } from './format';
@@ -9,9 +10,12 @@ import { cn } from '../../lib/utils';
 
 export function KpiCards() {
   const { filters } = useFacturationStore();
-  const { data: factures = [] } = useFacturesQuery();
+  const { data: factures = [], isLoading, isError, error, refetch } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   const totals = getTotals(filteredFactures);
+
+  if (isLoading) return <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"><Skeleton className="h-24"/><Skeleton className="h-24"/><Skeleton className="h-24"/><Skeleton className="h-24"/></div>;
+  if (isError) return <ErrorState error={error as Error} onRetry={refetch} />;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -1,6 +1,7 @@
 import React from 'react';
 import { useFacturationStore } from './store';
 import { useFacturesQuery } from './queries';
+import { Skeleton, ErrorState } from './ui';
 import { getTotals, filterFactures, getDSO } from './selectors';
 import { Card, Ring } from './ui';
 import { dh, num, pct, fmtMonthShort } from './format';
@@ -9,10 +10,13 @@ import { cn } from '../../lib/utils';
 
 export function PilotageBand() {
   const { filters } = useFacturationStore();
-  const { data: factures = [] } = useFacturesQuery();
+  const { data: factures = [], isLoading, isError, error, refetch } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   const totals = getTotals(filteredFactures);
   const dsoInfo = getDSO(filteredFactures);
+
+  if (isLoading) return <div className="grid grid-cols-1 md:grid-cols-3 gap-4"><Skeleton className="h-20"/><Skeleton className="h-20"/><Skeleton className="h-20"/></div>;
+  if (isError) return <ErrorState error={error as Error} onRetry={refetch} />;
 
   // Compute Current Month Stats
   const now = new Date();

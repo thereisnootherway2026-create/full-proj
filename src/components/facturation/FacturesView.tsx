@@ -4,14 +4,14 @@ import { useFacturesQuery } from './queries';
 import { filterFactures } from './selectors';
 import { factureNet, facturePaye, factureReste, Facture } from './data';
 import { dh, fmtDate } from './format';
-import { StatutBadge, Card } from './ui';
+import { StatutBadge, Card, Skeleton, ErrorState } from './ui';
 import { Eye, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 
 type SortKey = 'date' | 'total' | 'paye' | 'reste';
 
 export function FacturesView() {
   const { filters, setFactureOuverteId } = useFacturationStore();
-  const { data: factures = [], isLoading } = useFacturesQuery();
+  const { data: factures = [], isLoading, isError, error, refetch } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   
   const [sortKey, setSortKey] = useState<SortKey>('date');
@@ -54,6 +54,22 @@ export function FacturesView() {
     if (valA > valB) return sortDir === 'asc' ? 1 : -1;
     return 0;
   });
+
+  if (isLoading) {
+    return (
+      <Card className="flex flex-col gap-4">
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+      </Card>
+    );
+  }
+
+  if (isError) {
+    return <ErrorState error={error as Error} onRetry={refetch} />;
+  }
 
   const totalPages = Math.max(1, Math.ceil(sortedFactures.length / itemsPerPage));
   const currentFactures = sortedFactures.slice((page - 1) * itemsPerPage, page * itemsPerPage);

@@ -1,6 +1,7 @@
 import React from 'react';
 import { useFacturationStore } from './store';
 import { useFacturesQuery } from './queries';
+import { Skeleton, ErrorState } from './ui';
 import { filterFactures, getBreakdowns } from './selectors';
 import { Card, SectionTitle, StatutBadge } from './ui';
 import { dh, fmtDate, num } from './format';
@@ -8,10 +9,14 @@ import { factureNet } from './data';
 import { cn } from '../../lib/utils';
 
 export function TopListes() {
-  const { factures, filters, setFactureOuverteId } = useFacturationStore();
+  const { filters, setFactureOuverteId } = useFacturationStore();
+  const { data: factures = [], isLoading, isError, error, refetch } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   
   const { topActes } = getBreakdowns(filteredFactures);
+
+  if (isLoading) return <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><Skeleton className="h-64 lg:col-span-2"/><Skeleton className="h-64"/></div>;
+  if (isError) return <ErrorState error={error as Error} onRetry={refetch} />;
   
   // Dernières factures: sort by dateEmission desc and take 5
   const dernieres = [...filteredFactures]

@@ -1,6 +1,7 @@
 import React from 'react';
 import { useFacturationStore } from './store';
 import { useFacturesQuery } from './queries';
+import { Skeleton, ErrorState } from './ui';
 import { filterFactures, getMonthlySeries, getBreakdowns, getAgeingBuckets } from './selectors';
 import { Card, SectionTitle } from './ui';
 import { dh, num } from './format';
@@ -47,12 +48,15 @@ const CustomTooltip = ({ active, payload, label, isCurrency = true }: any) => {
 
 export function ChartsGrid() {
   const { filters } = useFacturationStore();
-  const { data: factures = [] } = useFacturesQuery();
+  const { data: factures = [], isLoading, isError, error, refetch } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   
   const monthlyData = getMonthlySeries(filteredFactures);
   const breakdowns = getBreakdowns(filteredFactures);
   const ageingData = getAgeingBuckets(filteredFactures);
+
+  if (isLoading) return <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><Skeleton className="h-64 lg:col-span-2"/><Skeleton className="h-64"/></div>;
+  if (isError) return <ErrorState error={error as Error} onRetry={refetch} />;
 
   // Formatting Data for Charts
   const statutData = Array.from(breakdowns.byStatut.entries()).map(([key, val]) => ({

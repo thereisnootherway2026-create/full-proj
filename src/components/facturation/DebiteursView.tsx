@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useFacturationStore } from './store';
 import { useFacturationMutations, useFacturesQuery } from './queries';
 import { filterFactures, getDebiteurs } from './selectors';
-import { Card, SectionTitle } from './ui';
+import { Card, SectionTitle, Skeleton, ErrorState } from './ui';
 import { dh, fmtDate, num } from './format';
 import { factureReste } from './data';
 import { Bell, ChevronDown, ChevronUp, CreditCard } from 'lucide-react';
@@ -11,7 +11,7 @@ import { EncaisserModal } from './EncaisserModal';
 
 export function DebiteursView() {
   const { filters, setFactureOuverteId } = useFacturationStore();
-  const { data: factures = [] } = useFacturesQuery();
+  const { data: factures = [], isLoading, isError, error, refetch } = useFacturesQuery();
   const { markRelance } = useFacturationMutations();
   const filteredFactures = filterFactures(factures, filters);
   const debiteurs = getDebiteurs(filteredFactures);
@@ -29,6 +29,20 @@ export function DebiteursView() {
     e.stopPropagation();
     setEncaisserFacture(facture);
   };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-16 w-full" />
+        <Skeleton className="h-16 w-full" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return <ErrorState error={error as Error} onRetry={refetch} />;
+  }
 
   const handleRelancer = (patientRef: string, e: React.MouseEvent) => {
     e.stopPropagation();

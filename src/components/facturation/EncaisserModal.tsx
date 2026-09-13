@@ -23,18 +23,21 @@ export function EncaisserModal({ facture, isOpen, onClose }: EncaisserModalProps
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [error, setError] = useState('');
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   useEffect(() => {
     if (isOpen) {
       setMontant(reste.toString());
       setMode('Carte');
       setDate(new Date().toISOString().split('T')[0]);
       setError('');
+      setIsSubmitting(false);
     }
   }, [isOpen, reste]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const val = parseFloat(montant);
     
@@ -42,22 +45,26 @@ export function EncaisserModal({ facture, isOpen, onClose }: EncaisserModalProps
       setError('Montant invalide.');
       return;
     }
-    if (val > reste + 0.01) {
-      setError(`Le montant ne peut excéder le reste à payer (${dh(reste)}).`);
-      return;
+    // We remove the hard client-side reste check so the server can throw its 422 for overpayment
+    
+    setIsSubmitting(true);
+    setError('');
+    try {
+      await addPaiement({
+        id: facture.id,
+        p: {
+          date: new Date(date).toISOString(),
+          montant: val,
+          mode
+        }
+      });
+      showToast(`Paiement de ${dh(val)} ajouté avec succès.`);
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Erreur lors de l\'ajout du paiement.');
+    } finally {
+      setIsSubmitting(false);
     }
-    
-    addPaiement({
-      id: facture.id,
-      p: {
-        date: new Date(date).toISOString(),
-        montant: val,
-        mode
-      }
-    });
-    
-    showToast(`Paiement de ${dh(val)} ajouté avec succès.`);
-    onClose();
   };
 
   return (
@@ -119,8 +126,12 @@ export function EncaisserModal({ facture, isOpen, onClose }: EncaisserModalProps
           </div>
           
           <div className="pt-2">
-            <button type="submit" className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-sm transition-colors">
-              Valider le paiement
+            <button 
+              type="submit" 
+              disabled={isSubmitting}
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSubmitting ? 'Enregistrement...' : 'Valider le paiement'}
             </button>
           </div>
         </form>

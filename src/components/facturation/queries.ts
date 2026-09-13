@@ -55,7 +55,43 @@ export const useFacturationMutations = () => {
 
   const addPayMut = useMutation({
     mutationFn: ({ id, p }: { id: string, p: any }) => addPaiementAPI(id, p),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['factures'] })
+    onMutate: async ({ id, p }) => {
+      await queryClient.cancelQueries({ queryKey: ['factures'] });
+      const previousFactures = queryClient.getQueryData(['factures', store.filters]);
+      
+      if (previousFactures) {
+        queryClient.setQueryData(['factures', store.filters], (old: any) => {
+          if (!old) return old;
+          return old.map((f: any) => {
+            if (f.id === id) {
+              const alreadyPaid = f.paiements.reduce((s: number, pm: any) => s + pm.montant, 0);
+              const net = f.lignes.reduce((s: number, l: any) => s + (l.pu * l.qte), 0) * (1 - f.remise / 100) * 1.2;
+              const reste = net - alreadyPaid;
+              const newPaid = alreadyPaid + p.montant;
+              let newStatut = f.statut;
+              if (p.montant >= reste - 0.01) newStatut = 'payee';
+              else newStatut = 'partielle';
+
+              return {
+                ...f,
+                statut: newStatut,
+                paiements: [...f.paiements, { ...p, id: 'temp-' + Date.now() }]
+              };
+            }
+            return f;
+          });
+        });
+      }
+      return { previousFactures };
+    },
+    onError: (err, newPay, context) => {
+      if (context?.previousFactures) {
+        queryClient.setQueryData(['factures', store.filters], context.previousFactures);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['factures'] });
+    }
   });
 
   const removePayMut = useMutation({
