@@ -176,3 +176,77 @@ export interface NewTaskFormData {
   reminderPreset: ReminderPreset
   customReminderDate: string
 }
+
+// ─── Patient Dossier Structured Data ───────────────────────────────────────
+
+export interface PatientVitals {
+  id: string
+  patient_id: string
+  cabinet_id: string
+  consultation_id?: string
+  date_mesure: string
+  blood_pressure?: string
+  heart_rate?: number
+  temperature?: number
+  spo2?: number
+  weight?: number
+  height?: number
+  blood_sugar?: number
+  notes?: string
+  created_at: string
+}
+
+export interface PatientProblem {
+  id: string
+  patient_id: string
+  cabinet_id: string
+  name: string
+  status: 'Actif' | 'Stable' | 'Résolu' | 'À surveiller'
+  diagnosed_date?: string
+  severity: 'normal' | 'warning' | 'critical'
+  notes?: string
+  created_at: string
+}
+
+export interface PatientMedication {
+  id: string
+  patient_id: string
+  cabinet_id: string
+  medication_name: string
+  dosage?: string
+  posology?: string
+  status: 'Actif' | 'Arrêté' | 'Si besoin'
+  observance: 'Excellente' | 'Bonne' | 'Variable' | 'Mauvaise'
+  start_date?: string
+  end_date?: string
+  prescribed_by?: string
+  notes?: string
+  created_at: string
+}
+
+export interface PatientLabResult {
+  id: string
+  patient_id: string
+  cabinet_id: string
+  exam_name: string
+  result_value?: number
+  result_text?: string
+  unit?: string
+  norm_min?: number
+  norm_max?: number
+  status: 'normal' | 'slightly_high' | 'slightly_low' | 'critical'
+  date_exam?: string
+  notes?: string
+  created_at: string
+}
+
+export interface ClinicalNote {
+  id: string
+  patient_id: string
+  cabinet_id: string
+  note_type: 'summary' | 'vigilance' | 'conclusion'
+  content: string
+  date_note: string
+  is_active: boolean
+  created_at: string
+}

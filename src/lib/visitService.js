@@ -1,8 +1,16 @@
 import { supabase } from './supabase'
 
+// patients columns here must stay within the administrative grant
+// (see migration 20260912070000) — antecedents/allergies/groupe_sanguin are
+// clinical-only and revoked from `authenticated` at the column-privilege
+// level for every role including admin/doctor, so referencing one here
+// breaks the *entire* query (Postgres rejects the whole statement, not just
+// the missing column). `allergies` was never actually read from this shape
+// anywhere in the app — removed rather than granted, since granting it back
+// would re-expose it to secretary through this same query.
 const VISIT_SELECT = `
   *,
-  patients:patient_id(id, nom, prenom, telephone, allergies, mutuelle),
+  patients:patient_id(id, nom, prenom, telephone, mutuelle),
   doctor:doctor_id(id, nom_complet, first_name, last_name, role),
   rdv:rdv_id(id, date_rdv, notes)
 `
@@ -18,6 +26,10 @@ export async function getDoctors(clinicId) {
   if (error) throw error
   return data || []
 }
+
+// visits/payments use clinic_id; legacy patients/rdv/profiles still use cabinet_id.
+// Callers must pass AppContext's canonical clinicId, which is backfilled to match
+// cabinet_id for legacy profiles by the Phase 4 migration.
 
 export async function getTodayVisits(clinicId) {
   const today = new Date().toLocaleDateString('fr-CA', { timeZone: 'Africa/Casablanca' })
@@ -125,11 +137,13 @@ export async function autosaveConsultation(consultationId, draft) {
 
 
 export async function getConsultationByVisit(visitId) {
+  // Same administrative-column constraint as VISIT_SELECT above —
+  // allergies is clinical-only and not part of the authenticated grant.
   const { data, error } = await supabase
     .from('consultations')
     .select(`
       *,
-      visits:visit_id(*, patients:patient_id(id, nom, prenom, telephone, allergies, mutuelle))
+      visits:visit_id(*, patients:patient_id(id, nom, prenom, telephone, mutuelle))
     `)
     .eq('visit_id', visitId)
     .maybeSingle()

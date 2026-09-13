@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useFacturationStore } from './store';
+import { useFacturesQuery } from './queries';
 import { filterFactures } from './selectors';
 import { factureNet, facturePaye, factureReste, Facture } from './data';
 import { dh, fmtDate } from './format';
@@ -9,7 +10,8 @@ import { Eye, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-r
 type SortKey = 'date' | 'total' | 'paye' | 'reste';
 
 export function FacturesView() {
-  const { factures, filters, setFactureOuverteId } = useFacturationStore();
+  const { filters, setFactureOuverteId } = useFacturationStore();
+  const { data: factures = [], isLoading } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   
   const [sortKey, setSortKey] = useState<SortKey>('date');

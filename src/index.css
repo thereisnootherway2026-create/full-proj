@@ -283,3 +283,341 @@
     box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 0 0 4px rgba(59,130,246,0.18);
   }
 }
+
+/* ==========================================================================
+   FOCUS MODE D'ÉCRITURE MÉDICALE
+   ========================================================================== */
+
+/* Backdrop BLANC flou - JAMAIS noir, JAMAIS gris foncé */
+.focus-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.focus-backdrop.active {
+  opacity: 1;
+  pointer-events: all;
+}
+
+/* Carte en mode focus */
+.focus-mode-card {
+  position: fixed;
+  z-index: 1000;
+  border-radius: 16px;
+  box-shadow:
+    0 25px 50px -12px rgba(0, 0, 0, 0.25),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
+  transition:
+    transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 0.25s ease,
+    width 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+    height 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+    top 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+    left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.3s ease;
+  background: white;
+  will-change: transform, opacity;
+  opacity: 0.96;
+  transform: translate(-50%, -48%) scale(0.96);
+  overflow: hidden;
+}
+
+.focus-mode-card.entered {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* === Wrapper textarea médicale avec ghost text === */
+.medical-textarea-wrapper {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.medical-textarea {
+  width: 100%;
+  min-height: 140px;
+  padding: 14px 16px;
+  border: none;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1F2937;
+  background: transparent;
+  resize: vertical;
+  outline: none;
+  transition: none;
+  caret-color: #3B82F6;
+  position: relative;
+  z-index: 1;
+}
+
+.medical-textarea:focus {
+  outline: none;
+}
+
+.medical-textarea::-webkit-scrollbar {
+  display: block !important;
+  width: 8px;
+}
+.medical-textarea::-webkit-scrollbar-thumb {
+  background-color: rgba(100, 116, 139, 0.3);
+  border-radius: 4px;
+}
+
+/* Toolbar séparée hors textarea (flow normal) : micro — ne chevauche plus resize handle */
+.medical-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+}
+
+.medical-toolbar .medical-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.save-indicator { pointer-events: auto; }
+
+/* Bouton micro dictée */
+.speech-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.speech-btn:hover {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+  color: #334155;
+}
+.speech-btn.listening {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
+  animation: speechPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes speechPulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15); }
+  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.10); }
+}
+
+/* Ghost text - couche non sélectionnable, parfaitement alignée */
+.ghost-text {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 14px 16px;
+  color: #cbd5e1;
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  overflow: hidden;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  z-index: 0;
+}
+
+.ghost-text .typed {
+  color: transparent;
+  visibility: hidden;
+}
+
+/* Interim transcript - dictée vocale en temps réel (ghost text) */
+.ghost-text .interim-transcript {
+  color: #94a3b8;
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* Types de suggestions - couleurs par catégorie */
+.ghost-text .suggestion {
+  font-style: italic;
+  position: relative;
+}
+
+.suggestion-correction { color: #fca5a5 !important; }
+.suggestion-prediction { color: #cbd5e1 !important; }
+.suggestion-abbreviation { color: #93c5fd !important; }
+.suggestion-template { color: #c4b5fd !important; }
+.suggestion-history { color: #86efac !important; }
+
+/* Badge ghost text inline */
+.suggestion-badge-ghost {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 14px;
+  border-radius: 4px;
+  opacity: 0.85;
+  color: #475569 !important;
+  background: #f1f5f9;
+  vertical-align: middle;
+  transform: translateY(-1px);
+}
+
+/* === Suggestion popup (multi-suggestions) === */
+/* Flow normal sous textarea, pleine largeur — ne chevauche ni le textarea ni la toolbar */
+.suggestion-popup {
+  position: relative;
+  width: 100%;
+  margin-top: 6px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.10);
+  overflow: hidden;
+  z-index: 10;
+  animation: popupFadeIn 0.12s ease;
+  display: flex;
+  flex-direction: column;
+}
+.suggestion-popup-list {
+  padding: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.suggestion-popup-list::-webkit-scrollbar { width: 6px; }
+.suggestion-popup-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: 3px;
+}
+
+@keyframes popupFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.suggestion-item {
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #1f2937;
+}
+.suggestion-item:hover,
+.suggestion-item.selected {
+  background: #eff6ff;
+}
+.suggestion-dot {
+  width: 7px; height: 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.06);
+}
+.suggestion-item-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+/* Footer clavier INTÉGRÉ à la popup — plus d'élément flottant */
+.suggestion-popup-footer {
+  padding: 8px 14px;
+  border-top: 1px solid #f1f5f9;
+  background: #f8fafc;
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+  text-align: right;
+  letter-spacing: 0.01em;
+}
+
+/* Badge dans la popup */
+.suggestion-badge {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 14px;
+  white-space: nowrap;
+  color: #475569;
+  background: #f1f5f9;
+}
+.suggestion-badge-correction { background: #fef2f2; color: #b91c1c; }
+.suggestion-badge-prediction { background: #f8fafc; color: #475569; }
+.suggestion-badge-abbreviation { background: #eff6ff; color: #1d4ed8; }
+.suggestion-badge-template { background: #f5f3ff; color: #6d28d9; }
+.suggestion-badge-history { background: #ecfdf5; color: #047857; }
+
+/* Header de carte en focus mode */
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.close-focus-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: #6B7280;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+
+.close-focus-btn:hover {
+  background: #F3F4F6;
+}
+
+/* Responsive : tablette et mobile */
+@media (max-width: 768px) {
+  .focus-mode-card {
+    width: 95vw !important;
+    max-height: 85vh !important;
+    top: 50% !important;
+    left: 50% !important;
+  }
+  .focus-backdrop.active {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(8px) saturate(180%);
+    -webkit-backdrop-filter: blur(8px) saturate(180%);
+  }
+  .suggestion-popup-footer {
+    text-align: left;
+  }
+}

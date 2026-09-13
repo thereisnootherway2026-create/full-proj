@@ -1,4 +1,4 @@
-import { Bell, Download, Plus } from 'lucide-react'
+import { Bell, Download, Plus, Menu } from 'lucide-react'
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { Outlet, useLocation, useMatch } from 'react-router-dom'
 import ConfirmDialog from '../components/common/ConfirmDialog'
@@ -61,6 +61,7 @@ function DashboardLayout() {
   } = useAppContext()
   
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const mainScrollRef = useRef(null)
   const [search, setSearch] = useState('')
   const [searchResults, setSearchResults] = useState({ patients: [], rdv: [], consultations: [] })
   const [searchLoading, setSearchLoading] = useState(false)
@@ -242,15 +243,24 @@ function DashboardLayout() {
           ) : null}
 
           <SidebarInset className="flex-1 min-w-0 flex flex-col bg-transparent overflow-hidden">
-            <DashboardHeader
-              onMenuClick={() => setSidebarOpen(true)}
-              search={search}
-              setSearch={setSearch}
-              searchResults={searchResults}
-              searchLoading={searchLoading}
-            />
+            {isDashboardRoute ? (
+              <DashboardHeader
+                onMenuClick={() => setSidebarOpen(true)}
+                search={search}
+                setSearch={setSearch}
+                searchResults={searchResults}
+                searchLoading={searchLoading}
+                scrollContainerRef={mainScrollRef}
+              />
+            ) : (
+              <div className="flex shrink-0 items-center h-[56px] px-4 border-b border-gray-200 bg-white lg:hidden">
+                <button type="button" onClick={() => setSidebarOpen(true)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-400">
+                  <Menu className="h-5 w-5" />
+                </button>
+              </div>
+            )}
 
-            <main className={`relative flex-1 overflow-x-hidden ${isFullBleed ? (isDashboardRoute || isDossierRoute ? 'overflow-y-auto' : 'overflow-hidden flex flex-col') : 'overflow-y-auto'}`}>
+            <main ref={mainScrollRef} className={`relative flex-1 overflow-x-hidden ${isFullBleed ? (isDashboardRoute || isDossierRoute ? 'overflow-y-auto' : 'overflow-hidden flex flex-col') : 'overflow-y-auto'}`}>
               {isFullBleed
                 ? <Outlet />
                 : <div className="w-full max-w-[1400px] mx-auto px-5 md:px-[32px] pt-[12px] pb-[24px]"><Outlet /></div>

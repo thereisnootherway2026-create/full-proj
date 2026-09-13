@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useFacturationStore } from './store';
+import { useFacturesQuery } from './queries';
 import { filterFactures, getPaiementsJournal } from './selectors';
 import { Card } from './ui';
 import { dh, fmtDateLong } from './format';
@@ -15,7 +16,8 @@ const MODE_COLORS: Record<string, string> = {
 };
 
 export function PaiementsView() {
-  const { factures, filters, setRecuPaiementId } = useFacturationStore();
+  const { filters, setRecuPaiementId } = useFacturationStore();
+  const { data: factures = [], isLoading } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   const journal = getPaiementsJournal(filteredFactures);
 

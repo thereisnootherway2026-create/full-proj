@@ -23,16 +23,14 @@ export default function AiScribeCard() {
 
   useEffect(() => {
     async function fetchPatients() {
-      const { data } = await supabase.from('patients').select('id, nom, prenom').order('nom')
-      if (data && data.length > 0) {
-        setPatients(data)
-      } else {
-        setPatients([
-          { id: 'mock_p1', nom: 'Boukili', prenom: 'Hind' },
-          { id: 'mock_p2', nom: 'Tazi', prenom: 'Meryem' },
-          { id: 'mock_p3', nom: 'Idrissi', prenom: 'Youssef' }
-        ])
-      }
+      try {
+      const { data, error: patientsError } = await supabase.from('patients').select('id, nom, prenom').order('nom')
+      if (patientsError) throw patientsError
+      setPatients(data || [])
+    } catch {
+      setPatients([])
+      setError('Impossible de charger les patients.')
+    }
     }
     fetchPatients()
     return () => stopAudio()
@@ -141,7 +139,7 @@ export default function AiScribeCard() {
       const generated = await generateScribeLetter(notes)
       setLetter(generated)
     } catch {
-      setLetter(`DOCTEUR OTHMANE TOUGGANI
+      setError('Service IA indisponible ou non configuré. Aucune lettre n’a été générée.') /*
 Médecine Générale & Cardiologie
 Casablanca, le ${new Date().toLocaleDateString('fr-FR')}
 
@@ -158,7 +156,7 @@ Je reste à votre disposition pour tout complément d'information.
 
 Confraternellement,
 Dr. Othmane Touggani`)
-    } finally {
+    */ } finally {
       setLoading(false)
     }
   }

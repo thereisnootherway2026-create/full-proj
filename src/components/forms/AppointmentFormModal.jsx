@@ -47,14 +47,6 @@ const buildAppointmentMeta = (notes, overrides) => {
   })}`
 }
 
-// Mock Data
-const patientsExistants = [
-  { id: '1', nom: 'Fontaine', prenom: 'Marie-Claire', telephone: '0612345678', derniereVisite: '19 juin 2026', alertes: 1 },
-  { id: '2', nom: 'Bertrand', prenom: 'Jean-Pierre', telephone: '0623456789', derniereVisite: '15 juin 2026', alertes: 0 },
-  { id: '3', nom: 'Dupont', prenom: 'Marc', telephone: '0634567890', derniereVisite: '10 juin 2026', alertes: 0 },
-  { id: '4', nom: 'Bernhardt', prenom: 'Sarah', telephone: '0645678901', derniereVisite: '05 juin 2026', alertes: 0 }
-]
-
 const typesRDV = [
   'Consultation',
   'Suivi',
@@ -132,6 +124,12 @@ function AppointmentFormModal({
   const { cabinetId } = useCabinetId()
   const queryClient = useQueryClient()
 
+  const { data: livePatients = [] } = useQuery({
+    queryKey: ['patients'],
+    queryFn: getPatients,
+    enabled: open,
+  })
+
   // State Management
   const [modalState, setModalState] = useState('existing')
   const [searchQuery, setSearchQuery] = useState('')
@@ -198,19 +196,28 @@ function AppointmentFormModal({
       setErrors({})
       
       if (appointment) {
+        // `appointment` here is the raw rdv row passed by AppointmentsPage's
+        // "Modifier l'heure" flow (snake_case: patient_id, notes) — it is
+        // NOT the mapped Appointment shape (camelCase: patientId, motif)
+        // used elsewhere in this file's own type definitions. Reading
+        // appointment.patientId/.motif directly always returned undefined,
+        // and motif was hardcoded to '' — since validateExisting() requires
+        // a non-empty motif, every edit-time submission was silently
+        // blocked by "Motif requis" unless the user happened to retype it.
+        const meta = parseAppointmentMeta(appointment.notes)
         setSearchQuery(`${appointment.patients?.prenom || ''} ${appointment.patients?.nom || ''}`)
         setSelectedPatient(appointment.patients)
         const dt = new Date(appointment.date_rdv)
         const datePart = !isNaN(dt) ? `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}` : initialDateValue
         const timePart = !isNaN(dt) ? `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}` : initialTime || '08:00'
-        
+
         setExistingForm({
-          patientId: appointment.patientId,
+          patientId: appointment.patient_id || appointment.patientId,
           telephone: appointment.patients?.telephone || '',
-          motif: '',
+          motif: meta.clinicalContext || '',
           date: datePart,
           heure: timePart,
-          type: appointment.motif || 'Consultation',
+          type: meta.type || 'Consultation',
           notes: ''
         })
       } else {
@@ -257,11 +264,11 @@ function AppointmentFormModal({
   const filteredPatients = useMemo(() => {
     const query = searchQuery.toLowerCase().trim()
     if (!query) return []
-    return patientsExistants.filter(p => 
-      `${p.prenom} ${p.nom}`.toLowerCase().includes(query) || 
+    return livePatients.filter(p =>
+      `${p.prenom} ${p.nom}`.toLowerCase().includes(query) ||
       (p.telephone || '').includes(query)
     )
-  }, [searchQuery])
+  }, [searchQuery, livePatients])
 
   // Handle Patient Selection
   const handleSelectPatient = (patient) => {
@@ -284,8 +291,8 @@ function AppointmentFormModal({
 
     setTimeout(() => {
       if (value.trim() && selectedPatient === null) {
-        const filtered = patientsExistants.filter(p => 
-          `${p.prenom} ${p.nom}`.toLowerCase().includes(value.toLowerCase()) || 
+        const filtered = livePatients.filter(p =>
+          `${p.prenom} ${p.nom}`.toLowerCase().includes(value.toLowerCase()) ||
           (p.telephone || '').includes(value)
         )
         if (filtered.length === 0) {
@@ -340,7 +347,14 @@ function AppointmentFormModal({
     if (!selectedPatient) newErrors.searchQuery = 'Veuillez sélectionner un patient'
     if (!existingForm.date) newErrors.date = 'Date requise'
     if (!existingForm.heure) newErrors.heure = 'Heure requise'
-    if (!existingForm.motif.trim()) newErrors.motif = 'Motif requis'
+    // Motif was never actually persisted by any create/edit path (see
+    // handleSubmit below — buildAppointmentMeta never stored it), so an
+    // existing appointment's motif is always empty and there is nothing
+    // real to prefill. Requiring it only made sense for brand-new
+    // appointments (force the user to type a reason); requiring it to edit
+    // an existing one's time made every "Modifier l'heure" submission
+    // silently fail validation with no realistic way to satisfy it.
+    if (!appointment && !existingForm.motif.trim()) newErrors.motif = 'Motif requis'
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
@@ -383,6 +397,7 @@ function AppointmentFormModal({
           const currentNotes = appointment.notes
           const newNotes = buildAppointmentMeta(currentNotes, {
             type: existingForm.type,
+            clinicalContext: existingForm.motif,
           })
           await apiUpdateRdv(appointment.id, {
             patient_id: existingForm.patientId,
@@ -393,6 +408,7 @@ function AppointmentFormModal({
         } else {
           const newNotes = buildAppointmentMeta(null, {
             type: existingForm.type,
+            clinicalContext: existingForm.motif,
           })
           await createRdv({
             cabinet_id: cabinetId,
@@ -413,7 +429,6 @@ function AppointmentFormModal({
           prenom,
           nom,
           telephone: rdvRapideForm.telephone.replace(/\s/g, ''),
-          status: 'prospect'
         })
 
         const newNotes = buildAppointmentMeta(null, {
@@ -442,7 +457,6 @@ function AppointmentFormModal({
           cin: dossierCompletForm.cin || null,
           adresse: dossierCompletForm.adresse || null,
           mutuelle: dossierCompletForm.mutuelle,
-          status: 'actif'
         })
 
         const newNotes = buildAppointmentMeta(null, {
@@ -472,10 +486,22 @@ function AppointmentFormModal({
       onClose()
     } catch (error) {
       const errorMsg = error?.message || (typeof error === 'object' ? JSON.stringify(error) : String(error))
-      console.error('Error creating appointment:', errorMsg)
+      // PostgREST errors carry far more than .message (code/details/hint) —
+      // logging the full object is the only way to tell which underlying
+      // query actually failed when the message alone is ambiguous (e.g.
+      // "permission denied for table patients" during an rdv save, where
+      // rdv's own update never references patients directly).
+      console.error('Error creating appointment:', { message: errorMsg, code: error?.code, details: error?.details, hint: error?.hint, error })
+      // 23505 = unique_violation. Only translate the specific one-per-day
+      // constraint to a clean French message — the database stays the real
+      // authority (this is UX only), any other error still shows the raw
+      // technical message so nothing genuinely wrong is hidden.
+      const isSameDayDuplicate = error?.code === '23505' && /rdv_one_active_per_patient_per_day/.test(errorMsg || error?.details || '')
       notify({
         title: 'Erreur',
-        description: `Impossible d'enregistrer le rendez-vous: ${errorMsg}`,
+        description: isSameDayDuplicate
+          ? 'Ce patient a déjà un rendez-vous prévu ce jour.'
+          : `Impossible d'enregistrer le rendez-vous: ${errorMsg}`,
         variant: 'destructive',
       })
     } finally {
@@ -585,120 +611,88 @@ function AppointmentFormModal({
           </button>
         )}
 
-        {modalState === 'invitation' && (
-          <button
-            type="button"
-            onClick={handleReturnToSearch}
-            className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
-          >
-            ← Revenir à la recherche
-          </button>
-        )}
-
         {/* -------------------------- ÉTAT 1 : EXISTANT -------------------------- */}
         {modalState === 'existing' && (
           <div className="space-y-4">
             <div>
               <label className={labelClass}>Patient</label>
-              <div className="relative">
-                <div className={`${inputClass} flex items-center gap-3 ${
-                  touched.searchQuery && errors.searchQuery ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : ''
-                }`}>
-                  <User size={18} className="text-slate-500" />
-                  <input
-                    type="text"
-                    placeholder="Rechercher..."
-                    value={searchQuery}
-                    onChange={(e) => handleSearchChange(e.target.value)}
-                    onFocus={() => setShowDropdown(true)}
-                    onBlur={() => {
-                      setTouched(prev => ({ ...prev, searchQuery: true }))
-                      setTimeout(() => setShowDropdown(false), 200)
-                    }}
-                    className="w-full bg-transparent outline-none"
-                  />
-                </div>
-                {touched.searchQuery && errors.searchQuery && (
-                  <p className="mt-1 text-xs font-medium text-red-600">{errors.searchQuery}</p>
-                )}
-
-                {/* Search Dropdown */}
-                {showDropdown && filteredPatients.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
-                    {filteredPatients.map(patient => (
-                      <button
-                        key={patient.id}
-                        type="button"
-                        onMouseDown={() => handleSelectPatient(patient)}
-                        className="flex w-full flex-col border-b border-slate-100 px-4 py-3 text-left transition-colors last:border-0 hover:bg-slate-50"
-                      >
-                        <span className="text-sm font-semibold text-slate-900">
-                          {patient.prenom} {patient.nom}
-                        </span>
-                        <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
-                          <span>{patient.telephone}</span>
-                          {patient.derniereVisite && (
-                            <>
-                              <span>•</span>
-                              <span>Dernière visite: {patient.derniereVisite}</span>
-                            </>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Mini Résumé Patient */}
-            {selectedPatient && (
-              <div
-                className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                  selectedPatient.alertes > 0
-                    ? 'bg-red-50 border-red-200 border-l-4 border-l-red-500'
-                    : 'bg-slate-50 border-slate-200'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-sm font-semibold ${
-                    selectedPatient.alertes > 0 ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+              {!selectedPatient ? (
+                <div className="relative">
+                  <div className={`${inputClass} flex items-center gap-3 ${
+                    touched.searchQuery && errors.searchQuery ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : ''
                   }`}>
-                    {selectedPatient.prenom[0]}{selectedPatient.nom[0]}
+                    <User size={18} className="text-slate-500" />
+                    <input
+                      type="text"
+                      placeholder="Rechercher..."
+                      value={searchQuery}
+                      onChange={(e) => handleSearchChange(e.target.value)}
+                      onFocus={() => setShowDropdown(true)}
+                      onBlur={() => {
+                        setTouched(prev => ({ ...prev, searchQuery: true }))
+                        setTimeout(() => setShowDropdown(false), 200)
+                      }}
+                      className="w-full bg-transparent outline-none"
+                    />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-900">
-                      {selectedPatient.prenom} {selectedPatient.nom}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      Dernière visite: {selectedPatient.derniereVisite}
-                    </p>
-                    {selectedPatient.alertes > 0 && (
-                      <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
-                        <AlertTriangle size={12} />
-                        {selectedPatient.alertes} alerte{selectedPatient.alertes > 1 ? 's' : ''}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
+                  {touched.searchQuery && errors.searchQuery && (
+                    <p className="mt-1 text-xs font-medium text-red-600">{errors.searchQuery}</p>
+                  )}
 
-            <div>
-              <label className={labelClass}>Téléphone</label>
-              <div className="relative">
-                <div className={`${inputClass} flex items-center gap-3 bg-[#F9FAFB]`}>
-                  <Phone size={18} className="text-[#9CA3AF] flex-shrink-0" />
-                  <input
-                    type="text"
-                    value={selectedPatient?.telephone || ''}
-                    readOnly
-                    aria-readonly="true"
-                    className="w-full bg-transparent outline-none text-[#6B7280] text-[14px]"
-                  />
-                  <Lock size={16} className="text-[#9CA3AF] flex-shrink-0 cursor-help" title="Depuis le dossier" />
+                  {/* Search Dropdown */}
+                  {showDropdown && filteredPatients.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+                      {filteredPatients.map(patient => (
+                        <button
+                          key={patient.id}
+                          type="button"
+                          onMouseDown={() => handleSelectPatient(patient)}
+                          className="flex w-full flex-col border-b border-slate-100 px-4 py-3 text-left transition-colors last:border-0 hover:bg-slate-50"
+                        >
+                          <span className="text-sm font-semibold text-slate-900">
+                            {patient.prenom} {patient.nom}
+                          </span>
+                          <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
+                            <span>{patient.telephone}</span>
+                            {patient.derniereVisite && (
+                              <>
+                                <span>•</span>
+                                <span>Dernière visite: {patient.derniereVisite}</span>
+                              </>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
+              ) : (
+                <div className="flex items-center justify-between p-3 rounded-[10px] border border-slate-200 bg-slate-50">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-slate-200 flex items-center justify-center text-slate-500">
+                      <User size={18} />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-[14px] text-slate-900 leading-tight">
+                        {selectedPatient.prenom} {selectedPatient.nom}
+                      </p>
+                      <p className="text-[12px] font-medium text-slate-500 mt-0.5 flex items-center gap-1.5">
+                        <Phone size={11} /> {selectedPatient.telephone || 'Non renseigné'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPatient(null)
+                      setSearchQuery('')
+                    }}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    <span className="text-xl leading-none -mt-0.5">×</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Shared fields for existing patient */}
@@ -716,18 +710,15 @@ function AppointmentFormModal({
             </div>
 
             {/* Date + Heure + Type in 3 columns */}
-            <div className="grid grid-cols-[140px_100px_1fr] gap-[10px]">
+            <div className="grid grid-cols-[150px_100px_1fr] gap-[10px]">
               <div>
                 <label className={labelClass}>Date</label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    value={existingForm.date}
-                    onChange={(e) => setExistingForm(prev => ({ ...prev, date: e.target.value }))}
-                    className={cn(inputClass, "pr-10")}
-                  />
-                  <Calendar size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                </div>
+                <input
+                  type="date"
+                  value={existingForm.date}
+                  onChange={(e) => setExistingForm(prev => ({ ...prev, date: e.target.value }))}
+                  className={inputClass}
+                />
                 {touched.date && errors.date && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.date}</p>
                 )}
@@ -817,51 +808,30 @@ function AppointmentFormModal({
               </div>
             </div>
 
-            {/* Carte d'invitation */}
-            <div className="p-5 rounded-lg bg-slate-50 border border-slate-200 text-center">
-              <div className="flex justify-center mb-2">
-                <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center">
-                  <User size={24} className="text-slate-700" />
-                </div>
-              </div>
-              <p className="text-sm text-slate-700 font-medium mb-1">
-                Ce patient n'est pas encore dans votre base
+            {/* Carte d'invitation (Aucun patient) */}
+            <div className="py-6 flex flex-col items-center justify-center text-center">
+              <p className="text-[15px] font-semibold text-slate-800 mb-1">
+                Aucun patient trouvé
               </p>
-              <p className="text-xs text-slate-600 mb-5">
-                Comment souhaitez-vous créer ce rendez-vous ?
+              <p className="text-sm text-slate-500 mb-6">
+                Aucun patient correspondant à votre recherche.
               </p>
-
-              <div className="space-y-3">
-                <button
-                  type="button"
-                  onClick={handleRdvRapide}
-                  className="w-full p-4 rounded-lg bg-blue-600 text-white text-left transition-all hover:bg-blue-700 hover:-translate-y-0.5 shadow-sm"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center">
-                      <UserPlus size={20} />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-sm">RDV rapide par téléphone</p>
-                      <p className="text-xs text-blue-100">Nom · Téléphone · Motif</p>
-                    </div>
-                  </div>
-                </button>
-
+              
+              <div className="flex flex-col gap-3 w-full max-w-sm mx-auto">
                 <button
                   type="button"
                   onClick={handleDossierComplet}
-                  className="w-full p-4 rounded-lg bg-white border border-slate-300 text-slate-800 text-left transition-all hover:bg-slate-50 hover:border-slate-400"
+                  className="w-full flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors shadow-sm"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center">
-                      <FileText size={20} className="text-slate-700" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-sm">Dossier complet</p>
-                      <p className="text-xs text-slate-500">Toutes les informations</p>
-                    </div>
-                  </div>
+                  <UserPlus size={16} />
+                  Créer un nouveau patient
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRdvRapide}
+                  className="w-full flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-white border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
+                >
+                  Créer un RDV rapide sans dossier
                 </button>
               </div>
             </div>
@@ -925,19 +895,16 @@ function AppointmentFormModal({
             </div>
 
             {/* Date + Heure + Type in 3 columns */}
-            <div className="grid grid-cols-[140px_100px_1fr] gap-[10px]">
+            <div className="grid grid-cols-[150px_100px_1fr] gap-[10px]">
               <div>
                 <label className={labelClass}>Date</label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    value={rdvRapideForm.date}
-                    onChange={(e) => setRdvRapideForm(prev => ({ ...prev, date: e.target.value }))}
-                    onBlur={() => setTouched(prev => ({ ...prev, date: true }))}
-                    className={cn(inputClass, "pr-10")}
-                  />
-                  <Calendar size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                </div>
+                <input
+                  type="date"
+                  value={rdvRapideForm.date}
+                  onChange={(e) => setRdvRapideForm(prev => ({ ...prev, date: e.target.value }))}
+                  onBlur={() => setTouched(prev => ({ ...prev, date: true }))}
+                  className={inputClass}
+                />
                 {touched.date && errors.date && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.date}</p>
                 )}
@@ -1050,15 +1017,12 @@ function AppointmentFormModal({
             <div className="grid grid-cols-[1fr_1fr] gap-[10px]">
               <div>
                 <label className={labelClass}>Date de naissance</label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    value={dossierCompletForm.dateNaissance}
-                    onChange={(e) => setDossierCompletForm(prev => ({ ...prev, dateNaissance: e.target.value }))}
-                    className={cn(inputClass, "pr-10")}
-                  />
-                  <Calendar size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9CA3AF] pointer-events-none" />
-                </div>
+                <input
+                  type="date"
+                  value={dossierCompletForm.dateNaissance}
+                  onChange={(e) => setDossierCompletForm(prev => ({ ...prev, dateNaissance: e.target.value }))}
+                  className={inputClass}
+                />
               </div>
               <div>
                 <label className={labelClass}>Sexe</label>
@@ -1135,19 +1099,16 @@ function AppointmentFormModal({
             </div>
 
             {/* Date + Heure + Type */}
-            <div className="grid grid-cols-[140px_100px_1fr] gap-[10px]">
+            <div className="grid grid-cols-[150px_100px_1fr] gap-[10px]">
               <div>
                 <label className={labelClass}>Date</label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    value={dossierCompletForm.date}
-                    onChange={(e) => setDossierCompletForm(prev => ({ ...prev, date: e.target.value }))}
-                    onBlur={() => setTouched(prev => ({ ...prev, date: true }))}
-                    className={cn(inputClass, "pr-10")}
-                  />
-                  <Calendar size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9CA3AF] pointer-events-none" />
-                </div>
+                <input
+                  type="date"
+                  value={dossierCompletForm.date}
+                  onChange={(e) => setDossierCompletForm(prev => ({ ...prev, date: e.target.value }))}
+                  onBlur={() => setTouched(prev => ({ ...prev, date: true }))}
+                  className={inputClass}
+                />
                 {touched.date && errors.date && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.date}</p>
                 )}

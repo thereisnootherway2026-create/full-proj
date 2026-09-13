@@ -22,8 +22,6 @@ const RETRY_BASE_MS        = 1_500    // 1.5 s × 2^attempt
 // Returns true when the visitId looks like a real Supabase UUID (not a mock)
 function isRealVisit(visitId) {
   if (!visitId) return false
-  if (visitId.startsWith('550e8400-e29b-41d4-a716-446655440')) return false
-  if (visitId.startsWith('vis_')) return false
   return true
 }
 
@@ -37,6 +35,11 @@ export function useAutosave({ consultationId, visitId, getPayload }) {
 
   // ── Core save function (with retry) ────────────────────────────────────────
   const performSave = useCallback(async (attempt = 0) => {
+    if (!consultationId || !visitId) {
+      setSaveStatus('error')
+      return
+    }
+
     if (!consultationId || !isRealVisit(visitId)) {
       // Mock visit — simulate save locally without network call
       isDirtyRef.current = false
@@ -114,3 +117,49 @@ export function useAutosave({ consultationId, visitId, getPayload }) {
 
   return { saveStatus, markDirty, triggerSave, performSave }
 }
+
+/**
+ * useAutoSave - A simple debounced hook to handle auto-saving of a single value. Used in MedicalTextarea.
+ */
+export function useAutoSave(value, onSave, delay = 3000) {
+  const [saveStatus, setSaveStatus] = useState('saved'); // 'idle' | 'saving' | 'saved' | 'error'
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+
+  const onSaveRef = useRef(onSave);
+  const valueRef = useRef(value);
+
+  useEffect(() => {
+    onSaveRef.current = onSave;
+  }, [onSave]);
+
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
+
+  useEffect(() => {
+    const currentValue = value;
+
+    const timer = setTimeout(async () => {
+      setSaveStatus('saving');
+      setErrorMessage(null);
+      try {
+        if (onSaveRef.current) {
+          await onSaveRef.current(currentValue);
+        }
+        setSaveStatus('saved');
+        setLastSavedAt(new Date());
+      } catch (err) {
+        setSaveStatus('error');
+        setErrorMessage(err?.message || 'Erreur de sauvegarde automatique');
+      }
+    }, delay);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [value, delay]);
+
+  return { saveStatus, errorMessage, lastSavedAt };
+}
+

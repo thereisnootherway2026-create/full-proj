@@ -1,16 +1,24 @@
 import { normalizeRole } from './rbac'
 
-/** True when an invited secretary still needs the welcome / password setup step. */
+/**
+ * True when an invited secretary still needs the welcome / password setup
+ * step. Only role='secretary' is ever routed through onboarding — other
+ * roles (doctor, admin) always return false here.
+ *
+ * The completion signal is profiles.onboarding_completed_at, set only by
+ * mm_finalize_invitation_acceptance (a SECURITY DEFINER function) at the
+ * exact moment acceptance finalizes, and protected from direct client
+ * writes by a database trigger — so this is a trustworthy, server-verified
+ * fact, not a heuristic. Previously this checked a client-writable
+ * user_metadata.onboarding_complete flag and a "does nom_complet look like
+ * a real two-word name" heuristic — both were unreliable: the metadata
+ * flag was never actually set server-side, and the name heuristic broke
+ * for every secretary because of a since-fixed bug where the accepted
+ * profile's nom_complet was left equal to the invited email address.
+ */
 export function needsSecretaryOnboarding(user, profile) {
   const role = normalizeRole(profile?.role || user?.user_metadata?.role)
   if (role !== 'secretary') return false
-  if (user?.user_metadata?.onboarding_complete === true) return false
 
-  const nom = String(profile?.nom_complet || user?.user_metadata?.nom_complet || '').trim()
-  const emailPrefix = String(user?.email || '').split('@')[0]?.toLowerCase()
-  if (nom && nom.toLowerCase() !== emailPrefix && nom.split(/\s+/).length >= 2) {
-    return false
-  }
-
-  return true
+  return !profile?.onboarding_completed_at
 }

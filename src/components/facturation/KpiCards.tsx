@@ -1,5 +1,6 @@
 import React from 'react';
 import { useFacturationStore } from './store';
+import { useFacturesQuery } from './queries';
 import { getTotals, filterFactures } from './selectors';
 import { Card } from './ui';
 import { dh, num, pct } from './format';
@@ -7,7 +8,8 @@ import { TrendingUp, Banknote, Clock, Wallet } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 export function KpiCards() {
-  const { factures, filters } = useFacturationStore();
+  const { filters } = useFacturationStore();
+  const { data: factures = [] } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   const totals = getTotals(filteredFactures);
 

@@ -1,19 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { useFacturationStore } from './store';
-import { Mode } from './data';
+import { useFacturationMutations } from './queries';
+import { Mode, factureReste } from './data';
 import { X } from 'lucide-react';
 import { dh } from './format';
 import { cn } from '../../lib/utils';
 
 interface EncaisserModalProps {
-  factureId: string;
-  reste: number;
+  facture: any;
   isOpen: boolean;
   onClose: () => void;
 }
 
-export function EncaisserModal({ factureId, reste, isOpen, onClose }: EncaisserModalProps) {
-  const { addPaiement, showToast } = useFacturationStore();
+export function EncaisserModal({ facture, isOpen, onClose }: EncaisserModalProps) {
+  const { showToast } = useFacturationStore();
+  const { addPaiement } = useFacturationMutations();
+  
+  const reste = factureReste(facture);
   
   const [montant, setMontant] = useState(reste.toString());
   const [mode, setMode] = useState<Mode>('Carte');
@@ -44,10 +47,13 @@ export function EncaisserModal({ factureId, reste, isOpen, onClose }: EncaisserM
       return;
     }
     
-    addPaiement(factureId, {
-      date: new Date(date).toISOString(),
-      montant: val,
-      mode
+    addPaiement({
+      id: facture.id,
+      p: {
+        date: new Date(date).toISOString(),
+        montant: val,
+        mode
+      }
     });
     
     showToast(`Paiement de ${dh(val)} ajouté avec succès.`);

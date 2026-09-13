@@ -111,7 +111,11 @@ function PrescriptionsPage() {
     
     // Allow React to render the print layer, then trigger print
     setTimeout(() => {
-      window.print()
+      try {
+        window.print()
+      } catch (e) {
+        console.warn('Window print error handled:', e)
+      }
       // Optional: Clear printData after print dialog closes so it hides again
       setTimeout(() => setPrintData(null), 1000) 
     }, 100)

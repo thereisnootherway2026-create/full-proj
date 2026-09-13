@@ -676,6 +676,10 @@ function AIAssistantDrawer({ open, onClose, formData, patient, medications }) {
     setActiveCapability(capability.id)
     setResult('')
     setLoading(true)
+    setResult('Assistant IA indisponible : aucun service clinique IA n’est configuré.')
+    setLoading(false)
+    return
+
     await new Promise((r) => setTimeout(r, 1200 + Math.random() * 800))
     const fn = MOCK_AI_RESPONSES[capability.id]
     setResult(fn ? fn(formData, patient, medications) : 'Résultat IA non disponible.')
@@ -864,28 +868,9 @@ export default function ConsultationWorkspace() {
   const navigate = useNavigate()
   const { notify, refreshVisits, refreshConsultations, canonicalRole, updateVisitStatus } = useAppContext()
 
-  const initialMockVisit = {
-    id: visitId,
-    status: VISIT_STATUSES.CONSULTATION,
-    consultation_id: visitId,
-    consultation: {
-      id: visitId,
-      chief_complaint: mockPatientData.reason,
-      notes: '',
-      started_at: new Date().toISOString(),
-    },
-    patients: {
-      prenom: 'Karima',
-      nom: 'Benali',
-      age: 34,
-      mutuelle: 'CNSS',
-      file_number: 'B_4445821',
-      telephone: '06 12 34 56 78',
-      gender: 'Femme',
-    },
-  }
-
-  const [visit, setVisit] = useState(initialMockVisit)
+  const [visit, setVisit] = useState(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [saving, setSaving] = useState(false)
   const [lockConflict, setLockConflict] = useState(null)
   const [overridingLock, setOverridingLock] = useState(false)
@@ -893,7 +878,7 @@ export default function ConsultationWorkspace() {
   // ── Form state (SOAP) ──────────────────────────────────────────────────────
   const [formData, setFormData] = useState({
     // S — Subjective
-    chiefComplaint: mockPatientData.reason,
+    chiefComplaint: '',
     history: '',
 
     // O — Objective: Vitals
@@ -917,9 +902,9 @@ export default function ConsultationWorkspace() {
     followUpInstructions: '',
   })
 
-  const [medications, setMedications] = useState([
+  const [medications, setMedications] = useState([]) /*
     { id: 1, name: 'Paracétamol 500mg', dosage: '1 comprimé × 3 fois par jour · 5 jours' },
-  ])
+  ]) */
 
   // ── Autosave ───────────────────────────────────────────────────────────────
   // Stable ref so getPayload never triggers hook re-renders
@@ -962,32 +947,9 @@ export default function ConsultationWorkspace() {
 
   const loadConsultation = async (cancelledRef) => {
     try {
-      // Check if it's our mock UUID (starts with 550e8400) OR "vis_" prefix - use mock data instead
-      if (visitId.startsWith('550e8400-e29b-41d4-a716-446655440') || visitId.startsWith('vis_')) {
-        const mockConsultation = {
-          id: visitId,
-          chief_complaint: mockPatientData.reason,
-          notes: '',
-        }
-        const mockVisitRow = {
-          id: visitId,
-          status: VISIT_STATUSES.CONSULTATION,
-          patients: {
-            prenom: 'Karima',
-            nom: 'Benali',
-            age: 34,
-            mutuelle: 'CNSS',
-            file_number: 'B_4445821',
-            telephone: '06 12 34 56 78',
-            gender: 'Femme',
-          },
-        }
-        if (cancelledRef?.cancelled) return
-        hydrateConsultation(mockConsultation, mockVisitRow)
-        return
-      }
-
-      // Real data loading for valid UUIDs — run in parallel for speed
+      setIsLoading(true)
+      setError(null)
+      
       const [openedResult, loadedResult] = await Promise.allSettled([
         openConsultation(visitId),
         getConsultationByVisit(visitId),
@@ -995,12 +957,17 @@ export default function ConsultationWorkspace() {
       const opened = openedResult.status === 'fulfilled' ? openedResult.value : null
       const loaded = loadedResult.status === 'fulfilled' ? loadedResult.value : null
       const consultation = loaded || opened
-      const visitRow = loaded?.visits || { id: visitId, status: VISIT_STATUSES.CONSULTATION }
+      const visitRow = loaded?.visits
 
       if (cancelledRef?.cancelled) return
+      
+      if (!consultation || !visitRow?.patients) {
+        throw new Error("Consultation introuvable.")
+      }
+      
       hydrateConsultation(consultation, visitRow)
-    } catch (error) {
-      const message = error.message || ''
+    } catch (err) {
+      const message = err.message || ''
       const isLockError = /lock/i.test(message)
 
       if (isLockError) {
@@ -1017,27 +984,13 @@ export default function ConsultationWorkspace() {
         }
       }
 
-      // Fallback to mock data
-      const mockConsultation = {
-        id: visitId,
-        chief_complaint: mockPatientData.reason,
-        notes: '',
-      }
-      const mockVisitRow = {
-        id: visitId,
-        status: VISIT_STATUSES.CONSULTATION,
-        patients: {
-          prenom: 'Karima',
-          nom: 'Benali',
-          age: 34,
-          mutuelle: 'CNSS',
-          file_number: 'B_4445821',
-          telephone: '06 12 34 56 78',
-          gender: 'Femme',
-        },
-      }
       if (cancelledRef?.cancelled) return
-      hydrateConsultation(mockConsultation, mockVisitRow)
+      console.error("Consultation load error:", err)
+      setError(err)
+    } finally {
+      if (!cancelledRef?.cancelled) {
+        setIsLoading(false)
+      }
     }
   }
 
@@ -1179,13 +1132,13 @@ export default function ConsultationWorkspace() {
   const patient = visit?.patients
     ? {
         name: `${visit.patients.prenom || ''} ${visit.patients.nom || ''}`.trim(),
-        age: visit.patients.age || mockPatientData.age,
-        insurance: visit.patients.mutuelle || mockPatientData.insurance,
-        fileNumber: visit.patients.file_number || visit.patients.id || mockPatientData.fileNumber,
-        phone: visit.patients.telephone || mockPatientData.phone,
-        gender: visit.patients.gender || 'Femme',
+        age: visit.patients.age ?? null,
+        insurance: visit.patients.mutuelle || '—',
+        fileNumber: visit.patients.file_number || visit.patients.id || '—',
+        phone: visit.patients.telephone || '—',
+        gender: visit.patients.gender || 'Non renseigné',
       }
-    : mockPatientData
+    : null
 
   // BMI label helper
   const bmiLabel =
@@ -1239,6 +1192,32 @@ export default function ConsultationWorkspace() {
     formData.treatmentPlan, formData.followUpInstructions,
     medications,
   ])
+
+  if (isLoading) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8FAFC' }}>
+        <Loader2 size={32} className="animate-spin text-blue-600 mb-4" />
+        <p className="text-slate-500 font-medium">Chargement de la consultation...</p>
+      </div>
+    )
+  }
+
+  if (error || !visit) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8FAFC', padding: 20 }}>
+        <div style={{ background: '#FEE2E2', color: '#991B1B', padding: '24px 32px', borderRadius: 16, textAlign: 'center', maxWidth: 400 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 8 }}>Erreur de chargement de la consultation</h2>
+          <p style={{ fontSize: 14, marginBottom: 20 }}>{error?.message || "La consultation est introuvable ou n'a pas pu être chargée."}</p>
+          <button 
+            onClick={() => loadConsultation({ cancelled: false })}
+            style={{ padding: '10px 20px', background: '#991B1B', color: 'white', border: 'none', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer' }}
+          >
+            Réessayer
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <motion.div
@@ -1707,7 +1686,7 @@ export default function ConsultationWorkspace() {
           {/* ── 2. Medical Alerts ─────────────────────────────────────── */}
           <SidebarCard>
             <SidebarSection icon={ShieldAlert} title="Alertes médicales" accent="red">
-              {mockAlerts.length > 0 ? (
+              {false ? (
                 <div className="space-y-2">
                   {mockAlerts.map((alert) => (
                     <AlertCard key={alert.id} {...alert} />
@@ -1731,7 +1710,7 @@ export default function ConsultationWorkspace() {
               title="Médicaments en cours"
               accent="amber"
             >
-              {mockCurrentMeds.length > 0 ? (
+              {false ? (
                 <div className="max-h-44 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#e2e8f0 transparent' }}>
                   {mockCurrentMeds.map((med) => (
                     <MedItem key={med.id} {...med} />
@@ -1760,7 +1739,7 @@ export default function ConsultationWorkspace() {
                 </button>
               }
             >
-              {mockHistory.length > 0 ? (
+              {false ? (
                 <div className="pt-1">
                   {mockHistory.map((item, idx) => (
                     <TimelineItem key={item.id} item={item} isLast={idx === mockHistory.length - 1} />
@@ -1777,7 +1756,7 @@ export default function ConsultationWorkspace() {
           {/* ── 5. Documents ─────────────────────────────────────────── */}
           <SidebarCard>
             <SidebarSection icon={FileText} title="Documents" accent="violet">
-              {mockDocuments.length > 0 ? (
+              {false ? (
                 <div>
                   {mockDocuments.map((doc) => (
                     <DocItem key={doc.id} {...doc} />

@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react'
 import Modal from '../common/Modal'
 import { useAppContext } from '../../context/AppContext'
 import { useCabinetId } from '../../hooks/useCabinetId'
-import { createPatient, updatePatient as apiUpdatePatient } from '../../lib/api'
+import { createPatient, updatePatient as apiUpdatePatient, getPatientClinicalFields } from '../../lib/api'
 
 const initialForm = {
   prenom: '',
@@ -23,10 +23,15 @@ const initialForm = {
 const GROUPE_SANGUIN_OPTIONS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
 
 function PatientFormModal({ open, onClose, patient, onSuccess }) {
-  const { notify, cabinetId: ctxCabinetId } = useAppContext()
+  const { notify, cabinetId: ctxCabinetId, canonicalRole } = useAppContext()
   const { cabinetId: hookCabinetId, loading: cabinetLoading } = useCabinetId()
   // Use whichever source resolves first
   const cabinetId = ctxCabinetId || hookCabinetId
+  // Clinical-adjacent fields are doctor/admin only — enforced server-side
+  // (mm_get_patient_clinical / protect_patient_clinical_fields trigger),
+  // this just keeps the shared form from showing a secretary fields she
+  // can neither read nor write.
+  const canSeeClinical = canonicalRole === 'doctor' || canonicalRole === 'admin'
 
   const [form, setForm] = useState(initialForm)
   const [loading, setLoading] = useState(false)
@@ -43,16 +48,29 @@ function PatientFormModal({ open, onClose, patient, onSuccess }) {
         email: patient.email || '',
         adresse: patient.adresse || '',
         ville: patient.ville || '',
-        groupe_sanguin: patient.groupe_sanguin || '',
-        allergies: patient.allergies || '',
-        antecedents: patient.antecedents || '',
+        groupe_sanguin: '',
+        allergies: '',
+        antecedents: '',
         mutuelle: patient.mutuelle || '',
       })
+      if (canSeeClinical && patient.id) {
+        getPatientClinicalFields(patient.id)
+          .then((clinical) => {
+            if (!clinical) return
+            setForm((current) => ({
+              ...current,
+              groupe_sanguin: clinical.groupe_sanguin || '',
+              allergies: clinical.allergies || '',
+              antecedents: clinical.antecedents || '',
+            }))
+          })
+          .catch(() => {})
+      }
     } else {
       setForm(initialForm)
     }
     setError(null)
-  }, [patient, open])
+  }, [patient, open, canSeeClinical])
 
   const title = patient ? 'Modifier le patient' : 'Nouveau patient'
 
@@ -182,27 +200,33 @@ function PatientFormModal({ open, onClose, patient, onSuccess }) {
         <fieldset>
           <legend className="mb-4 text-base font-semibold uppercase tracking-widest text-blue-700/80">Médical</legend>
           <div className="grid gap-4 md:grid-cols-2">
-            <label className="block">
-              <span className={labelClass}>Groupe sanguin</span>
-              <select value={form.groupe_sanguin} onChange={(e) => handleChange('groupe_sanguin', e.target.value)} className={inputClass}>
-                <option value="">— Sélectionner —</option>
-                {GROUPE_SANGUIN_OPTIONS.map((gs) => (
-                  <option key={gs} value={gs}>{gs}</option>
-                ))}
-              </select>
-            </label>
+            {canSeeClinical && (
+              <label className="block">
+                <span className={labelClass}>Groupe sanguin</span>
+                <select value={form.groupe_sanguin} onChange={(e) => handleChange('groupe_sanguin', e.target.value)} className={inputClass}>
+                  <option value="">— Sélectionner —</option>
+                  {GROUPE_SANGUIN_OPTIONS.map((gs) => (
+                    <option key={gs} value={gs}>{gs}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="block">
               <span className={labelClass}>Mutuelle / Assurance</span>
               <input type="text" value={form.mutuelle} onChange={(e) => handleChange('mutuelle', e.target.value)} className={inputClass} />
             </label>
-            <label className="block md:col-span-2">
-              <span className={labelClass}>Allergies</span>
-              <textarea rows={2} value={form.allergies} onChange={(e) => handleChange('allergies', e.target.value)} className={inputClass + ' resize-none'} />
-            </label>
-            <label className="block md:col-span-2">
-              <span className={labelClass}>Antécédents médicaux</span>
-              <textarea rows={2} value={form.antecedents} onChange={(e) => handleChange('antecedents', e.target.value)} className={inputClass + ' resize-none'} />
-            </label>
+            {canSeeClinical && (
+              <>
+                <label className="block md:col-span-2">
+                  <span className={labelClass}>Allergies</span>
+                  <textarea rows={2} value={form.allergies} onChange={(e) => handleChange('allergies', e.target.value)} className={inputClass + ' resize-none'} />
+                </label>
+                <label className="block md:col-span-2">
+                  <span className={labelClass}>Antécédents médicaux</span>
+                  <textarea rows={2} value={form.antecedents} onChange={(e) => handleChange('antecedents', e.target.value)} className={inputClass + ' resize-none'} />
+                </label>
+              </>
+            )}
           </div>
         </fieldset>
 

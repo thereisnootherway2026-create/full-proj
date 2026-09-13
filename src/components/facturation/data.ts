@@ -102,15 +102,16 @@ export function generateSeedData(): Facture[] {
   const prng = mulberry32(42);
   const factures: Facture[] = [];
   
-  // 8 months of data (~240 days)
+  // Use today's midnight as a deterministic anchor for the run
   const now = new Date();
-  const start = new Date();
-  start.setDate(now.getDate() - 240);
+  now.setHours(0, 0, 0, 0);
+  const start = new Date(now.getTime() - 240 * 86400000);
   
   const modes: Mode[] = ['Especes', 'Carte', 'Cheque', 'Virement', 'Tiers payant'];
-  const remises = [0, 0, 0, 0, 0, 5, 10]; // mostly 0
+  const remises = [0, 0, 0, 0, 0, 0, 5, 10]; // heavily weighted to 0
   
-  for (let i = 1; i <= 195; i++) {
+  // Generate 275 total so the 6-month window hits ~195+
+  for (let i = 1; i <= 275; i++) {
     const emissionMs = start.getTime() + prng() * (now.getTime() - start.getTime());
     const emissionDate = new Date(emissionMs);
     const echeanceDate = new Date(emissionMs + 30 * 86400000);
@@ -119,8 +120,8 @@ export function generateSeedData(): Facture[] {
     const assureur = assureurs[Math.floor(prng() * assureurs.length)];
     const patient = patientsPool[Math.floor(prng() * patientsPool.length)];
     
-    // 1 to 4 lignes
-    const nbLignes = Math.floor(prng() * 4) + 1;
+    // 1 to 3 actes, to get panier moyen closer to 700 DH
+    const nbLignes = prng() < 0.4 ? 1 : (prng() < 0.8 ? 2 : 3);
     const lignes: Ligne[] = [];
     for (let j = 0; j < nbLignes; j++) {
       const acte = actesCatalogue[Math.floor(prng() * actesCatalogue.length)];
@@ -128,7 +129,7 @@ export function generateSeedData(): Facture[] {
         code: acte.code,
         libelle: acte.libelle,
         pu: acte.pu,
-        qte: Math.floor(prng() * 2) + 1
+        qte: prng() > 0.90 ? 2 : 1
       });
     }
     
@@ -152,20 +153,22 @@ export function generateSeedData(): Facture[] {
     const isDraft = prng() < 0.05;
     const isCancelled = prng() < 0.05;
     
-    if (isDraft) {
-      f.brouillon = true;
-      f.statut = 'brouillon';
-    } else if (isCancelled) {
-      f.statut = 'annulee';
-    } else {
-      // payment logic
+    if (!isDraft) {
+      f.brouillon = false;
+      f.statut = 'en_attente';
       const net = factureNet(f);
-      const isPaidFull = prng() < 0.75; // 75% full paid
-      const isPaidPartial = !isPaidFull && prng() < 0.3;
+      
+      const isPastDue = now.getTime() > echeanceDate.getTime();
+      // Older invoices have much higher payment rate
+      const pPaidFull = isPastDue ? 0.72 : 0.02;
+      const pPaidPartial = isPastDue ? 0.15 : 0.02;
+      
+      const isPaidFull = prng() < pPaidFull;
+      const isPaidPartial = !isPaidFull && prng() < pPaidPartial;
       
       if (isPaidFull || isPaidPartial) {
-        const payAmount = isPaidFull ? net : Math.floor(net * (prng() * 0.5 + 0.2));
-        const pDate = new Date(emissionMs + prng() * 20 * 86400000);
+        const payAmount = isPaidFull ? net : Math.floor(net * (prng() * 0.4 + 0.3)); 
+        const pDate = new Date(emissionMs + prng() * 15 * 86400000);
         f.paiements.push({
           id: `p-${i}-1`,
           date: pDate.toISOString(),
@@ -176,7 +179,7 @@ export function generateSeedData(): Facture[] {
       }
       
       // Compute correct status if not fully paid
-      if (factureReste(f) > 0.01 && !isDraft && !isCancelled) {
+      if (factureReste(f) > 0.01 && !isCancelled) {
         if (now.getTime() > echeanceDate.getTime()) {
           f.statut = 'en_retard';
           f.relance = prng() > 0.5;
@@ -186,6 +189,10 @@ export function generateSeedData(): Facture[] {
       }
     }
     
+    if (isCancelled && !isDraft) {
+      f.statut = 'annulee';
+    }
+
     factures.push(f);
   }
   

@@ -301,14 +301,32 @@ export function openPrintWindow(data) {
             <div class="sign-box"></div>
           </div>
         </div>
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.focus();
+              try { window.print(); } catch(e){}
+            }, 150);
+          };
+        </script>
       </body>
     </html>
   `
 
-  popup.document.write(htmlContent)
-  popup.document.close()
-  popup.focus()
-  setTimeout(() => {
-    popup.print()
-  }, 250)
+  try {
+    popup.document.write(htmlContent)
+    popup.document.close()
+    try { popup.focus() } catch(e) {}
+    setTimeout(() => {
+      try {
+        if (popup && !popup.closed) {
+          popup.print()
+        }
+      } catch (e) {
+        console.warn('Popup print fallback ignored:', e)
+      }
+    }, 350)
+  } catch (err) {
+    console.error('Error writing to print popup window:', err)
+  }
 }

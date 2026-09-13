@@ -34,10 +34,13 @@ import {
 import Modal from '../components/common/Modal'
 import AddTaskModal from '../components/forms/AddTaskModal'
 import { loadTasks, saveTasks, taskToLegacy } from '../lib/taskHelpers'
+import { fetchTasks, createTask } from '../lib/taskService'
+import { createPatient } from '../lib/api'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { openPrintWindow } from '../components/common/ReceiptPrint'
-import { can } from '../lib/rbac'
 import { cancelAppointment, rescheduleAppointment } from '../lib/appointmentService'
 import { motion, AnimatePresence } from 'framer-motion'
+import { isToday, isPast, parseISO } from 'date-fns'
 
 const TZ = 'Africa/Casablanca'
 const fmtMAD = (n) => (Number(n) || 0).toLocaleString('fr-FR') + ' MAD'
@@ -99,6 +102,7 @@ function FilterChips() {
 }
 
 function PreviewRdvBar({ rdv, doctors, selectedDoctorId, onSelectDoctor, isBusy, onAddToQueue, onCancel, onShowDatePicker, showDatePicker, onConfirmDate, onBack, isHovered, onHover }) {
+  const { can } = useAppContext()
   const initials = getInitials(rdv)
   const [newDate, setNewDate] = useState(rdv.date_rdv)
   const [addIconHovered, setAddIconHovered] = useState(false)
@@ -149,6 +153,7 @@ function PreviewRdvBar({ rdv, doctors, selectedDoctorId, onSelectDoctor, isBusy,
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.25 }}
           >
+            {can('waiting_room.add_patient') && (
             <button
               onClick={onAddToQueue}
               disabled={isBusy}
@@ -200,7 +205,7 @@ function PreviewRdvBar({ rdv, doctors, selectedDoctorId, onSelectDoctor, isBusy,
               }}
             >
               <span>Ajouter à la salle</span>
-              <ArrowRight 
+              <ArrowRight
                 size={18}
                 style={{
                   transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -208,6 +213,8 @@ function PreviewRdvBar({ rdv, doctors, selectedDoctorId, onSelectDoctor, isBusy,
                 }}
               />
             </button>
+            )}
+            {can('appointments.cancel') && (
             <button
               onClick={onCancel}
               disabled={isBusy}
@@ -259,7 +266,7 @@ function PreviewRdvBar({ rdv, doctors, selectedDoctorId, onSelectDoctor, isBusy,
               }}
             >
               <span>Annuler RDV</span>
-              <X 
+              <X
                 size={18}
                 style={{
                   transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -267,6 +274,7 @@ function PreviewRdvBar({ rdv, doctors, selectedDoctorId, onSelectDoctor, isBusy,
                 }}
               />
             </button>
+            )}
           </motion.div>
         ) : (
           <motion.div 
@@ -352,15 +360,22 @@ function CancelledRdvBar({ rdv }) {
 function PreviewCard({ rdvList, cancelledRdvs, isBusy, onAddToQueue, onCancel, onShowDatePicker, showDatePickerMap, onConfirmDate, onBack }) {
   const scheduledAppointments = useMemo(
     () => rdvList
-      .filter((rdv) => rdv.status === RDV_STATUSES.SCHEDULED)
+      // arrival_status must also be checked — an rdv keeps status='confirme'
+      // after being added to the waiting room (only arrival_status changes),
+      // so without this a patient already in the queue (added from this
+      // page, from /salle-attente, or in another tab) kept showing an
+      // "Ajouter à la salle" button that would always fail server-side with
+      // "patient has already arrived or left" — a correct guard, but a
+      // confusing, always-broken-looking button.
+      .filter((rdv) => rdv.status === RDV_STATUSES.SCHEDULED && (rdv.arrival_status || 'NOT_ARRIVED') === 'NOT_ARRIVED')
       .sort((a, b) => new Date(a.date_rdv).getTime() - new Date(b.date_rdv).getTime()),
     [rdvList]
   )
 
   return (
-    <section className="rounded-[21px] border border-[#e2e8f0] bg-white px-5 py-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)] w-full">
+    <section className="rounded-[21px] border border-[#e2e8f0] bg-white px-5 py-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)] w-full h-full">
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-slate-900">
+        <h2 className="text-xl font-bold text-slate-900">
           Prévisualisation
         </h2>
         <p className="mt-1 text-sm font-medium text-slate-600">
@@ -417,24 +432,51 @@ const TACHES_DU_JOUR_CATEGORIES = [
 
 function TachesDuJourCard({ isExpanded }) {
   const navigate = useNavigate();
-  const { patients } = useAppContext();
+  const { patients, profile, notify } = useAppContext();
+  const queryClient = useQueryClient();
   const [voirToutesHovered, setVoirToutesHovered] = useState(false);
   const [voirToutesPressed, setVoirToutesPressed] = useState(false);
   const [addIconHovered, setAddIconHovered] = useState(false);
   const [addTaskModalOpen, setAddTaskModalOpen] = useState(false);
+  
+  const { data: tasks = [], isLoading } = useQuery({
+    queryKey: ['tasks', profile?.cabinet_id],
+    queryFn: () => fetchTasks(profile?.cabinet_id),
+    enabled: Boolean(profile?.cabinet_id)
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (taskData) => {
+      return createTask(profile?.cabinet_id, profile?.id, taskData)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks', profile?.cabinet_id] })
+      setAddTaskModalOpen(false)
+      notify?.({ title: 'Tâche créée', description: 'La tâche a été ajoutée.', variant: 'success' })
+    }
+  });
+
+  const getTaskCount = (categoryKey) => {
+    const pendingTasks = tasks.filter(t => t.status !== 'completed');
+    if (categoryKey === 'urgences') {
+      return pendingTasks.filter(t => t.priority === 'urgent' || t.priority === 'high').length;
+    } else if (categoryKey === 'resultats') {
+      return pendingTasks.filter(t => t.type === 'results').length;
+    } else if (categoryKey === 'prescriptions') {
+      return pendingTasks.filter(t => t.type === 'prescription').length;
+    } else if (categoryKey === 'messages') {
+      return pendingTasks.filter(t => t.type === 'patient_followup' || t.type === 'other').length;
+    }
+    return 0;
+  };
   
   const handleCategoryClick = (category) => {
     navigate(`/taches?category=${category}`);
   };
   
   return (
-    <section 
+    <section
       className="sidebar-apercu relative rounded-[21px] border border-slate-200 bg-white px-5 py-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)] overflow-hidden w-full"
-      style={{
-        opacity: isExpanded ? 0 : 1,
-        transition: 'opacity 0.4s ease',
-        willChange: 'opacity'
-      }}
     >
       <div className="sidebar-content">
         {/* Header */}
@@ -473,20 +515,30 @@ function TachesDuJourCard({ isExpanded }) {
         
         {/* Task list */}
         <div className="space-y-1">
-          {TACHES_DU_JOUR_CATEGORIES.map(({ key, label }, index) => (
-            <button
-              key={key}
-              type="button"
-              className={`group w-full text-left py-3.5 cursor-pointer transition-colors duration-200 ease-out ${
-                index < TACHES_DU_JOUR_CATEGORIES.length - 1 ? 'border-b border-slate-200' : ''
-              }`}
-              onClick={() => handleCategoryClick(key)}
-            >
-              <span className="inline-block text-base font-semibold text-slate-700 transition-all duration-200 ease-out group-hover:text-slate-900 group-hover:-translate-y-0.5 group-hover:drop-shadow-[0_4px_6px_rgba(15,23,42,0.12)]">
-                {label}
-              </span>
-            </button>
-          ))}
+          {TACHES_DU_JOUR_CATEGORIES.map(({ key, label }, index) => {
+            const count = getTaskCount(key);
+            return (
+              <button
+                key={key}
+                type="button"
+                className={`group w-full flex items-center justify-between text-left py-3.5 cursor-pointer transition-colors duration-200 ease-out ${
+                  index < TACHES_DU_JOUR_CATEGORIES.length - 1 ? 'border-b border-slate-200' : ''
+                }`}
+                onClick={() => handleCategoryClick(key)}
+              >
+                <span className="inline-block text-base font-semibold text-slate-700 transition-all duration-200 ease-out group-hover:text-slate-900 group-hover:-translate-y-0.5 group-hover:drop-shadow-[0_4px_6px_rgba(15,23,42,0.12)]">
+                  {label}
+                </span>
+                {!isLoading && count > 0 && (
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                    key === 'urgences' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                  }`}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            )
+          })}
         </div>
         
         {/* Bottom button */}
@@ -525,17 +577,16 @@ function TachesDuJourCard({ isExpanded }) {
         open={addTaskModalOpen}
         onClose={() => setAddTaskModalOpen(false)}
         patients={patients || []}
-        onSubmit={(task) => {
-          const existing = loadTasks()
-          saveTasks([task, ...existing])
-          setAddTaskModalOpen(false)
-        }}
+        onSubmit={(task) => createMutation.mutate(task)}
+        isPending={createMutation.isPending}
+        currentUser={profile}
       />
     </section>
   );
 }
 
 function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, onAcknowledgeAlert, onEncaisser, onViewReceipt, paidVisits, allPayments, onViewPaymentHistory, isHistoryCard = false, totalPaid = 0, onViewDossier, onUndo, isUndoable }) {
+  const { can } = useAppContext()
   console.log('=== PatientCard Debug ===');
   console.log('rdv:', rdv);
   // Get status - normalize status
@@ -725,7 +776,7 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
             Envoyé
           </button>
         )}
-        {isSecretary && normalizedStatus === VISIT_STATUSES.BILLING && !isPaid && (
+        {isSecretary && can('billing.collect') && normalizedStatus === VISIT_STATUSES.BILLING && !isPaid && (
           <button 
             onClick={(e) => {
               e.stopPropagation();
@@ -749,8 +800,8 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
             Encaisser
           </button>
         )}
-        {isSecretary && (isPaid || isHistoryCard) && (
-          <button 
+        {isSecretary && (isPaid || isHistoryCard) && (!isPartialInHistory || can('billing.collect')) && (
+          <button
             onClick={(e) => {
               e.stopPropagation();
               if (isPartialInHistory && onEncaisser) {
@@ -871,8 +922,13 @@ export default function DashboardPage() {
     refreshRdv,
     refreshVisits,
     refreshConsultations,
+    refreshPatients,
     updateVisitStatus,
+    removeVisit,
     updatePatientDebt,
+    dataErrors,
+    cabinetId,
+    can,
   } = useAppContext()
   const [localRdvList, setLocalRdvList] = useState(rdvList)
   const [selectedDoctors, setSelectedDoctors] = useState({})
@@ -889,9 +945,35 @@ export default function DashboardPage() {
   const [walkInAddPressed, setWalkInAddPressed] = useState(false)
   const [walkInCancelHovered, setWalkInCancelHovered] = useState(false)
   const [walkInCancelPressed, setWalkInCancelPressed] = useState(false)
+  const [walkInCreatingPatient, setWalkInCreatingPatient] = useState(false)
+  const [walkInNewPatientPhone, setWalkInNewPatientPhone] = useState('')
   const [lastUndoableAction, setLastUndoableAction] = useState(null)
   const [localQueueVisits, setLocalQueueVisits] = useState([])
   const fileDattenteRef = useRef(null)
+
+  // Sync localQueueVisits with AppContext visits to prevent stale data.
+  //
+  // "Ajouter à la salle" (handleAddToQueue) calls add_to_waiting_room, which
+  // only updates rdv.arrival_status — it never creates a row in `visits` at
+  // all (that's a separate table, populated by walk-ins/create_visit_from_rdv,
+  // neither of which this button uses). The optimistic entry it pushes into
+  // localQueueVisits will therefore NEVER show up in `visits`, no matter how
+  // long we wait. This effect used to blindly replace localQueueVisits with
+  // visits.filter(...) on every change — the instant ANY realtime event
+  // touched `visits` for an unrelated reason (another patient's status,
+  // a payment elsewhere in the clinic), that optimistic card was wiped out
+  // rather than genuinely persisted, which is why it could fail to "stick"
+  // in File d'attente. Now it merges: entries not yet (and never going to
+  // be) backed by a real visits row are preserved alongside the fresh ones.
+  useEffect(() => {
+    const fromVisits = visits.filter(v => ['waiting', 'called', 'consultation'].includes(v.status))
+    setLocalQueueVisits(current => {
+      const visitIds = new Set(fromVisits.map(v => v.id))
+      const pendingOnly = current.filter(v => !visitIds.has(v.id))
+      return [...pendingOnly, ...fromVisits]
+    })
+  }, [visits])
+
   const walkInSearchContainerRef = useRef(null)
   const [ghost, setGhost] = useState(null)
   const [activeAlerts, setActiveAlerts] = useState(new Set()) // IDs of visits in alert state
@@ -958,15 +1040,6 @@ export default function DashboardPage() {
   const currentDoctorId = profile?.id
   const showPreviewPanel = isSecretary
 
-  // Mock data matching secretary queue requirements
-  const mockVisits = [
-    { id: '550e8400-e29b-41d4-a716-446655440000', patient_name: 'Karima Benali', age: 34, reason: 'Douleurs abdominales', time_label: '09:30', time_status: 'Encaissement', status_type: 'Standard', status_label: 'ENCAISSEMENT', patient_id: 'pat_karima', status: VISIT_STATUSES.BILLING, billing_amount: 300, billing_type: 'cash' },
-    { id: '550e8400-e29b-41d4-a716-446655440006', patient_name: 'Ahmed Benali', age: 38, reason: 'Contrôle tension artérielle', time_label: '09:45', time_status: 'Encaissement', status_type: 'Standard', status_label: 'ENCAISSEMENT', patient_id: 'pat_ahmed', status: VISIT_STATUSES.BILLING, billing_amount: 300, billing_type: 'cash' },
-    { id: '550e8400-e29b-41d4-a716-446655440005', patient_name: 'Fatima El Amrani', age: 42, reason: 'Consultation générale', time_label: '10:00', time_status: 'Encaissement', status_type: 'Standard', status_label: 'ENCAISSEMENT', patient_id: 'patient-id-5', status: VISIT_STATUSES.BILLING, billing_amount: 350, billing_type: 'card' },
-    { id: '550e8400-e29b-41d4-a716-446655440007', patient_name: 'Hind Boukili', age: 31, reason: 'Suivi gynécologie', time_label: '10:15', time_status: 'Encaissement', status_type: 'Standard', status_label: 'ENCAISSEMENT', patient_id: 'pat_hind', status: VISIT_STATUSES.BILLING, billing_amount: 300, billing_type: 'cash' },
-    { id: '550e8400-e29b-41d4-a716-446655440001', patient_name: 'Marie-Claire Fontaine', age: 54, reason: 'Consultation annuelle', time_label: '10:30', time_status: 'Actuel', status_type: 'Actuel', status_label: 'EN COURS', duration: '12 min', patient_id: 'patient-id-1', status: VISIT_STATUSES.CONSULTATION },
-    { id: '550e8400-e29b-41d4-a716-446655440002', patient_name: 'Jean-Pierre Bertrand', age: 72, reason: 'Douleurs thoraciques', time_label: '10:45', time_status: 'En attente', status_type: 'Urgence', status_label: 'URGENCE', wait_time: '8 min', see_notes: true, patient_id: 'patient-id-2', status: VISIT_STATUSES.WAITING },
-  ]
 
   // Play notification sound
   const playNotificationSound = () => {
@@ -1000,8 +1073,11 @@ export default function DashboardPage() {
   // Open payment modal
   const handleEncaisser = (visit) => {
     setCurrentPaymentVisit(visit);
-    // Try to get total amount from visit, default 300
-    const totalAmount = visit?.consultations?.billing_amount || 300;
+    // Priority: sessionActes total > billing_amount on visit root (set by updateVisitStatus) > consultations sub-object > default 300
+    const sessionActesTotal = visit?.sessionActes?.reduce((sum, a) => sum + a.montant, 0) || 0;
+    const totalAmount = sessionActesTotal > 0
+      ? sessionActesTotal
+      : (visit?.billing_amount || visit?.consultations?.billing_amount || 300);
     setPaymentAmount(String(totalAmount)); // montant total dû (read-only)
     // Calculate reste à payer already existing (before new payment)
     const resteBefore = calculateResteAPayer(visit.id, totalAmount);
@@ -1030,14 +1106,13 @@ export default function DashboardPage() {
         visitId: visitId
       };
 
-      // Check if it's a real DB visit
-      if (!currentPaymentVisit.id.startsWith('550e') && !currentPaymentVisit.id.startsWith('vis_')) {
-        try {
-          await processVisitPayment(currentPaymentVisit.id, paymentMethod, amountToPay);
-        } catch (e) {
-          console.warn('DB processVisitPayment fallback to memory state:', e)
-        }
-      }
+      // NOTE: this used to also call recordPayment(currentPaymentVisit.id, ...),
+      // a separate RPC that expects an rdv id — but currentPaymentVisit.id is
+      // a visit id, so that call always raised "appointment not found" and
+      // aborted before processVisitPayment (the real, working billing RPC)
+      // ever ran. Confirmed live this dashboard "Encaisser" flow was broken;
+      // BillingPage.jsx's equivalent flow only ever called processVisitPayment.
+      await processVisitPayment(currentPaymentVisit.id, paymentMethod, amountToPay);
 
       // Calculate new total paid & remaining balance cleanly
       const previousPayments = allPayments[visitId] || [];
@@ -1203,21 +1278,24 @@ export default function DashboardPage() {
 
   const filteredQueue = useMemo(() => {
     const map = new Map()
-    ;(visits || []).forEach(visit => map.set(visit.id, visit))
+    // localQueueVisits first so that AppContext visits (which carry sessionActes from updateVisitStatus) win
     localQueueVisits.forEach(visit => map.set(visit.id, visit))
+    ;(visits || []).forEach(visit => map.set(visit.id, visit))
     const combined = Array.from(map.values())
     
     // Exclude COMPLETED, TERMINÉ, PARTIEL, and paidVisits from active queue immediately
     const activeQueue = combined.filter(visit => {
+      const normalizedStatus = visit.status || VISIT_STATUSES.WAITING
       const isPaid = paidVisits.has(visit.id)
       const hasPayments = (allPayments[visit.id] || []).length > 0
-      const isDoneOrPartial = visit.status === VISIT_STATUSES.COMPLETED || visit.status === VISIT_STATUSES.PARTIEL || visit.status === 'PARTIEL' || visit.status === 'TERMINÉ' || visit.status === 'completed' || visit.status === 'partiel'
+      const isDoneOrPartial = normalizedStatus === VISIT_STATUSES.COMPLETED || normalizedStatus === VISIT_STATUSES.PARTIEL || visit.status === 'PARTIEL' || visit.status === 'TERMINÉ' || visit.status === 'completed' || visit.status === 'partiel'
+      if (isDoctor) return normalizedStatus === VISIT_STATUSES.WAITING && !isPaid && !hasPayments
       return !isDoneOrPartial && !isPaid && !hasPayments
     })
     
     // Sort: 
     // - For Secretary: BILLING first
-    // - For Doctor: WAITING first, then CONSULTATION, then BILLING
+    // - For Doctor: newly added waiting patients first, then the remaining waiting patients
     const result = [...activeQueue].sort((a, b) => {
       const getPriority = (status) => {
         if (isDoctor) {
@@ -1236,21 +1314,33 @@ export default function DashboardPage() {
         }
       }
       
-      const aPriority = getPriority(a.status);
-      const bPriority = getPriority(b.status);
+      const aStatus = a.status || VISIT_STATUSES.WAITING
+      const bStatus = b.status || VISIT_STATUSES.WAITING
+      const aPriority = getPriority(aStatus);
+      const bPriority = getPriority(bStatus);
       
       if (aPriority !== bPriority) {
         return aPriority - bPriority;
+      }
+      if (isDoctor) {
+        const aIsRecentlyAdded = localQueueVisits.some(visit => visit.id === a.id)
+        const bIsRecentlyAdded = localQueueVisits.some(visit => visit.id === b.id)
+        if (aIsRecentlyAdded !== bIsRecentlyAdded) return aIsRecentlyAdded ? -1 : 1
       }
       return 0; // keep original order for same status
     })
     return result
   }, [localQueueVisits, visits, isDoctor, paidVisits, allPayments])
 
+  const activeConsultation = useMemo(() => {
+    return filteredQueue.find(visit => visit.status === VISIT_STATUSES.CONSULTATION)
+  }, [filteredQueue])
+
   const filteredHistory = useMemo(() => {
     const map = new Map()
-    ;(visits || []).forEach(visit => map.set(visit.id, visit))
+    // localQueueVisits first so that AppContext visits win (fresher data)
     localQueueVisits.forEach(visit => map.set(visit.id, visit))
+    ;(visits || []).forEach(visit => map.set(visit.id, visit))
     const combined = Array.from(map.values())
     return combined.filter(visit => {
       const isPaid = paidVisits.has(visit.id)
@@ -1298,8 +1388,9 @@ export default function DashboardPage() {
     if (!lastUndoableAction) return;
 
     if (lastUndoableAction.type === 'ADD_TO_QUEUE') {
-      // Revert: remove from localQueueVisits, add back to localRdvList at original index
+      // Revert: remove from localQueueVisits AND AppContext visits, add back to localRdvList
       setLocalQueueVisits(current => current.filter(visit => visit.id !== lastUndoableAction.rdv.id))
+      removeVisit(lastUndoableAction.rdv.id)
       setLocalRdvList(current => {
         const newList = [...current];
         const originalIndex = lastUndoableAction.originalIndex;
@@ -1317,43 +1408,63 @@ export default function DashboardPage() {
 
   const handleAddToQueue = async (rdv) => {
     setBusy(rdv.id, true)
-    const originalRdvIndex = localRdvList.findIndex(item => item.id === rdv.id)
-    
-    // Instant add
-    setLocalQueueVisits(current => [{
-      id: rdv.id,
-      patient_name: getPatientName(rdv),
-      age: 'N/A',
-      reason: rdv.motif || 'Consultation',
-      time_label: formatTime(rdv.date_rdv),
-      time_status: 'En attente',
-      status_type: 'Standard',
-      status_label: 'NOUVEAU',
-      wait_time: '0 min'
-    }, ...current])
-    setNewRdvs(prev => new Set([...prev, rdv.id]))
-    // Remove from preview
-    setLocalRdvList(current => current.filter(item => item.id !== rdv.id))
-    // Save undo action
-    setLastUndoableAction({
-      type: 'ADD_TO_QUEUE',
-      rdv: rdv,
-      originalIndex: originalRdvIndex,
-    })
-    setBusy(rdv.id, false)
-    notify({ title: 'Patient ajouté', description: `${getPatientName(rdv)} a été ajouté à la file d'attente` })
-    setTimeout(() => {
-      setNewRdvs(prev => {
-        const newSet = new Set(prev)
-        newSet.delete(rdv.id)
-        return newSet
-      })
-    }, 1000)
+    try {
+      // Call actual backend RPC
+      const { addToWaitingRoom } = await import('../lib/api')
+      await addToWaitingRoom(rdv.id)
+      
+      const originalRdvIndex = localRdvList.findIndex(item => item.id === rdv.id)
+
+      // Optimistically insert into AppContext visits so the useEffect resync keeps it alive
+      const newVisitEntry = {
+        id: rdv.id,
+        status: VISIT_STATUSES.WAITING,
+        patient_id: rdv.patients?.id || rdv.patient_id || rdv.id,
+        patients: rdv.patients || { prenom: rdv.prenom || '', nom: rdv.nom || '' },
+        motif: rdv.motif || 'Consultation',
+        date_rdv: rdv.date_rdv,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        patient_name: getPatientName(rdv),
+        time_label: formatTime(rdv.date_rdv),
+        time_status: 'En attente',
+        status_label: 'NOUVEAU',
+        wait_time: '0 min',
+      }
+
+      updateVisitStatus(rdv.id, VISIT_STATUSES.WAITING, newVisitEntry)
+      setLocalQueueVisits(current => [newVisitEntry, ...current.filter(v => v.id !== rdv.id)])
+      setNewRdvs(prev => new Set([...prev, rdv.id]))
+      setLocalRdvList(current => current.filter(item => item.id !== rdv.id))
+      
+      setLastUndoableAction(null) // Disable undo since we persisted it
+      notify({ title: 'Patient ajouté', description: `${getPatientName(rdv)} a été ajouté à la file d'attente`, variant: 'success' })
+      setTimeout(() => {
+        setNewRdvs(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(rdv.id)
+          return newSet
+        })
+      }, 1000)
+    } catch (error) {
+      console.error(error)
+      // Surface the real server message (permission/tenant/state errors are
+      // all raised with specific, actionable text by add_to_waiting_room) —
+      // a hardcoded generic string here previously hid exactly why an
+      // otherwise-legitimate click failed (e.g. the patient was already
+      // added to the queue).
+      notify({ title: 'Erreur', description: error?.message || 'Impossible d\'ajouter le patient à la salle d\'attente', tone: 'error' })
+    } finally {
+      setBusy(rdv.id, false)
+    }
   }
 
   const handleCancelRdv = async (rdv) => {
     setBusy(rdv.id, true)
-    setTimeout(() => {
+    try {
+      const { cancelAppointment } = await import('../lib/api')
+      await cancelAppointment(rdv.id)
+      
       setLocalRdvList(current => current.filter(item => item.id !== rdv.id))
       setCancelledRdvs(current => [rdv, ...current])
       setShowDatePickerMap(prev => {
@@ -1361,9 +1472,13 @@ export default function DashboardPage() {
         delete newMap[rdv.id]
         return newMap
       })
-      setBusy(rdv.id, false)
       notify({ title: 'RDV annulé', description: `${getPatientName(rdv)} a été annulé` })
-    }, 220)
+    } catch (error) {
+      console.error(error)
+      notify({ title: 'Erreur', description: 'Impossible d\'annuler ce rendez-vous', tone: 'error' })
+    } finally {
+      setBusy(rdv.id, false)
+    }
   }
 
   const handleShowDatePicker = (rdvId) => setShowDatePickerMap(prev => ({ ...prev, [rdvId]: true }))
@@ -1386,7 +1501,15 @@ export default function DashboardPage() {
       })
       notify({ title: 'Date mise à jour', description: 'Le rendez-vous a ete reprogramme.' })
     } catch (error) {
-      notify({ title: 'Erreur', description: error.message || 'Impossible de reprogrammer ce rendez-vous.', tone: 'error' })
+      // 23505 = unique_violation on rdv_one_active_per_patient_per_day
+      // (one active appointment per patient per calendar day) — translate
+      // to a clean French message; anything else keeps the real error.
+      const isSameDayDuplicate = error?.code === '23505' && /rdv_one_active_per_patient_per_day/.test(error?.message || error?.details || '')
+      notify({
+        title: 'Erreur',
+        description: isSameDayDuplicate ? 'Ce patient a déjà un rendez-vous prévu ce jour.' : (error.message || 'Impossible de reprogrammer ce rendez-vous.'),
+        tone: 'error',
+      })
     } finally {
       setBusy(rdvId, false)
     }
@@ -1422,13 +1545,16 @@ export default function DashboardPage() {
         setLocalQueueVisits(current => current.map(visit => 
           visit.id === rdv.id ? { ...visit, status: VISIT_STATUSES.CONSULTATION } : visit
         ))
-        // Navigate immediately!
-        navigate(`/consultation/${rdv.id}`)
+        // Get patient ID from rdv
+        const patientId = rdv.patient_id || rdv.patients?.id
+        // Navigate to unified workspace with visitId and startConsultation flag
+        navigate(`/patient-workspace/${patientId}?visitId=${rdv.id}&startConsultation=true`)
         // We can release the busy state after navigation has been triggered
         setTimeout(() => setBusy(rdv.id, false), 100)
         break
       case 'view_file':
-        navigate(`/consultation/${rdv.id}`)
+        const patId = rdv.patient_id || rdv.patients?.id
+        navigate(`/patient-workspace/${patId}?visitId=${rdv.id}`)
         break
       default:
         notify({ title: 'Action en cours', description: `Action "${action}" bientot disponible`, tone: 'info' })
@@ -1438,40 +1564,96 @@ export default function DashboardPage() {
   const today = new Date().toISOString().slice(0, 10)
   const revenueToday = (consultations || []).filter(c => c.date_consult === today && c.statut === 'paye').reduce((sum, c) => sum + (Number(c.montant) || 0), 0)
 
-  return (
-    <div className="min-h-full bg-slate-50 px-6 py-5">
-      {/* Temporary dev role switcher */}
-      <div className="mx-auto max-w-[1320px] mb-4">
-        <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl">
-          <button
-            onClick={() => setDevRoleOverride('doctor')}
-            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-              (devRoleOverride || canonicalRole) === 'doctor' 
-                ? 'bg-white text-slate-900 shadow-sm' 
-                : 'text-slate-600 hover:text-slate-800'
-            }`}
-          >
-            Médecin
-          </button>
-          <button
-            onClick={() => setDevRoleOverride('secretary')}
-            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-              (devRoleOverride || canonicalRole) === 'secretary' 
-                ? 'bg-white text-slate-900 shadow-sm' 
-                : 'text-slate-600 hover:text-slate-800'
-            }`}
-          >
-            Secrétaire
-          </button>
-          <button
-            onClick={() => setDevRoleOverride(null)}
-            className="px-3 py-2.5 rounded-lg text-sm font-semibold text-slate-500 hover:text-slate-700"
-          >
-            Reset
+  const dashboardError = dataErrors?.appointments || dataErrors?.visits || dataErrors?.consultations
+  if (dashboardError) {
+    return (
+      <div className="min-h-full bg-slate-50 px-6 py-5">
+        <div className="mx-auto max-w-xl rounded-2xl border border-red-200 bg-red-50 p-6 text-center">
+          <AlertCircle className="mx-auto mb-3 text-red-600" size={32} />
+          <h1 className="text-lg font-bold text-red-900">Erreur de chargement</h1>
+          <p className="mt-2 text-sm text-red-800">{dashboardError.message || 'Impossible de charger les données de la clinique.'}</p>
+          <button onClick={() => { refreshRdv?.(); refreshVisits?.(); refreshConsultations?.() }} className="mt-4 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white">
+            Réessayer
           </button>
         </div>
       </div>
-      <div className="mx-auto flex max-w-[1320px] flex-col gap-5">
+    )
+  }
+
+  return (
+    <div className="min-h-full bg-slate-50 px-6 py-5">
+      {/* Temporary dev role switcher — dev builds only, never rendered in production */}
+      {import.meta.env.DEV && (
+        <div className="mx-auto w-full mb-4">
+          <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl">
+            <button
+              onClick={() => setDevRoleOverride('doctor')}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+                (devRoleOverride || canonicalRole) === 'doctor'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-800'
+              }`}
+            >
+              Médecin
+            </button>
+            <button
+              onClick={() => setDevRoleOverride('secretary')}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+                (devRoleOverride || canonicalRole) === 'secretary'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-800'
+              }`}
+            >
+              Secrétaire
+            </button>
+            <button
+              onClick={() => setDevRoleOverride(null)}
+              className="px-3 py-2.5 rounded-lg text-sm font-semibold text-slate-500 hover:text-slate-700"
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Active Consultation Bar */}
+      {activeConsultation && (
+        <motion.div
+          initial={{ opacity: 0, y: -12 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -12 }}
+          transition={{ duration: 0.3 }}
+          className="mx-auto w-full mb-4 rounded-[21px] border border-blue-200 bg-blue-50 px-6 py-4 shadow-[0_2px_12px_rgba(37,99,235,0.08)]"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-blue-100">
+                <Stethoscope className="w-5.5 h-5.5 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-blue-800 flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
+                  En consultation
+                </p>
+                <p className="text-base font-bold text-slate-900">
+                  {getPatientName(activeConsultation)}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                const patientId = activeConsultation.patient_id || activeConsultation.patients?.id
+                navigate(`/patient-workspace/${patientId}?visitId=${activeConsultation.id}`)
+              }}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-[12px] text-sm font-semibold hover:bg-blue-700 transition-all shadow-[0_2px_8px_rgba(37,99,235,0.25)]"
+            >
+              Reprendre la consultation
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </motion.div>
+      )}
+      <div className="mx-auto flex w-full flex-col gap-5">
         {/* Unified grid layout to align everything */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 auto-rows-min">
           {/* Stat 1 */}
@@ -1483,7 +1665,7 @@ export default function DashboardPage() {
 
           {/* Doctor POV: File d'attente on LEFT (col 1-2), Apercu on RIGHT (col3) */}
           {/* Secretary POV: same as before */}
-          <section 
+          <section
             ref={fileDattenteRef}
             className="main-content relative rounded-[21px] border border-slate-200 bg-white px-5 py-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)] xl:col-span-2"
             style={{
@@ -1492,7 +1674,7 @@ export default function DashboardPage() {
               willChange: 'width, padding, transform'
             }}
           >
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
               <div>
                 {showingHistory ? (
                   <>
@@ -1506,7 +1688,7 @@ export default function DashboardPage() {
                   </>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap justify-end">
                 {showingHistory ? (
                   <button onClick={() => setShowingHistory(false)} className="flex items-center gap-2 px-4 py-2 h-[44px] rounded-[10px] border border-slate-300 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-all">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
@@ -1514,6 +1696,15 @@ export default function DashboardPage() {
                   </button>
                 ) : (
                   <>
+                    {!isDoctor && can('waiting_room.add_patient') && (
+                      <button
+                        type="button"
+                        onClick={() => setShowWalkIn((v) => !v)}
+                        className="flex items-center gap-2 px-4 py-2 h-[44px] rounded-[10px] border border-blue-200 bg-white text-sm font-semibold text-blue-700 hover:bg-blue-50 hover:border-blue-300 transition-all"
+                      >
+                        + Arrivée sans RDV
+                      </button>
+                    )}
                     <button onClick={() => setShowingHistory(true)} className="flex items-center gap-2 px-4 py-2 h-[44px] rounded-[10px] border border-slate-300 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-all">
                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3h18v4H3z"/><path d="M19 21H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2z"/><path d="M8 13h8"/><path d="M8 17h4"/></svg>
                       Historique
@@ -1536,13 +1727,8 @@ export default function DashboardPage() {
                       scale: { duration: 0.22, ease: [0.4, 0, 1, 1] }
                     }}
                   >
-                    {!isDoctor && can(userRole, 'visits:queue') && (
+                    {!isDoctor && can('waiting_room.add_patient') && showWalkIn && (
                       <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                        {!showWalkIn ? (
-                          <button type="button" onClick={() => setShowWalkIn(true)} className="text-sm font-semibold text-blue-700 hover:text-blue-800">
-                            + Arrivée sans RDV
-                          </button>
-                        ) : (
                           <div className="space-y-3">
                             <p className="text-sm font-semibold text-slate-900">Arrivée sans rendez-vous</p>
                             {/* Intelligent Patient Search */}
@@ -1568,7 +1754,73 @@ export default function DashboardPage() {
                                     className="absolute top-full left-0 right-0 mt-1 bg-white rounded-[10px] border border-slate-200 shadow-lg z-50 max-h-64 overflow-y-auto"
                                   >
                                     {filteredWalkInPatients.length === 0 ? (
-                                      <div className="p-3 text-sm text-slate-500">Aucun patient trouvé</div>
+                                      walkInSearchQuery.trim() ? (
+                                        walkInCreatingPatient ? (
+                                          <div className="p-3 space-y-2 border-t border-slate-100">
+                                            <p className="text-sm font-medium text-slate-700">Nouveau patient : {walkInSearchQuery}</p>
+                                            <input
+                                              type="tel"
+                                              placeholder="Téléphone"
+                                              value={walkInNewPatientPhone}
+                                              onChange={(e) => setWalkInNewPatientPhone(e.target.value)}
+                                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-300"
+                                            />
+                                            <div className="flex gap-2">
+                                              <button
+                                                type="button"
+                                                onClick={async () => {
+                                                  if (!walkInNewPatientPhone.trim()) {
+                                                    notify({ title: 'Téléphone requis', tone: 'error' })
+                                                    return
+                                                  }
+                                                  setBusy('walk-in-create', true)
+                                                  try {
+                                                    // Reuse the same name-parsing convention as AppointmentFormModal's rdv-rapide path
+                                                    const parts = walkInSearchQuery.trim().split(' ')
+                                                    const prenom = parts[0] || ''
+                                                    const nom = parts.slice(1).join(' ') || parts[0] || ''
+                                                    const newPatient = await createPatient({
+                                                      cabinet_id: cabinetId,
+                                                      prenom,
+                                                      nom,
+                                                      telephone: walkInNewPatientPhone.trim(),
+                                                    })
+                                                    setWalkInPatientId(newPatient.id)
+                                                    setWalkInCreatingPatient(false)
+                                                    setWalkInSearchQuery(`${prenom} ${nom}`.trim())
+                                                    await refreshPatients?.()
+                                                    notify({ title: 'Patient créé', description: 'Sélectionnez maintenant un médecin.' })
+                                                  } catch (err) {
+                                                    notify({ title: 'Erreur', description: err.message || 'Impossible de créer ce patient.', tone: 'error' })
+                                                  } finally {
+                                                    setBusy('walk-in-create', false)
+                                                  }
+                                                }}
+                                                className="flex-1 rounded-xl bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                                              >
+                                                Créer et continuer
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() => setWalkInCreatingPatient(false)}
+                                                className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600"
+                                              >
+                                                Annuler
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={() => setWalkInCreatingPatient(true)}
+                                            className="w-full p-3 text-left text-sm text-blue-600 font-medium hover:bg-blue-50"
+                                          >
+                                            + Créer "{walkInSearchQuery}" comme nouveau patient
+                                          </button>
+                                        )
+                                      ) : (
+                                        <div className="p-3 text-sm text-slate-500">Aucun patient trouvé</div>
+                                      )
                                     ) : (
                                       filteredWalkInPatients.map(patient => (
                                         <button
@@ -1655,10 +1907,9 @@ export default function DashboardPage() {
                               </button>
                             </div>
                           </div>
-                        )}
                       </div>
                     )}
-                    
+
                     {filteredQueue.length === 0 ? (
                       <motion.div className="flex min-h-[440px] flex-col items-center justify-center text-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                         <Users className="h-[66px] w-[66px] text-slate-200" strokeWidth={1.6} />
@@ -1749,27 +2000,7 @@ export default function DashboardPage() {
                 )}
               </AnimatePresence>
             
-            {/* Expand/collapse button - only for doctor view */}
-            {!showPreviewPanel && (
-              <button
-                className="toggle-sidebar-btn absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-8 h-8 rounded-full bg-white border border-slate-200 shadow-md flex items-center justify-center hover:bg-slate-50 transition-all duration-300 z-20"
-                onClick={() => setIsExpanded(!isExpanded)}
-                aria-label={isExpanded ? "Afficher l'aperçu du jour" : "Masquer l'aperçu du jour"}
-              >
-                <svg 
-                  className="toggle-arrow" 
-                  viewBox="0 0 24 24" 
-                  width="20" 
-                  height="20"
-                  style={{
-                    transition: 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                    transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)'
-                  }}
-                >
-                  <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              </button>
-            )}
+
           </section>
 
           {/* Doctor POV: always show Apercu du Jour (no Preview) */}

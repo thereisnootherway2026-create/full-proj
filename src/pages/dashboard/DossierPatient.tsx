@@ -31,6 +31,8 @@ import {
   Zap,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useParams } from 'react-router-dom';
+import { usePatientDossier } from '../../hooks/usePatientDossier';
 
 /* ─── Animation variants ─── */
 const fadeUp = {
@@ -146,7 +148,7 @@ const journeyData = [
   },
 ];
 
-type EventType = 'Consultation' | 'Urgence' | 'Laboratoire' | 'Prescription' | 'Imagerie';
+type EventType = 'Consultation' | 'Laboratoire' | 'Prescription' | 'Document' | 'Administratif';
 
 const typeConfig: Record<EventType, {
   dot: string; border: string; tag: string; tagText: string;
@@ -184,15 +186,13 @@ const typeConfig: Record<EventType, {
   },
 };
 
-const filters = ['Tous', 'Consultations', 'Urgences', 'Laboratoire', 'Prescriptions', 'Imagerie'];
+const filters = ['Tous', 'Consultations', 'Laboratoire', 'Prescriptions'];
 
-const filterMap: Record<string, EventType | null> = {
+const filterMap: Record<string, string | null> = {
   Tous: null,
   Consultations: 'Consultation',
-  Urgences: 'Urgence',
   Laboratoire: 'Laboratoire',
   Prescriptions: 'Prescription',
-  Imagerie: 'Imagerie',
 };
 
 /* ─── Confirm modal ─── */
@@ -236,6 +236,8 @@ const TerminerModal = ({ onClose, onConfirm }: { onClose: () => void; onConfirm:
 
 /* ─── Main component ─── */
 const DossierPatient = () => {
+  const { id: patientId } = useParams();
+  const { timeline, isLoading: timelineLoading } = usePatientDossier(patientId);
   const [activeTab, setActiveTab] = useState<'Parcours' | 'Informations' | 'Ordonnances'>('Parcours');
   const [activeFilter, setActiveFilter] = useState('Tous');
   const [searchQuery, setSearchQuery] = useState('');
@@ -243,7 +245,7 @@ const DossierPatient = () => {
 
   const initials = `${patient.prenom[0]}${patient.nom[0]}`;
 
-  const filteredJourney = journeyData.filter((item) => {
+  const filteredJourney = (timeline || []).filter((item) => {
     const typeMatch = filterMap[activeFilter] === null || item.type === filterMap[activeFilter];
     const searchMatch =
       searchQuery === '' ||
@@ -258,7 +260,7 @@ const DossierPatient = () => {
       {/* ── Header card ── */}
       <div className="sticky top-0 z-50 bg-[#F4F7FB] px-6 pt-5 pb-3">
         <div
-          className="max-w-7xl mx-auto border border-[#E2E8F0] bg-white px-5 h-[64px] flex items-center justify-between gap-4"
+          className="w-full border border-[#E2E8F0] bg-white px-5 h-[64px] flex items-center justify-between gap-4"
           style={{ borderRadius: '24px', boxShadow: '0 6px 18px rgba(15,23,42,0.04)' }}
         >
           {/* Left: back + identity */}
@@ -309,7 +311,7 @@ const DossierPatient = () => {
       </div>
 
       {/* ── Main content ── */}
-      <div className="max-w-7xl mx-auto px-6 py-7">
+      <div className="w-full px-6 py-7">
         {/* ── Vitals ribbon ── */}
           <motion.div
             className="bg-white border border-[#CBD5E1] rounded-[18px] p-4 mb-7 shadow-[0_1px_3px_rgba(0,0,0,.04)]"
@@ -569,16 +571,16 @@ const DossierPatient = () => {
                     />
                   </div>
 
-                  {/* Filters */}
-                  <div className="flex items-center gap-2 flex-wrap">
+                                    {/* Filters */}
+                  <div className="flex bg-slate-100 p-1 rounded-xl w-max flex-wrap">
                     {filters.map((f) => (
                       <button
                         key={f}
                         onClick={() => setActiveFilter(f)}
-                        className={`px-3.5 py-1.5 rounded-[10px] text-[12px] font-semibold transition-all duration-200 ${
+                        className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
                           activeFilter === f
-                            ? 'bg-white text-[#0F172A] border border-[#E2E8F0] shadow-sm'
-                            : 'text-[#64748B] hover:text-[#0F172A] hover:bg-white/60'
+                            ? 'bg-white text-blue-700 shadow-[0_1px_3px_rgba(0,0,0,0.1)]'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
                         }`}
                       >
                         {f}
@@ -592,10 +594,20 @@ const DossierPatient = () => {
                     <div className="absolute left-[10px] top-0 bottom-0 w-0.5 bg-[#D8E2EE]" style={{ zIndex: 5 }} />
 
                     <div className="space-y-4">
-                      {filteredJourney.length === 0 ? (
-                        <div className="text-center py-12 text-[#94A3B8]">
-                          <Search className="w-8 h-8 mx-auto mb-3 opacity-40" />
-                          <p className="text-[14px]">Aucun résultat pour cette recherche</p>
+                                            {timelineLoading ? (
+                        <div className="flex flex-col items-center justify-center py-16 bg-white rounded-[16px] border border-[#E2E8F0] border-dashed">
+                          <div className="w-8 h-8 border-4 border-slate-100 border-t-[#3B82F6] rounded-full animate-spin mb-4" />
+                          <p className="text-[14px] font-medium text-[#64748B]">Chargement de l'historique...</p>
+                        </div>
+                      ) : filteredJourney.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-16 bg-slate-50 rounded-[16px] border border-[#E2E8F0] border-dashed text-center">
+                          <div className="w-12 h-12 bg-white rounded-xl border border-slate-100 flex items-center justify-center shadow-sm mb-3">
+                            <Activity className="w-6 h-6 text-slate-400" />
+                          </div>
+                          <h3 className="text-[14px] font-semibold text-[#0F172A]">Aucun historique médical</h3>
+                          <p className="text-[13px] text-[#64748B] mt-1 max-w-[250px]">
+                            {searchQuery ? "Aucun événement correspondant à votre recherche." : "Ce patient n'a pas encore de consultations ou d'examens."}
+                          </p>
                         </div>
                       ) : (
                         filteredJourney.map((item, index) => {

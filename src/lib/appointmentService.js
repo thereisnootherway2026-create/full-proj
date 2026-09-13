@@ -25,3 +25,11 @@ export async function rescheduleAppointment(rdvId, scheduledAt) {
   if (error) throw error
   return data
 }
+
+export async function markAppointmentArrived(rdvId) {
+  const { data, error } = await supabase.rpc('mm_mark_appointment_arrived', {
+    p_rdv_id: rdvId,
+  })
+  if (error) throw error
+  return data
+}

@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useFacturationStore } from './store';
+import { useFacturationMutations } from './queries';
 import { praticiens, assureurs, patientsPool, actesCatalogue, Ligne } from './data';
 import { X, Plus, Trash2 } from 'lucide-react';
 import { dh } from './format';
 import { cn } from '../../lib/utils';
 
 export function NouvelleFactureDrawer() {
-  const { ui, setNouvelleFactureOpen, createFacture, setFactureOuverteId, showToast } = useFacturationStore();
+  const { ui, setNouvelleFactureOpen, setFactureOuverteId, showToast } = useFacturationStore();
+  const { createFacture } = useFacturationMutations();
   
   const [patientRef, setPatientRef] = useState('');
   const [praticienId, setPraticienId] = useState(praticiens[0].id);
@@ -58,7 +60,7 @@ export function NouvelleFactureDrawer() {
   const tva = htRemise * 0.20;
   const net = htRemise + tva;
 
-  const handleSave = (brouillon: boolean) => {
+  const handleSave = async (brouillon: boolean) => {
     if (!patientRef) {
       setError('Veuillez sélectionner un patient.');
       return;
@@ -83,10 +85,11 @@ export function NouvelleFactureDrawer() {
     const emissionDate = new Date();
     const echeanceDate = new Date(emissionDate.getTime() + 30 * 86400000);
 
-    const newId = createFacture({
+    const newId = await createFacture({
       dateEmission: emissionDate.toISOString(),
       dateEcheance: echeanceDate.toISOString(),
       praticienId,
+      patientId: 'b0000001-0000-0000-0000-000000000001', // Fallback ID for demo UI
       patientNom: patient.nom,
       patientRef: patient.ref,
       assureurId,

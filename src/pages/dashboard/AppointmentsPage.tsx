@@ -24,10 +24,10 @@ import AppointmentDetailModal from '../../components/agenda/AppointmentDetailMod
 import AppointmentFormModal from '../../components/forms/AppointmentFormModal'
 import { useAppContext } from '../../context/AppContext'
 import { supabase } from '../../lib/supabase'
-import { cancelAppointment, confirmAppointment } from '../../lib/appointmentService'
+import { cancelAppointment, confirmAppointment, markAppointmentArrived } from '../../lib/appointmentService'
 import WeeklyAgenda from '../../components/agenda/WeeklyAgenda'
 import MonthlyAgenda from '../../components/agenda/MonthlyAgenda'
-import { MOCK_RDV } from '../../lib/mockData'
+
 import type {
   AgendaAppointmentInput,
   AgendaCalendarAppointmentInput,
@@ -162,8 +162,116 @@ const mapRdvToAppointment = (rdv: DailyRdv): Appointment => {
   }
 }
 
+/* ─── Dashboard-style Micro-interaction Buttons ─── */
+
+function AgendaNavButton({
+  onClick,
+  title,
+  children,
+}: {
+  onClick: () => void
+  title?: string
+  children: React.ReactNode
+}) {
+  const [hovered, setHovered] = React.useState(false)
+  const [pressed, setPressed] = React.useState(false)
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); setPressed(false) }}
+      onMouseDown={() => setPressed(true)}
+      onMouseUp={() => setPressed(false)}
+      className="flex items-center justify-center rounded-[0.625rem] font-semibold text-sm"
+      style={{
+        backgroundColor: hovered ? '#f8fafc' : '#ffffff',
+        color: '#475569',
+        border: `2px solid ${hovered ? '#cbd5e1' : '#e2e8f0'}`,
+        padding: '0 0.625rem',
+        minHeight: '44px',
+        width: '44px',
+        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        transform: pressed ? 'translateY(-1px) scale(0.96)' : hovered ? 'translateY(-2px)' : 'translateY(0)',
+        boxShadow: hovered ? '0 6px 16px -4px rgba(148,163,184,0.2)' : 'none',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function AgendaTodayButton({
+  onClick,
+  children,
+}: {
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  const [hovered, setHovered] = React.useState(false)
+  const [pressed, setPressed] = React.useState(false)
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); setPressed(false) }}
+      onMouseDown={() => setPressed(true)}
+      onMouseUp={() => setPressed(false)}
+      className="flex items-center justify-center rounded-[0.625rem] font-bold text-sm"
+      style={{
+        backgroundColor: hovered ? '#f8fafc' : '#ffffff',
+        color: '#475569',
+        border: `2px solid ${hovered ? '#cbd5e1' : '#e2e8f0'}`,
+        padding: '0.625rem 1.25rem',
+        minHeight: '44px',
+        whiteSpace: 'nowrap',
+        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        transform: pressed ? 'translateY(-1px) scale(0.98)' : hovered ? 'translateY(-2px)' : 'translateY(0)',
+        boxShadow: hovered ? '0 6px 16px -4px rgba(148,163,184,0.2)' : 'none',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function AgendaPrimaryButton({
+  onClick,
+  children,
+}: {
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  const [hovered, setHovered] = React.useState(false)
+  const [pressed, setPressed] = React.useState(false)
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); setPressed(false) }}
+      onMouseDown={() => setPressed(true)}
+      onMouseUp={() => setPressed(false)}
+      className="flex items-center gap-2 rounded-[0.625rem] font-bold text-sm text-white"
+      style={{
+        backgroundColor: pressed ? '#1d4ed8' : hovered ? '#1e40af' : '#2563eb',
+        border: `2px solid ${hovered ? '#1e3a8a' : '#60a5fa'}`,
+        padding: '0.625rem 1.375rem',
+        minHeight: '44px',
+        whiteSpace: 'nowrap',
+        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        transform: pressed ? 'translateY(-1px) scale(0.98)' : hovered ? 'translateY(-2px) scale(1.01)' : 'translateY(0)',
+        boxShadow: hovered
+          ? '0 8px 20px -4px rgba(37,99,235,0.45)'
+          : '0 4px 12px -2px rgba(37,99,235,0.25)',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
 const AppointmentsPage: React.FC = () => {
-  const { profile, notify } = useAppContext()
+  const { profile, notify, can } = useAppContext()
   const queryClient = useQueryClient()
   const [view, setView] = useState<'day' | 'week' | 'month'>('day')
   const [isAnimating, setIsAnimating] = useState(false)
@@ -232,16 +340,15 @@ const AppointmentsPage: React.FC = () => {
       if (queryError) {
         const errorMsg = queryError?.message || (typeof queryError === 'object' ? JSON.stringify(queryError) : String(queryError))
         console.error('Agenda query error:', errorMsg)
-        // Return mock data on error instead of throwing
-        return MOCK_RDV as unknown as DailyRdv[]
+        return [] as DailyRdv[]
       }
 
-      return ((data && data.length > 0 ? data : MOCK_RDV) || []) as DailyRdv[]
+      return (data || []) as DailyRdv[]
     },
   })
 
-  // Use mock data when no real data returned
-  const dailyRdvs = dailyRdvsRaw.length > 0 ? dailyRdvsRaw : MOCK_RDV as unknown as DailyRdv[]
+  // Use real data directly
+  const dailyRdvs = dailyRdvsRaw || []
 
   const agendaAppointments = useMemo<AgendaCalendarAppointmentInput[]>(() => {
     return dailyRdvs
@@ -373,11 +480,12 @@ const AppointmentsPage: React.FC = () => {
           .eq('id', appointment.id)
         if (notesError) throw notesError
       } else if (status === 'ARRIVE') {
-        const { error: arriveError } = await supabase
-          .from('rdv')
-          .update({ status: 'arrive' })
-          .eq('id', appointment.id)
-        if (arriveError) throw arriveError
+        // Was a raw, ungated `rdv.update({status:'arrive'})` — any same-
+        // clinic authenticated user could call this directly regardless of
+        // role/permission. Now goes through a permission-checked RPC
+        // (appointments.mark_arrived), matching every other status change
+        // on this page.
+        await markAppointmentArrived(appointment.id)
       }
 
       await refreshDay()
@@ -459,10 +567,12 @@ const AppointmentsPage: React.FC = () => {
 
             {/* Center: View toggles & Date navigation */}
             <div className="flex items-center justify-center gap-8">
-              <div className="relative inline-flex rounded-[24px] bg-slate-100 p-1">
+              {/* Segmented view toggle */}
+              <div className="relative inline-flex rounded-xl bg-slate-100 p-1">
                 <div 
-                  className="absolute top-1 left-1 h-10 w-28 rounded-[20px] bg-blue-600 shadow-sm transition-all duration-700"
+                  className="absolute top-1 left-1 h-11 w-28 rounded-[0.625rem] bg-[#2563eb] shadow-[0_4px_14px_0_rgba(37,99,235,0.2)] transition-all duration-700"
                   style={{
+                    border: '2px solid #60a5fa',
                     transform: `translateX(${view === 'day' ? 0 : view === 'week' ? 112 : 224}px) scaleX(${isAnimating ? 1.08 : 1})`,
                     transitionTimingFunction: 'cubic-bezier(0.25, 1.5, 0.5, 1)'
                   }}
@@ -473,10 +583,10 @@ const AppointmentsPage: React.FC = () => {
                     type="button"
                     onClick={() => handleViewChange(option)}
                     className={cn(
-                      "relative z-10 rounded-[20px] px-5 py-2 text-sm font-semibold transition-all duration-400 h-10 w-28 text-center",
+                      "relative z-10 rounded-[0.625rem] px-5 py-2 text-sm font-bold transition-all duration-400 h-11 w-28 text-center",
                       view === option
                         ? 'text-white'
-                        : 'text-slate-700 hover:text-slate-800 hover:bg-slate-200/50'
+                        : 'text-slate-700 hover:text-slate-900'
                     )}
                     style={{
                       transitionTimingFunction: 'cubic-bezier(0.25, 1.5, 0.5, 1)'
@@ -487,28 +597,28 @@ const AppointmentsPage: React.FC = () => {
                 ))}
               </div>
 
+              {/* Date navigation */}
               <div className="flex items-center gap-2">
-                <button onClick={handlePrev} className="rounded-[16px] border border-slate-200 p-2 h-10 transition-colors hover:bg-slate-100">
-                  <ChevronLeft size={18} className="text-slate-600" />
-                </button>
-                <button onClick={() => setSelectedDate(new Date())} className="rounded-[16px] border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 h-10 transition-colors hover:bg-slate-100">
+                <AgendaNavButton onClick={handlePrev} title="Précédent">
+                  <ChevronLeft size={18} />
+                </AgendaNavButton>
+                <AgendaTodayButton onClick={() => setSelectedDate(new Date())}>
                   Aujourd&apos;hui
-                </button>
-                <button onClick={handleNext} className="rounded-[16px] border border-slate-200 p-2 h-10 transition-colors hover:bg-slate-100">
-                  <ChevronRight size={18} className="text-slate-600" />
-                </button>
+                </AgendaTodayButton>
+                <AgendaNavButton onClick={handleNext} title="Suivant">
+                  <ChevronRight size={18} />
+                </AgendaNavButton>
               </div>
             </div>
 
             {/* Right: Action button */}
             <div className="flex flex-1 justify-end">
-              <button
-                onClick={() => setDraftSlot({ date: selectedDayKey, time: '09:00' })}
-                className="flex items-center gap-2 rounded-[16px] bg-blue-600 px-6 py-2 text-sm font-semibold text-white h-10 shadow-lg shadow-blue-600/20 transition-all active:scale-95 hover:bg-blue-700"
-              >
-                <Plus size={18} />
-                Nouveau RDV
-              </button>
+              {can('appointments.create') && (
+                <AgendaPrimaryButton onClick={() => setDraftSlot({ date: selectedDayKey, time: '09:00' })}>
+                  <Plus size={18} />
+                  Nouveau RDV
+                </AgendaPrimaryButton>
+              )}
             </div>
           </div>
         </div>
@@ -530,7 +640,7 @@ const AppointmentsPage: React.FC = () => {
               endTime={WORKDAY_END}
               slotMinutes={SLOT_MINUTES}
               onSelectAppointment={setSelectedAppointmentId}
-              onCreateAt={(time) => setDraftSlot({ date: selectedDayKey, time })}
+              onCreateAt={can('appointments.create') ? (time) => setDraftSlot({ date: selectedDayKey, time }) : undefined}
             />
           )}
 

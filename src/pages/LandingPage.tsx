@@ -106,7 +106,17 @@ const LandingPage = () => {
                 .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
                 .glass-card { background: rgba(255, 255, 255, 0.4); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.3); }
                 .levitate { animation: float 6s ease-in-out infinite; }
-                @keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-20px); } }
+                @keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-4px); } }
+                @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+                @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+                .stat-card { animation: fadeIn 0.6s ease-out forwards; }
+                .stat-card:nth-child(1) { animation-delay: 0.1s; opacity: 0; }
+                .stat-card:nth-child(2) { animation-delay: 0.2s; opacity: 0; }
+                .stat-card:nth-child(3) { animation-delay: 0.3s; opacity: 0; }
+                .appt-row { animation: fadeInUp 0.5s ease-out forwards; }
+                .appt-row:nth-child(1) { animation-delay: 0.4s; opacity: 0; }
+                .appt-row:nth-child(2) { animation-delay: 0.5s; opacity: 0; }
+                .appt-row:nth-child(3) { animation-delay: 0.6s; opacity: 0; }
                 @keyframes float-icon { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
                 .animate-float-icon { animation: float-icon 2s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
                 .scrolling-marquee { display: flex; width: fit-content; animation: marquee 30s linear infinite; }
@@ -508,24 +518,20 @@ const LandingPage = () => {
             <section className="relative pt-20 pb-24 px-8">
                 <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
                     <div className="z-10" style={{ width: "100%", overflow: "visible" }}>
-                        <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/60 backdrop-blur-md border border-blue-100 rounded-full mb-8 shadow-sm">
-                            <span className="material-symbols-outlined text-blue-600 text-sm">auto_awesome</span>
-                            <span className="text-blue-800 text-xs font-bold uppercase tracking-wider">Conçu pour les médecins marocains</span>
-                        </div>
                         <h1 className="hero-title text-7xl md:text-8xl font-['Outfit'] font-black mb-8">
                             La gestion <br /> intelligente <br />
                             <span style={{ background: 'linear-gradient(90deg, #00685f 0%, #14b8a6 25%, #2dd4bf 50%, #14b8a6 75%, #00685f 100%)', backgroundSize: '200% auto', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', animation: 'textShimmer 4s linear infinite', display: 'inline-block' }}>de votre cabinet.</span>
                         </h1>
                         <p className="text-xl text-[#3d4947] mb-10 max-w-xl leading-relaxed">
-                            Une interface épurée conçue pour les praticiens exigeants. Alliez précision clinique et fluidité opérationnelle avec la plateforme leader au Maroc.
+                            Centralisez vos patients, rendez-vous, facturation et tâches quotidiennes dans une plateforme conçue pour les praticiens modernes.
                         </p>
                         <div className="flex flex-wrap gap-4">
                             <button onClick={() => navigate('/login')} style={{ background: "#00685f", color: "#ffffff", padding: "12px 24px", borderRadius: "8px", fontWeight: 700, border: "none", cursor: "pointer", transition: "all 0.2s ease", display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                                ESSAI GRATUIT
+                                Essayer gratuitement
                                 <span className="material-symbols-outlined group-hover:translate-x-1 transition-transform">arrow_forward</span>
                             </button>
                             <button onClick={() => { document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' }) }} style={{ background: "transparent", color: "#191c1e", border: "2px solid #191c1e", padding: "12px 24px", borderRadius: "8px", fontWeight: 700, cursor: "pointer" }}>
-                                VOIR LA DÉMO
+                                Voir la démonstration
                             </button>
                         </div>
                         <div className="mt-12 flex items-center gap-6 text-sm text-[#3d4947]">
@@ -540,8 +546,8 @@ const LandingPage = () => {
                     <div className="relative levitate">
                         <div className="absolute -inset-20 bg-blue-200/20 blur-[120px] rounded-full"></div>
                         
-                        {/* Updated Dashboard Mockup */}
-                        <div className="mockup-wrapper relative z-10 text-left">
+                        {/* Curated Dashboard Mockup */}
+                        <div className="mockup-wrapper relative z-10 text-left" style={{ borderRadius: '24px', boxShadow: '0 25px 60px rgba(0,0,0,0.15)' }}>
                           <div className="browser-bar">
                             <div className="dots">
                               <span className="dot red"></span>
@@ -553,136 +559,113 @@ const LandingPage = () => {
                             </div>
                           </div>
                         
-                          <div className="dashboard-body flex" style={{ height: '520px' }}>
-                            {/* Mini Sidebar */}
-                            <div className="mini-sidebar flex flex-col" style={{ width: '240px', background: '#0d1117', padding: '16px', flexShrink: 0 }}>
-                              <div className="sidebar-logo flex items-center gap-2 px-3 py-2">
-                                <span style={{ color: '#14b8a6', fontSize: '24px' }}>✦</span>
-                                <span style={{ color: 'white', fontSize: '18px', fontWeight: 700 }}>MacroMedica</span>
-                              </div>
-                              
-                              <div className="mt-4">
-                                <div className="sidebar-section-title text-xs font-bold uppercase tracking-wide text-[#94a3b8] px-3 mb-2">Pilotage</div>
-                                <div className="sidebar-items space-y-1">
-                                  <div className="sidebar-item active flex items-center gap-3 px-3 py-2 rounded-lg bg-white/5 text-white border-l-2 border-[#14b8a6]">
-                                    <div className="sidebar-icon-placeholder w-5 h-5 rounded bg-[#14b8a6]"></div>
-                                    <span className="text-sm">Tableau de bord</span>
-                                  </div>
-                                  <div className="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg text-[#94a3b8] hover:bg-white/5">
-                                    <div className="sidebar-icon-placeholder w-5 h-5 rounded bg-white/10"></div>
-                                    <span className="text-sm">Agenda</span>
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              <div className="mt-6">
-                                <div className="sidebar-section-title text-xs font-bold uppercase tracking-wide text-[#94a3b8] px-3 mb-2">Cœur de métier</div>
-                                <div className="sidebar-items space-y-1">
-                                  <div className="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg text-[#94a3b8] hover:bg-white/5">
-                                    <div className="sidebar-icon-placeholder w-5 h-5 rounded bg-white/10"></div>
-                                    <span className="text-sm">Dossiers patients</span>
-                                  </div>
-                                  <div className="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg text-[#94a3b8] hover:bg-white/5">
-                                    <div className="sidebar-icon-placeholder w-5 h-5 rounded bg-white/10"></div>
-                                    <span className="text-sm">Salle d'attente</span>
-                                  </div>
-                                </div>
+                          <div className="dashboard-body flex" style={{ height: '520px', background: '#f8fafc' }}>
+                            {/* Minimal Sidebar */}
+                            <div className="mini-sidebar flex flex-col" style={{ width: '80px', background: '#0d1117', padding: '16px 12px', flexShrink: 0 }}>
+                              <div className="sidebar-logo flex items-center justify-center mb-8">
+                                <span style={{ color: '#14b8a6', fontSize: '28px' }}>✦</span>
                               </div>
                               
                               <div className="mt-auto">
-                                <div className="rounded-2xl bg-white/5 p-4">
-                                  <div className="sidebar-section-title text-xs font-bold uppercase tracking-wide text-[#94a3b8] mb-2">Administration</div>
-                                  <div className="text-sm text-white font-medium">Cabinet Central</div>
-                                  <div className="text-xs text-[#94a3b8] mt-1 capitalize">Rôle: Docteur</div>
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-r from-[#2563eb] to-[#14b8a6] flex items-center justify-center text-white font-bold text-sm mx-auto">
+                                  DB
                                 </div>
                               </div>
                             </div>
                             
                             {/* Main Content */}
-                            <div className="main-content flex-1 bg-[#f8fafc] p-6 overflow-hidden">
-                              <div className="dash-header flex items-center justify-between mb-6">
-                                <div>
-                                  <h2 className="text-2xl font-bold text-slate-900">Bonjour, Dr Benali</h2>
-                                  <p className="text-sm text-slate-600 mt-1">Prêt pour une journée productive</p>
+                            <div className="main-content flex-1 bg-[#f8fafc] p-8 overflow-hidden">
+                              {/* KPI Cards */}
+                              <div className="stats-row grid grid-cols-3 gap-6 mb-8">
+                                <div className="stat-card bg-white border border-[#e2e8f0] rounded-[21px] px-6 py-6 shadow-sm">
+                                  <div className="stat-label text-sm font-semibold text-slate-600 uppercase tracking-wide">Salle d'attente</div>
+                                  <div className="stat-value text-5xl font-black text-blue-700 mt-2">8</div>
+                                  <div className="text-sm text-slate-500 mt-1">patients en attente</div>
                                 </div>
-                                <div className="flex items-center gap-4">
-                                  <div className="w-10 h-10 rounded-full bg-gradient-to-r from-[#2563eb] to-[#14b8a6] flex items-center justify-center text-white font-bold">
-                                    DB
-                                  </div>
+                                <div className="stat-card bg-white border border-[#e2e8f0] rounded-[21px] px-6 py-6 shadow-sm">
+                                  <div className="stat-label text-sm font-semibold text-slate-600 uppercase tracking-wide">RDV du jour</div>
+                                  <div className="stat-value text-5xl font-black text-emerald-700 mt-2">5</div>
+                                  <div className="text-sm text-slate-500 mt-1">consultations programmées</div>
                                 </div>
-                              </div>
-                              
-                              {/* Stats Cards */}
-                              <div className="stats-row grid grid-cols-4 gap-4 mb-6">
-                                <div className="stat-card bg-white border border-[#e2e8f0] rounded-[21px] px-5 py-4 shadow-sm">
-                                  <div className="stat-label text-xs font-semibold text-slate-600 uppercase">Patients actifs</div>
-                                  <div className="stat-value text-4xl font-black text-blue-700">1,248</div>
-                                  <div className="stat-badge text-xs text-emerald-600 font-semibold mt-1">↗ +12%</div>
-                                </div>
-                                <div className="stat-card bg-white border border-[#e2e8f0] rounded-[21px] px-5 py-4 shadow-sm">
-                                  <div className="stat-label text-xs font-semibold text-slate-600 uppercase">RDV aujourd'hui</div>
-                                  <div className="stat-value text-4xl font-black text-emerald-700">14</div>
-                                  <div className="stat-badge text-xs text-emerald-600 font-semibold mt-1">↗ +3</div>
-                                </div>
-                                <div className="stat-card bg-white border border-[#e2e8f0] rounded-[21px] px-5 py-4 shadow-sm">
-                                  <div className="stat-label text-xs font-semibold text-slate-600 uppercase">Consultations</div>
-                                  <div className="stat-value text-4xl font-black text-blue-700">89</div>
-                                  <div className="stat-badge text-xs text-emerald-600 font-semibold mt-1">↗ ce mois</div>
-                                </div>
-                                <div className="stat-card bg-white border border-[#e2e8f0] rounded-[21px] px-5 py-4 shadow-sm">
-                                  <div className="stat-label text-xs font-semibold text-slate-600 uppercase">Revenus</div>
-                                  <div className="stat-value text-4xl font-black text-amber-700">42,500</div>
-                                  <div className="stat-badge text-xs text-amber-600 font-semibold mt-1">MAD</div>
+                                <div className="stat-card bg-white border border-[#e2e8f0] rounded-[21px] px-6 py-6 shadow-sm">
+                                  <div className="stat-label text-sm font-semibold text-slate-600 uppercase tracking-wide">Revenu du jour</div>
+                                  <div className="stat-value text-4xl font-black text-amber-700 mt-2">650 <span className="text-xl font-semibold text-slate-600">MAD</span></div>
+                                  <div className="text-sm text-slate-500 mt-1">facturé aujourd'hui</div>
                                 </div>
                               </div>
                               
                               {/* Bottom Row */}
-                              <div className="bottom-row grid grid-cols-3 gap-4" style={{ height: '260px' }}>
-                                <div className="appointments-card col-span-2 bg-white border border-[#e2e8f0] rounded-[21px] p-5 shadow-sm">
-                                  <div className="card-title flex items-center justify-between mb-4">
-                                    <h3 className="text-lg font-bold text-slate-900">Salle d'attente</h3>
-                                    <span className="badge-blue bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-semibold">6 patients</span>
+                              <div className="bottom-row grid grid-cols-3 gap-6" style={{ height: '300px' }}>
+                                <div className="appointments-card col-span-2 bg-white border border-[#e2e8f0] rounded-[21px] p-6 shadow-sm">
+                                  <div className="card-title flex items-center justify-between mb-5">
+                                    <h3 className="text-xl font-bold text-slate-900">Salle d'attente</h3>
+                                    <span className="badge-blue bg-blue-50 text-blue-700 px-4 py-1.5 rounded-full text-sm font-semibold">8 patients</span>
                                   </div>
                                   <div className="appt-list space-y-3">
-                                    <div className="appt-row flex items-center gap-4 p-3 bg-slate-50 rounded-xl border-l-4 border-blue-500">
-                                      <div className="appt-avatar w-10 h-10 rounded-full bg-blue-50 text-blue-700 flex items-center justify-center font-bold text-sm">M</div>
+                                    <div className="appt-row flex items-center gap-5 p-4 bg-slate-50 rounded-xl border-l-4 border-emerald-500">
+                                      <div className="appt-avatar w-12 h-12 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-base">SK</div>
                                       <div className="appt-info flex-1">
-                                        <div className="appt-name font-semibold text-slate-900">Marie-Claire Fontaine</div>
-                                        <div className="appt-type text-xs text-slate-600">Consultation annuelle • 09:45</div>
+                                        <div className="appt-name font-bold text-slate-900 text-base">Soufiane Kadiri</div>
+                                        <div className="appt-type text-sm text-slate-600">Consultation générale</div>
                                       </div>
-                                      <div className="px-3 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-700">EN COURS</div>
+                                      <span className="px-4 py-1.5 rounded-full text-sm font-bold bg-emerald-100 text-emerald-700">EN ATTENTE</span>
+                                      <button className="px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700">Commencer</button>
                                     </div>
-                                    <div className="appt-row flex items-center gap-4 p-3 bg-slate-50 rounded-xl border-l-4 border-red-500">
-                                      <div className="appt-avatar w-10 h-10 rounded-full bg-red-50 text-red-700 flex items-center justify-center font-bold text-sm">J</div>
+                                    <div className="appt-row flex items-center gap-5 p-4 bg-slate-50 rounded-xl border-l-4 border-blue-500">
+                                      <div className="appt-avatar w-12 h-12 rounded-full bg-blue-50 text-blue-700 flex items-center justify-center font-bold text-base">AB</div>
                                       <div className="appt-info flex-1">
-                                        <div className="appt-name font-semibold text-slate-900">Jean-Pierre Bertrand</div>
-                                        <div className="appt-type text-xs text-slate-600">Douleurs thoraciques • Attente: 8 min</div>
+                                        <div className="appt-name font-bold text-slate-900 text-base">Ahmed Benali</div>
+                                        <div className="appt-type text-sm text-slate-600">Suivi diabète</div>
                                       </div>
-                                      <div className="px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700">URGENCE</div>
+                                      <span className="px-4 py-1.5 rounded-full text-sm font-bold bg-blue-100 text-blue-700">EN CONSULTATION</span>
+                                      <button className="px-4 py-2 rounded-lg text-sm font-bold bg-slate-200 text-slate-700 hover:bg-slate-300">Voir dossier</button>
+                                    </div>
+                                    <div className="appt-row flex items-center gap-5 p-4 bg-slate-50 rounded-xl border-l-4 border-emerald-500">
+                                      <div className="appt-avatar w-12 h-12 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-base">FC</div>
+                                      <div className="appt-info flex-1">
+                                        <div className="appt-name font-bold text-slate-900 text-base">Fatima Chraibi</div>
+                                        <div className="appt-type text-sm text-slate-600">Bilan cardiaque</div>
+                                      </div>
+                                      <span className="px-4 py-1.5 rounded-full text-sm font-bold bg-emerald-100 text-emerald-700">EN ATTENTE</span>
+                                      <button className="px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700">Commencer</button>
                                     </div>
                                   </div>
                                 </div>
                                 
-                                <div className="right-col flex flex-col gap-4">
-                                  <div className="invoices-card bg-white border border-[#e2e8f0] rounded-[21px] p-5 shadow-sm flex-1">
-                                    <div className="card-title flex items-center justify-between mb-4">
-                                      <h3 className="text-lg font-bold text-slate-900">Tâches du jour</h3>
-                                      <span className="badge-orange bg-amber-50 text-amber-700 px-3 py-1 rounded-full text-xs font-semibold">4</span>
+                                <div className="right-col flex flex-col">
+                                  <div className="invoices-card bg-white border border-[#e2e8f0] rounded-[21px] p-6 shadow-sm flex-1">
+                                    <div className="card-title flex items-center justify-between mb-5">
+                                      <h3 className="text-xl font-bold text-slate-900">Tâches du jour</h3>
                                     </div>
-                                    <div className="space-y-2">
-                                      <div className="invoice-row flex items-center justify-between p-3 bg-amber-50 rounded-xl border border-amber-100">
+                                    <div className="space-y-3">
+                                      <div className="invoice-row flex items-center justify-between p-4 bg-red-50 rounded-xl border border-red-100">
                                         <div>
-                                          <div className="inv-name font-semibold text-slate-900 text-sm">Signer ordonnances</div>
-                                          <div className="inv-sub text-xs text-slate-500">À traiter</div>
+                                          <div className="inv-name font-semibold text-slate-900 text-base">Urgences</div>
+                                          <div className="inv-sub text-sm text-slate-500">2 à traiter</div>
                                         </div>
                                       </div>
-                                      <div className="invoice-row flex items-center justify-between p-3 bg-emerald-50 rounded-xl border border-emerald-100">
+                                      <div className="invoice-row flex items-center justify-between p-4 bg-emerald-50 rounded-xl border border-emerald-100">
                                         <div>
-                                          <div className="inv-name font-semibold text-slate-900 text-sm">Voir résultats</div>
-                                          <div className="inv-sub text-xs text-slate-500">Nouveaux</div>
+                                          <div className="inv-name font-semibold text-slate-900 text-base">Résultats à consulter</div>
+                                          <div className="inv-sub text-sm text-slate-500">5 nouveaux</div>
+                                        </div>
+                                      </div>
+                                      <div className="invoice-row flex items-center justify-between p-4 bg-amber-50 rounded-xl border border-amber-100">
+                                        <div>
+                                          <div className="inv-name font-semibold text-slate-900 text-base">Ordonnances à signer</div>
+                                          <div className="inv-sub text-sm text-slate-500">3 en attente</div>
+                                        </div>
+                                      </div>
+                                      <div className="invoice-row flex items-center justify-between p-4 bg-blue-50 rounded-xl border border-blue-100">
+                                        <div>
+                                          <div className="inv-name font-semibold text-slate-900 text-base">Messages patients</div>
+                                          <div className="inv-sub text-sm text-slate-500">7 non lus</div>
                                         </div>
                                       </div>
                                     </div>
+                                    <button className="w-full mt-5 px-5 py-3 rounded-lg text-base font-semibold border-2 border-slate-200 text-slate-700 hover:bg-slate-50">
+                                      Voir toutes les tâches
+                                    </button>
                                   </div>
                                 </div>
                               </div>
@@ -690,12 +673,6 @@ const LandingPage = () => {
                           </div>
                         </div>
 
-                        {/* Floating Elements */}
-                        <div className="absolute -top-10 -right-10 glass-card p-5 rounded-2xl shadow-xl border border-white/50 w-44 text-center hidden md:block z-20">
-                            <span className="material-symbols-outlined text-landing-primary text-4xl mb-2" style={{ fontVariationSettings: "'FILL' 1" }}>analytics</span>
-                            <p className="text-sm font-bold text-slate-900">Analyses IA</p>
-                            <p className="text-[10px] text-[#3d4947]">Optimisation des flux</p>
-                        </div>
                     </div>
                 </div>
             </section>

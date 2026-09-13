@@ -1,5 +1,6 @@
 import React from 'react';
 import { useFacturationStore } from './store';
+import { useFacturesQuery } from './queries';
 import { filterFactures, getMonthlySeries, getBreakdowns, getAgeingBuckets } from './selectors';
 import { Card, SectionTitle } from './ui';
 import { dh, num } from './format';
@@ -45,7 +46,8 @@ const CustomTooltip = ({ active, payload, label, isCurrency = true }: any) => {
 };
 
 export function ChartsGrid() {
-  const { factures, filters } = useFacturationStore();
+  const { filters } = useFacturationStore();
+  const { data: factures = [] } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   
   const monthlyData = getMonthlySeries(filteredFactures);

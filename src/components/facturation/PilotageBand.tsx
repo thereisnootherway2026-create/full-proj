@@ -1,5 +1,6 @@
 import React from 'react';
 import { useFacturationStore } from './store';
+import { useFacturesQuery } from './queries';
 import { getTotals, filterFactures, getDSO } from './selectors';
 import { Card, Ring } from './ui';
 import { dh, num, pct, fmtMonthShort } from './format';
@@ -7,7 +8,8 @@ import { factureNet, cabinet } from './data';
 import { cn } from '../../lib/utils';
 
 export function PilotageBand() {
-  const { factures, filters } = useFacturationStore();
+  const { filters } = useFacturationStore();
+  const { data: factures = [] } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   const totals = getTotals(filteredFactures);
   const dsoInfo = getDSO(filteredFactures);

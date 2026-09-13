@@ -27,19 +27,7 @@ ${(res.nextSteps || []).map((s: string) => `- ${s}`).join('\n')}
 ${(res.cautions || []).map((c: string) => `- ${c}`).join('\n')}`
 
       setSuggestion(formatted)
-    } catch {
-      setSuggestion(`🔍 ANALYSE CLINIQUE (Fallback)
-Hypothèses diagnostiques principales :
-1. Angine bactérienne (Streptocoque A) - Probabilité forte
-2. Pharyngite virale - Probabilité modérée
-
-💊 PROTOCOLE DE TRAITEMENT PROPOSÉ :
-- Amoxicilline 1g : 1 comp. matin et soir (7 jours)
-- Paracétamol 1g : 1 comp. si fièvre > 38.5°C
-
-⚠️ POINT DE VIGILANCE :
-Aucune allergie aux pénicillines signalée. Traitement validé.`)
-    } finally {
+    } catch { setSuggestion('Service IA indisponible ou non configuré.') } finally {
       setLoading(false)
     }
   }

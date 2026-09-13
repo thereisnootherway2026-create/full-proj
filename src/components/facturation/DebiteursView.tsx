@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useFacturationStore } from './store';
+import { useFacturationMutations, useFacturesQuery } from './queries';
 import { filterFactures, getDebiteurs } from './selectors';
 import { Card, SectionTitle } from './ui';
 import { dh, fmtDate, num } from './format';
@@ -9,24 +10,24 @@ import { cn } from '../../lib/utils';
 import { EncaisserModal } from './EncaisserModal';
 
 export function DebiteursView() {
-  const { factures, filters, markRelance, setFactureOuverteId } = useFacturationStore();
+  const { filters, setFactureOuverteId } = useFacturationStore();
+  const { data: factures = [] } = useFacturesQuery();
+  const { markRelance } = useFacturationMutations();
   const filteredFactures = filterFactures(factures, filters);
   const debiteurs = getDebiteurs(filteredFactures);
 
   const [expandedPatient, setExpandedPatient] = useState<string | null>(null);
   
   // Encaisser modal state
-  const [encaisserFactureId, setEncaisserFactureId] = useState<string | null>(null);
-  const [encaisserReste, setEncaisserReste] = useState(0);
+  const [encaisserFacture, setEncaisserFacture] = useState<any | null>(null);
 
   const toggleExpand = (patientRef: string) => {
     setExpandedPatient(prev => prev === patientRef ? null : patientRef);
   };
 
-  const openEncaisser = (factureId: string, reste: number, e: React.MouseEvent) => {
+  const openEncaisser = (facture: any, e: React.MouseEvent) => {
     e.stopPropagation();
-    setEncaisserFactureId(factureId);
-    setEncaisserReste(reste);
+    setEncaisserFacture(facture);
   };
 
   const handleRelancer = (patientRef: string, e: React.MouseEvent) => {
@@ -170,7 +171,7 @@ export function DebiteursView() {
                                 <td className="py-2.5 font-bold text-slate-900 text-right">{dh(reste)}</td>
                                 <td className="py-2.5 pl-4 text-right">
                                   <button 
-                                    onClick={(e) => openEncaisser(f.id, reste, e)}
+                                    onClick={(e) => openEncaisser(f, e)}
                                     className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 rounded font-medium transition-colors text-xs opacity-0 group-hover:opacity-100 focus:opacity-100"
                                   >
                                     <CreditCard className="w-3.5 h-3.5" />

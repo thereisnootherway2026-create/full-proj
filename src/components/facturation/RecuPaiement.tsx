@@ -41,17 +41,20 @@ export function RecuPaiement() {
   return (
     <>
       <div 
-        className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 transition-opacity"
+        className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 transition-opacity print:hidden"
         onClick={handleClose}
       />
       
-      <div className="fixed inset-y-0 right-0 w-full max-w-lg bg-slate-100 shadow-2xl z-[60] flex flex-col animate-in slide-in-from-right duration-300">
+      <div className="fixed inset-y-0 right-0 w-full max-w-lg bg-slate-100 shadow-2xl z-[60] flex flex-col animate-in slide-in-from-right duration-300 print:fixed print:inset-0 print:w-full print:max-w-none print:shadow-none print:z-[9999] print:bg-white print:animate-none">
         
         {/* Actions Header */}
-        <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-slate-200">
+        <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-slate-200 print:hidden">
           <h2 className="text-lg font-bold text-slate-900">Reçu de paiement</h2>
           <div className="flex items-center gap-2">
-            <button className="inline-flex items-center gap-2 px-3 py-1.5 border border-slate-300 bg-white text-slate-700 rounded-lg hover:bg-slate-50 font-medium text-sm transition-colors shadow-sm">
+            <button 
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-2 px-3 py-1.5 border border-slate-300 bg-white text-slate-700 rounded-lg hover:bg-slate-50 font-medium text-sm transition-colors shadow-sm"
+            >
               <Printer className="w-4 h-4" />
               Imprimer
             </button>
@@ -65,9 +68,9 @@ export function RecuPaiement() {
         </div>
 
         {/* Paper Container */}
-        <div className="flex-1 overflow-y-auto p-6 flex justify-center">
+        <div className="flex-1 overflow-y-auto p-6 flex justify-center print:overflow-visible print:p-0 print:block">
           {/* A4-like minimalist document */}
-          <div className="bg-white w-full max-w-md rounded shadow-sm border border-slate-200 p-8">
+          <div className="bg-white w-full max-w-md rounded shadow-sm border border-slate-200 p-8 print:border-none print:shadow-none print:max-w-none print:w-full">
             
             {/* Header Cabinet */}
             <div className="border-b-2 border-slate-900 pb-4 mb-6">

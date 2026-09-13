@@ -50,21 +50,7 @@ export default function AiLabReaderCard() {
         `💡 Synthèse IA:\n${(res.recommendations || []).map((r: string) => `• ${r}`).join('\n')}`
 
       setSummary(formatted)
-    } catch {
-      setSummary(`📄 Bilan Sanguin détecté (Fallback)
-Date du prélèvement : 01/08/2026
-
-⚠️ ANOMALIES DÉTECTÉES :
-- Glycémie à jeun : 1.25 g/L (Légèrement élevée - Limite pré-diabète)
-- Cholestérol LDL : 1.80 g/L (Élevé - Objectif < 1.15 g/L)
-
-✅ VALEURS NORMALES :
-- Hémogramme (NFS) : Sans anomalie
-- Fonction rénale (Créatinine, Urée) : Normale
-- Transaminases (ASAT/ALAT) : Normales
-
-💡 Synthèse IA : Patient présentant un risque métabolique modéré. Surveillance conseillée.`)
-    } finally {
+    } catch { setError('Service IA indisponible ou non configuré.') } finally {
       setLoading(false)
     }
   }

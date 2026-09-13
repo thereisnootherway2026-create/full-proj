@@ -295,20 +295,11 @@ export function getSmartSuggestions(input) {
 }
 
 export function loadTasks() {
-  try {
-    const stored = sessionStorage.getItem(TASKS_KEY)
-    return stored ? JSON.parse(stored) : DEFAULT_TASKS
-  } catch {
-    return DEFAULT_TASKS
-  }
+  return []
 }
 
 export function saveTasks(tasks) {
-  try {
-    sessionStorage.setItem(TASKS_KEY, JSON.stringify(tasks))
-  } catch {
-    // ignore storage errors
-  }
+  void tasks
 }
 
 export function appendTask(task) {

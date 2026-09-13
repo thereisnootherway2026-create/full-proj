@@ -116,9 +116,18 @@ export async function loadTenant(
 ): Promise<TenantRecord | null> {
   if (!tenantId) return null
 
+  // public.cabinets has no secretaire_id column (confirmed live against the
+  // real schema: id, nom, adresse, telephone, tenant_id, created_at, ville,
+  // pin_hash) — clinics.secretary_id is the only real column for this.
+  // Selecting a nonexistent column used to make this query fail silently
+  // (the JS client swallows the error, `cabinet` came back null, and this
+  // whole branch was effectively dead — every tenant fell through to the
+  // clinics-only branch below). Fixed to select real columns only, so this
+  // branch is reachable again; secretaryId is still sourced from clinics
+  // exclusively, matching setTenantSecretary below.
   const { data: cabinet } = await supabaseAdmin
     .from('cabinets')
-    .select('id, tenant_id, secretaire_id, pin_hash')
+    .select('id, tenant_id, pin_hash')
     .eq('id', tenantId)
     .maybeSingle()
 
@@ -137,7 +146,7 @@ export async function loadTenant(
     return {
       id: cabinet.id,
       ownerId,
-      secretaryId: cabinet.secretaire_id ?? clinic?.secretary_id ?? null,
+      secretaryId: clinic?.secretary_id ?? null,
       pinHash: cabinet.pin_hash ?? clinic?.pin_hash ?? null,
       source: 'cabinets',
     }
@@ -213,7 +222,44 @@ export async function ensureTenantForProfile(
 
   if (tenantId) {
     const existing = await loadTenant(supabaseAdmin, tenantId)
-    if (existing) return existing
+    if (existing) {
+      // Caught live, two compounding bugs:
+      //
+      // 1. A freshly-signed-up doctor can have cabinet_id set but clinic_id
+      //    still null (the ensure_profile_clinic_id DB trigger only
+      //    backfills clinic_id when a matching clinics row already exists at
+      //    INSERT time — if cabinets/clinics rows are created in a separate
+      //    step slightly after the profile row, the trigger's EXISTS check
+      //    misses the window and clinic_id is left null permanently). This
+      //    function is exactly where that should self-heal, but this early
+      //    return used to skip it whenever a tenant record already existed.
+      //    current_clinic_id() (used by every mm_* invitation RPC) reads
+      //    profiles.clinic_id only, so a stuck null here made every RPC call
+      //    fail with "no clinic associated with this account".
+      //
+      // 2. loadTenant() only requires a cabinets row to consider a tenant
+      //    "found" (clinics is read with optional chaining) — a real
+      //    account was observed live with a cabinets row but NO matching
+      //    clinics row at all. profiles.clinic_id has a foreign key to
+      //    clinics(id), so attempting the backfill above without first
+      //    guaranteeing the clinics row exists fails the FK constraint
+      //    silently (the update's error was never checked) and clinic_id
+      //    stays null forever. upsertClinicRow() is idempotent, so it's
+      //    safe to call defensively here even when a clinics row already
+      //    exists.
+      await upsertClinicRow(supabaseAdmin, tenantId, existing.ownerId || profile.id, label)
+
+      if (profile.clinic_id !== tenantId) {
+        const { error: backfillError } = await supabaseAdmin
+          .from('profiles')
+          .update({ clinic_id: tenantId })
+          .eq('id', profile.id)
+        if (backfillError) {
+          console.error('ensureTenantForProfile clinic_id backfill failed:', backfillError)
+        }
+      }
+      return existing
+    }
 
     const { error: cabinetError } = await supabaseAdmin
       .from('cabinets')
@@ -269,20 +315,15 @@ export async function setTenantSecretary(
   tenant: TenantRecord,
   secretaryId: string | null
 ) {
-  if (tenant.source === 'cabinets') {
-    const { error } = await supabaseAdmin
-      .from('cabinets')
-      .update({ secretaire_id: secretaryId })
-      .eq('id', tenant.id)
-    if (error) throw error
-  }
-
+  // cabinets has no secretaire_id column (see loadTenant above) — the
+  // secretary relationship lives exclusively on clinics.secretary_id
+  // regardless of tenant.source.
   const { error: clinicError } = await supabaseAdmin
     .from('clinics')
     .update({ secretary_id: secretaryId })
     .eq('id', tenant.id)
 
-  if (clinicError && tenant.source === 'clinics') {
+  if (clinicError) {
     throw clinicError
   }
 }

@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useNavigate, useParams, useSearchParams, useBlocker } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft,
@@ -9,7 +10,6 @@ import {
   AlertTriangle,
   Pill,
   Stethoscope,
-  Clock,
   User,
   Phone,
   Heart,
@@ -26,36 +26,34 @@ import {
   Microscope,
   CheckCircle2,
   X,
-  Play,
-  Square,
   Plus,
   Sparkles,
   Brain,
   ListChecks,
   ClipboardList,
   BookOpen,
-  Edit3,
+  MoreHorizontal,
+  Share2,
+  FilePlus,
   Save,
+  CalendarClock,
+  Wind,
+  Zap,
+  Shield,
+  Calculator,
+  Info,
+  ContactRound,
+  HeartPulse,
 } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
-import { getPatientById } from '../../lib/api'
-import { MOCK_PATIENTS } from '../../lib/mockData'
+import { useAppContext } from '../../context/AppContext'
 
-// Mock data
-const MOCK_PATIENT = {
-  id: 'pat_1',
-  prenom: 'Karima',
-  nom: 'Benali',
-  date_naissance: '1992-03-15',
-  sexe: 'F',
-  assurance: 'CNSS',
-  telephone: '06 12 34 56 78',
-  groupe_sanguin: 'A+',
-  poids: 68,
-  taille: 165,
-  contact_urgence: 'Ahmed Benali - 06 98 76 54 32',
-}
+import { getPatientById, getPatientClinicalFields } from '../../lib/api'
+import { VISIT_STATUSES } from '../../lib/workflow'
+import { useFocusMode } from '../../hooks/useFocusMode'
+import { Backdrop, FocusableCard, MedicalTextarea } from '../../components/FocusMode'
+import PreparationChecklist from '../../components/consultation/PreparationChecklist'
 
+// --- Mock Data ---
 const MOCK_ALERTS = [
   { id: 1, type: 'allergy', label: 'Allergie pénicilline', severity: 'critical' },
   { id: 2, type: 'chronic', label: 'Diabète type 2', severity: 'warning' },
@@ -67,47 +65,88 @@ const MOCK_MEDICATIONS = [
 ]
 
 const MOCK_RESULTS = [
-  { id: 1, type: 'Glycémie', value: '1.2 g/L', date: '14 juin 2026', status: 'normal' },
+  { id: 1, type: 'Glycémie', value: '1,2 g/L', date: '14 juin 2026', status: 'normal' },
   { id: 2, type: 'Tension', value: '120/80 mmHg', date: '14 juin 2026', status: 'normal' },
 ]
 
 const TIMELINE_EVENTS = [
   {
-    id: 1,
-    type: 'consultation',
+    id: '1',
+    type: 'urgency',
     date: '19 juin 2026',
     time: '14:30',
     title: 'Urgence Douleurs Abdominales',
     doctor: 'Dr. Benali',
-    summary: 'Patient admis pour douleurs abdominales aiguës.',
+    summary: 'Patient admis pour douleurs abdominales aiguës. Analyses sanguines effectuées. Prise en charge immédiate.',
+    details: `
+- Symptômes: Douleurs abdominales diffuses, nausées
+- Examen physique: Tendresse au niveau de l'épigastre
+- Analyses: Leucocytes 12G/L, CRP 45 mg/L
+- Traitement: Antalgiques, repos
+- Suivi: Rendez-vous dans 7 jours
+    `,
+    tags: ['Analyses', 'Douleur']
   },
   {
-    id: 2,
+    id: '2',
     type: 'lab',
     date: '14 juin 2026',
     time: '09:00',
     title: 'Analyses Sanguines',
     doctor: 'Dr. Touggani',
-    summary: 'Biologie standard, formule sanguine complète.',
+    summary: 'Biologie standard, formule sanguine complète, glycémie à jeun.',
+    details: `
+- Hémoglobine: 14,2 g/dL
+- Glycémie à jeun: 1,2 g/L
+- Cholestérol total: 1,9 g/L
+- Triglycérides: 1,1 g/L
+- Conclusion: Bilan dans les normes, surveiller glycémie
+    `,
+    tags: ['Bilan']
   },
   {
-    id: 3,
+    id: '3',
+    type: 'consultation',
+    date: '10 juin 2026',
+    time: '10:30',
+    title: 'Consultation Annuelle',
+    doctor: 'Dr. Benali',
+    summary: 'Bilan de santé annuel. Tension 120/80. Poids stable. À revoir dans 6 mois.',
+    details: `
+- Poids: 78 kg
+- Taille: 1,75 m
+- IMC: 25,5
+- Tension artérielle: 120/80 mmHg
+- Fréquence cardiaque: 72 bpm
+- Recommandations: Continuer régime équilibré, activité physique régulière
+    `,
+    tags: ['Suivi', 'Bilan']
+  },
+  {
+    id: '4',
     type: 'prescription',
     date: '10 juin 2026',
     time: '11:00',
     title: 'Prescription Médicamenteuse',
     doctor: 'Dr. Benali',
-    summary: 'Metformine 500mg — 2x/jour.',
-  },
+    summary: 'Metformine 500mg — 2x/jour. Oméprazole 20mg — 1x/jour le matin.',
+    details: `
+- Metformine 500mg: 1 comprimé matin et soir au repas
+- Oméprazole 20mg: 1 comprimé le matin avant le petit-déjeuner
+- Durée: 3 mois renouvelable
+- Rendez-vous de contrôle: dans 3 mois
+    `,
+    tags: []
+  }
 ]
 
 const DOCUMENTS = [
-  { id: 1, type: 'prescription', name: 'Ordonnance du 15/06/2026', date: '15 juin 2026', doctor: 'Dr. Benali' },
-  { id: 2, type: 'lab', name: 'Bilan NFS – 22/05/2026', date: '22 mai 2026', doctor: 'Dr. Touggani' },
-  { id: 3, type: 'imaging', name: 'Écho abdominale', date: '20 mai 2026', doctor: 'Dr. Benali' },
+  { id: 1, type: 'prescription', name: 'Ordonnance', date: '19 juin 2026', doctor: 'Dr. Benali' },
+  { id: 2, type: 'lab', name: 'Bilan sanguin (NFS)', date: '14 juin 2026', doctor: 'Dr. Touggani' },
+  { id: 3, type: 'imaging', name: 'Échographie abdominale', date: '20 mai 2026', doctor: 'Dr. Benali' },
 ]
 
-// Helper functions
+// --- Helper Functions ---
 function calcAge(dateStr) {
   if (!dateStr) return 34
   const birth = new Date(dateStr)
@@ -125,49 +164,440 @@ function formatTimer(seconds) {
   return [hours, mins, secs].map(v => String(v).padStart(2, '0')).join(':')
 }
 
-// Components matching Dashboard style
-function StatCard({ icon: Icon, iconWrap, iconColor, label, value, suffix = '' }) {
+function getGenderLabel(sexe) {
+  if (sexe === 'homme') return 'Homme'
+  if (sexe === 'femme') return 'Femme'
+  return 'Non renseigné'
+}
+
+function formatPatientSince(dateStr) {
+  if (!dateStr) return '—'
+  const date = new Date(dateStr)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' })
+}
+
+function calcBMI(weightKg, heightCm) {
+  const w = parseFloat(weightKg)
+  const h = parseFloat(heightCm)
+  if (!w || !h) return null
+  const bmi = w / ((h / 100) ** 2)
+  return bmi.toFixed(1)
+}
+
+const CONSULTATION_TABS = ['Constantes & Motif', 'Examen', 'Bilan', 'Historique']
+
+function PatientInfoRow({ icon: Icon, label, value }) {
   return (
-    <div className="flex items-center justify-between rounded-[21px] border border-[#e2e8f0] bg-white px-5 py-5 shadow-[0_5px_16px_rgba(15,23,42,0.045)] transition hover:-translate-y-[1px]">
-      <div className="flex items-center gap-3.5">
-        <div className={`flex h-[52px] w-[52px] items-center justify-center rounded-full ${iconWrap}`}>
-          <Icon className={iconColor} size={25} strokeWidth={2.1} />
-        </div>
-        <p className="text-sm font-medium text-slate-600">
-          {label}
-        </p>
+    <div className="flex items-start gap-3 py-2.5">
+      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-50 text-slate-400">
+        <Icon size={15} />
       </div>
-      <div className="flex items-end gap-1.5">
-        <p className="text-4xl font-bold text-slate-900 leading-none">
-          {value}
-        </p>
-        {suffix && (
-          <p className="pb-1 text-base font-semibold text-slate-600">
-            {suffix}
-          </p>
-        )}
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-medium text-slate-500">{label}</p>
+        <p className="mt-0.5 text-[14px] font-semibold text-slate-800">{value || '—'}</p>
       </div>
     </div>
   )
 }
 
+function PatientSidebar({ patient, age, chronicDisease, currentTreatment, emergencyContact }) {
+  const initials = `${patient.prenom?.[0] || ''}${patient.nom?.[0] || ''}`.toUpperCase()
+  const allergies = patient.allergies?.trim()
+  const hasAllergies = allergies && allergies.toLowerCase() !== 'aucune'
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="bg-gradient-to-br from-blue-600 to-indigo-600 px-6 py-6 text-white">
+        <div className="flex items-center gap-4">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/95 text-lg font-bold text-blue-600 shadow-[0_4px_12px_rgba(0,0,0,0.08)]">
+            {initials}
+          </div>
+          <div>
+            <h2 className="text-xl font-bold leading-tight tracking-tight">
+              {patient.prenom} {patient.nom}
+            </h2>
+            <p className="mt-1 text-sm text-blue-100/90 font-medium">
+              {age} ans • {getGenderLabel(patient.sexe)}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="divide-y divide-slate-100 px-5">
+        <PatientInfoRow icon={Droplets} label="Groupe sanguin" value={patient.groupe_sanguin || '—'} />
+        <PatientInfoRow icon={Phone} label="Téléphone" value={patient.telephone || '—'} />
+        <PatientInfoRow icon={Shield} label="Assurance" value={patient.mutuelle || patient.assurance || '—'} />
+        <PatientInfoRow icon={Calendar} label="Patient depuis" value={formatPatientSince(patient.created_at)} />
+      </div>
+
+      <div className="px-5 py-4">
+        <div className={`rounded-xl border p-4 ${hasAllergies ? 'border-red-200 bg-red-50' : 'border-red-100 bg-red-50/50'}`}>
+          <div className="mb-2 flex items-center gap-2">
+            <AlertTriangle size={15} className={hasAllergies ? 'text-red-500' : 'text-red-400'} />
+            <span className={`text-sm font-bold ${hasAllergies ? 'text-red-700' : 'text-red-600'}`}>Allergies</span>
+          </div>
+          <p className={`text-sm font-medium leading-relaxed ${hasAllergies ? 'text-red-800' : 'text-red-700/80'}`}>
+            {hasAllergies ? allergies : 'Aucune connue'}
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-0 border-t border-slate-100 px-5 pb-5">
+        <PatientInfoRow icon={HeartPulse} label="Maladies chroniques" value={chronicDisease} />
+        <PatientInfoRow icon={Pill} label="Traitement actuel" value={currentTreatment} />
+        <PatientInfoRow icon={ContactRound} label="Contact d'urgence" value={emergencyContact} />
+      </div>
+    </div>
+  )
+}
+
+function VitalCard({ icon: Icon, label, unit, value, onChange, placeholder, readOnly = false, className = '' }) {
+  // ⓘ STUB : Indicateur d'anomalie (toujours masqué).
+  // Pour l'activer ultérieurement : remplacer `false` par la condition issue des règles fournies
+  // (aucun seuil n'est actuellement documenté dans le codebase).
+  const isAbnormal = false
+
+  return (
+    <div className={`rounded-lg border border-slate-200 bg-white p-4 ${className}`}>
+      <div className="mb-2 flex items-center gap-1.5 text-slate-400">
+        <Icon size={14} />
+        <span className="text-xs font-medium text-slate-500">{label}</span>
+      </div>
+      <div className="flex items-baseline gap-1.5">
+        <input
+          type="text"
+          value={value}
+          onChange={onChange}
+          placeholder={placeholder}
+          readOnly={readOnly}
+          className={`w-full bg-transparent text-2xl font-bold text-slate-900 outline-none placeholder:text-slate-300 ${readOnly ? 'cursor-default' : ''}`}
+        />
+        {unit && <span className="shrink-0 text-xs font-medium text-slate-400">{unit}</span>}
+      </div>
+      <div className="mt-2 h-1 w-full">
+        {isAbnormal && <span className="block h-1.5 w-1.5 rounded-full bg-red-500" />}
+      </div>
+    </div>
+  )
+}
+
+function BloodPressureCard({ systolic, diastolic, onSystolicChange, onDiastolicChange }) {
+  // ⓘ STUB : Indicateur d'anomalie (toujours masqué).
+  // Règles attendues (non documentées dans codebase, stub jusqu'à fourniture) :
+  // systo > 140 || diasto > 90 || systo < 90 || diasto < 60  →  point
+  const isAbnormal = false
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="mb-2 flex items-center gap-1.5 text-slate-400">
+        <Heart size={14} />
+        <span className="text-xs font-medium text-slate-500">Tension artérielle</span>
+      </div>
+      <div className="flex items-baseline gap-2">
+        <input
+          type="text"
+          value={systolic}
+          onChange={onSystolicChange}
+          placeholder="120"
+          className="w-full bg-transparent text-2xl font-bold text-slate-900 outline-none placeholder:text-slate-300"
+        />
+        <span className="text-xl font-light text-slate-300">/</span>
+        <input
+          type="text"
+          value={diastolic}
+          onChange={onDiastolicChange}
+          placeholder="80"
+          className="w-full bg-transparent text-2xl font-bold text-slate-900 outline-none placeholder:text-slate-300"
+        />
+        <span className="shrink-0 text-xs font-medium text-slate-400">mmHg</span>
+      </div>
+      <div className="mt-2 h-1 w-full">
+        {isAbnormal && <span className="block h-1.5 w-1.5 rounded-full bg-red-500" />}
+      </div>
+    </div>
+  )
+}
+
+// --- Timeline Event Component ---
+function TimelineEvent({ event, index, onViewDetails }) {
+  const getEventConfig = () => {
+    switch (event.type) {
+      case 'urgency': return { label: 'Urgence', icon: <AlertTriangle size={14} /> }
+      case 'lab': return { label: 'Laboratoire', icon: <Microscope size={14} /> }
+      case 'consultation': return { label: 'Consultation', icon: <Stethoscope size={14} /> }
+      case 'imaging': return { label: 'Imagerie', icon: <ImageIcon size={14} /> }
+      case 'prescription': return { label: 'Ordonnance', icon: <Pill size={14} /> }
+      default: return { label: 'Autre', icon: <FileText size={14} /> }
+    }
+  }
+
+  const config = getEventConfig()
+
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, delay: index * 0.03 }}
+      className="relative w-full pl-12 pb-6 last:pb-0"
+    >
+      <motion.div
+        className="absolute left-0 top-0 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-blue-600"
+      >
+        {config.icon}
+      </motion.div>
+      <motion.div
+        whileHover={{ x: 1, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}
+        transition={{ duration: 0.1 }}
+        className="w-full min-h-[176px] rounded-xl border border-slate-200 bg-white p-5 shadow-[0_2px_10px_rgba(15,23,42,0.06)]"
+      >
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="flex-1">
+            <p className="text-[12px] font-medium text-slate-400">
+              {event.date} • {event.doctor}
+            </p>
+            <h3 className="mt-1 text-base font-semibold leading-snug text-slate-900">
+              {event.title}
+            </h3>
+          </div>
+          <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium leading-none text-blue-600">
+            {config.label}
+          </span>
+        </div>
+        <p className="mb-4 line-clamp-2 text-sm leading-relaxed text-slate-600">
+          {event.summary}
+        </p>
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => onViewDetails(event)}
+            className="flex items-center gap-1 text-[13px] font-semibold text-blue-600 hover:text-blue-700"
+          >
+            Voir détails →
+          </button>
+          {event.tags?.length > 0 && (
+            <div className="flex gap-1.5">
+              {event.tags.map(tag => (
+                <span
+                  key={tag}
+                  className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium leading-none text-slate-500"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.article>
+  )
+}
+
+// --- Quick Action Component ---
+function QuickAction({ icon, title, description, isPrimary, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 p-3.5 rounded-xl border border-slate-200 bg-white shadow-sm transition-all hover:border-blue-200 hover:shadow-md hover:-translate-y-0.5 group text-left"
+    >
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center group-hover:bg-blue-50 transition-all ${isPrimary ? 'bg-blue-50' : 'bg-slate-50'}`}>
+        <div className={`transition-all ${isPrimary ? 'text-blue-600' : 'text-slate-500'} group-hover:text-blue-600`}>
+          {icon}
+        </div>
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[13.5px] font-semibold text-slate-800 leading-tight">{title}</p>
+        <p className="text-[11.5px] text-slate-500 mt-0.5 leading-snug">{description}</p>
+      </div>
+      <ChevronRight size={16} className="text-slate-300 group-hover:text-blue-500 transition-all shrink-0" />
+    </button>
+  )
+}
+
+// --- Event Details Modal ---
+function EventDetailsModal({ event, onClose }) {
+  const getEventConfig = () => {
+    switch (event.type) {
+      case 'urgency': return { color: '#EF4444', label: 'Urgence', icon: <AlertTriangle size={18} /> }
+      case 'lab': return { color: '#3B82F6', label: 'Laboratoire', icon: <Microscope size={18} /> }
+      case 'consultation': return { color: '#10B981', label: 'Consultation', icon: <Stethoscope size={18} /> }
+      case 'prescription': return { color: '#F59E0B', label: 'Ordonnance', icon: <Pill size={18} /> }
+      default: return { color: '#6B7280', label: 'Autre', icon: <FileText size={18} /> }
+    }
+  }
+  const config = getEventConfig()
+
+  useEffect(() => {
+    const handleEsc = (e) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handleEsc)
+    return () => document.removeEventListener('keydown', handleEsc)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 12 }}
+        transition={{ duration: 0.2, ease: 'easeOut' }}
+        className="relative w-full max-w-2xl bg-white rounded-[21px] shadow-[0_12px_48px_rgba(0,0,0,0.12)] overflow-hidden"
+      >
+        <div className="flex items-center justify-between p-5 border-b border-[#e2e8f0]">
+          <div className="flex items-center gap-3">
+            <div
+              className="w-9 h-9 rounded-full flex items-center justify-center"
+              style={{ backgroundColor: `${config.color}10` }}
+            >
+              <div style={{ color: config.color }}>{config.icon}</div>
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">{event.title}</h2>
+              <p className="text-xs text-slate-500">{event.date} à {event.time} • {event.doctor}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-all">
+            <X className="w-4 h-4 text-slate-600" />
+          </button>
+        </div>
+        <div className="p-5">
+          <div className="flex flex-wrap gap-2 mb-4">
+            {event.tags?.map(tag => (
+              <span key={tag} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">{tag}</span>
+            ))}
+            <span
+              className="rounded-full px-2.5 py-1 text-xs font-medium"
+              style={{ backgroundColor: `${config.color}10`, color: config.color }}
+            >
+              {config.label}
+            </span>
+          </div>
+          <h3 className="text-xs font-semibold text-slate-900 mb-2">Détails</h3>
+          <pre className="whitespace-pre-wrap text-xs text-slate-600 bg-slate-50 p-3 rounded-xl font-sans leading-relaxed border border-[#e2e8f0]">
+            {event.details}
+          </pre>
+        </div>
+        <div className="flex justify-end gap-2 p-5 border-t border-[#e2e8f0] bg-[#f8fafc]">
+          <button onClick={onClose} className="px-3.5 py-2 text-xs text-slate-700 bg-white border border-[#e2e8f0] rounded-xl font-medium hover:bg-slate-50 hover:border-slate-400 transition-all">
+            Fermer
+          </button>
+          <button onClick={() => { try { window.print() } catch(e){} }} className="px-3.5 py-2 text-xs text-white bg-[#2563eb] border border-[#2563eb] rounded-xl font-medium hover:bg-blue-700 hover:border-blue-700 transition-all shadow-[0_2px_8px_rgba(37,99,235,0.2)]">
+            Imprimer
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+// --- Simple Modal ---
+function SimpleModal({ title, description, icon, color, onClose, onSave, children, saveText = "Enregistrer", saveButtonClass = "", footer = null }) {
+  useEffect(() => {
+    const handleEsc = (e) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handleEsc)
+    return () => document.removeEventListener('keydown', handleEsc)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 12 }}
+        transition={{ duration: 0.2, ease: 'easeOut' }}
+        className="relative w-full max-w-xl bg-white rounded-[21px] shadow-[0_12px_48px_rgba(0,0,0,0.12)] overflow-hidden"
+      >
+        <div className="flex items-center justify-between p-5 border-b border-[#e2e8f0]">
+          <div className="flex items-center gap-3">
+            <div
+              className="w-9 h-9 rounded-full flex items-center justify-center"
+              style={{ backgroundColor: `${color}10` }}
+            >
+              <div style={{ color }}>{icon}</div>
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+              {description && <p className="text-xs text-slate-500">{description}</p>}
+            </div>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-all">
+            <X className="w-4 h-4 text-slate-600" />
+          </button>
+        </div>
+        <div className="p-5">{children}</div>
+        <div className="flex items-center justify-between gap-2 p-5 border-t border-[#e2e8f0] bg-[#f8fafc]">
+          <div className="flex-1">{footer}</div>
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="px-3.5 py-2 text-xs text-slate-700 bg-white border border-[#e2e8f0] rounded-xl font-medium hover:bg-slate-50 hover:border-slate-400 transition-all">
+              Annuler
+            </button>
+            <button onClick={onSave} className={`px-3.5 py-2 text-xs text-white rounded-xl font-medium transition-all ${saveButtonClass || 'bg-[#2563eb] border border-[#2563eb] hover:bg-blue-700 hover:border-blue-700 shadow-[0_2px_8px_rgba(37,99,235,0.2)]'}`}>
+              {saveText}
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+// --- Success Modal ---
+function SuccessModal({ message, onClose }) {
+  useEffect(() => {
+    const handleEsc = (e) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handleEsc)
+    return () => document.removeEventListener('keydown', handleEsc)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.9 }}
+        transition={{ duration: 0.2, ease: 'easeOut' }}
+        className="relative w-full max-w-sm bg-white rounded-[21px] shadow-[0_12px_48px_rgba(0,0,0,0.12)] overflow-hidden p-5 text-center"
+      >
+        <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">
+          <CheckCircle2 className="w-7 h-7 text-emerald-600" />
+        </div>
+        <h2 className="text-base font-semibold text-slate-900 mb-2">Succès !</h2>
+        <p className="text-xs text-slate-600 mb-5">{message}</p>
+        <button onClick={onClose} className="w-full px-4 py-2 text-xs text-white bg-[#2563eb] border border-[#2563eb] rounded-xl font-medium hover:bg-blue-700 hover:border-blue-700 transition-all shadow-[0_2px_8px_rgba(37,99,235,0.2)]">
+          Continuer
+        </button>
+      </motion.div>
+    </div>
+  )
+}
+
+// --- Status Badge ---
 function StatusBadge({ status }) {
   let bgClass = 'bg-slate-100'
   let textClass = 'text-slate-600'
   let label = 'Non commencé'
-  
-  if (status === 'in_progress') {
-    bgClass = 'bg-blue-50'
-    textClass = 'text-blue-700'
-    label = 'En cours'
-  } else if (status === 'completed') {
-    bgClass = 'bg-emerald-50'
-    textClass = 'text-emerald-700'
-    label = 'Terminé'
-  }
-  
-  const className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ' + bgClass + ' ' + textClass
-  
+  if (status === 'in_progress') { bgClass = 'bg-blue-50'; textClass = 'text-blue-700'; label = 'En cours' }
+  else if (status === 'completed') { bgClass = 'bg-emerald-50'; textClass = 'text-emerald-700'; label = 'Terminé' }
+  const className = 'flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-medium ' + bgClass + ' ' + textClass
   return (
     <span className={className}>
       {status === 'in_progress' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />}
@@ -176,525 +606,1089 @@ function StatusBadge({ status }) {
   )
 }
 
+// --- Chip ---
 function Chip({ children, color = 'blue' }) {
   let colorClass = 'bg-blue-50 text-blue-700 border-blue-200'
-  
-  if (color === 'emerald') {
-    colorClass = 'bg-emerald-50 text-emerald-700 border-emerald-200'
-  } else if (color === 'amber') {
-    colorClass = 'bg-amber-50 text-amber-700 border-amber-200'
-  } else if (color === 'red') {
-    colorClass = 'bg-red-50 text-red-700 border-red-200'
-  }
-  
-  const className = 'px-2.5 py-1 rounded-full text-xs font-medium border ' + colorClass
-  
-  return (
-    <span className={className}>
-      {children}
-    </span>
-  )
+  if (color === 'emerald') colorClass = 'bg-emerald-50 text-emerald-700 border-emerald-200'
+  else if (color === 'amber') colorClass = 'bg-amber-50 text-amber-700 border-amber-200'
+  else if (color === 'red') colorClass = 'bg-red-50 text-red-700 border-red-200'
+  const className = 'px-2 py-0.5 rounded-full text-[10px] font-medium border ' + colorClass
+  return <span className={className}>{children}</span>
 }
 
+// --- Alert Item ---
 function AlertItem({ label, severity }) {
   let colorClass = 'bg-red-50 border-red-200 text-red-700'
-  
-  if (severity === 'warning') {
-    colorClass = 'bg-amber-50 border-amber-200 text-amber-700'
-  }
-  
-  const className = 'flex items-center gap-3 p-3 rounded-xl border ' + colorClass
-  
+  let iconColor = 'text-red-600'
+  if (severity === 'warning') { colorClass = 'bg-amber-50 border-amber-200 text-amber-700'; iconColor = 'text-amber-600' }
+  const className = 'flex items-center gap-2 p-2 rounded-lg border ' + colorClass
   return (
     <div className={className}>
-      <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-      <span className="text-sm font-medium">{label}</span>
+      <AlertTriangle className={`w-3.5 h-3.5 flex-shrink-0 ${iconColor}`} />
+      <span className="text-[11px] font-medium">{label}</span>
     </div>
   )
 }
 
-function TimelineEvent({ event, index }) {
-  let bgClass = 'bg-blue-50'
-  let textClass = 'text-blue-600'
-  let Icon = Stethoscope
-  
-  if (event.type === 'consultation') {
-    bgClass = 'bg-blue-50'
-    textClass = 'text-blue-600'
-    Icon = Stethoscope
-  } else if (event.type === 'lab') {
-    bgClass = 'bg-emerald-50'
-    textClass = 'text-emerald-600'
-    Icon = Microscope
-  } else if (event.type === 'prescription') {
-    bgClass = 'bg-amber-50'
-    textClass = 'text-amber-600'
-    Icon = Pill
-  } else if (event.type === 'urgency') {
-    bgClass = 'bg-red-50'
-    textClass = 'text-red-600'
-    Icon = AlertTriangle
-  }
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.1 }}
-      className="relative pl-8 pb-8 last:pb-0"
-    >
-      <div className="absolute left-0 top-0 w-4 h-4 rounded-full bg-white border-2 border-slate-300 z-10" />
-      {index !== TIMELINE_EVENTS.length - 1 && (
-        <div className="absolute left-1.5 top-4 bottom-0 w-0.5 bg-slate-200" />
-      )}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow">
-        <div className="flex items-start justify-between gap-4 mb-3">
-          <div className="flex items-center gap-3">
-            <div className={'w-10 h-10 rounded-xl ' + bgClass + ' flex items-center justify-center'}>
-              <Icon className={'w-5 h-5 ' + textClass} />
-            </div>
-            <div>
-              <h4 className="font-semibold text-slate-800">{event.title}</h4>
-              <p className="text-sm text-slate-500">{event.date} · {event.doctor}</p>
-            </div>
-          </div>
-          <Chip>{event.type}</Chip>
-        </div>
-        <p className="text-sm text-slate-600">{event.summary}</p>
-      </div>
-    </motion.div>
-  )
-}
-
+// --- Document Card ---
 function DocumentCard({ doc }) {
-  const iconMap = {
-    prescription: FileCheck2,
-    lab: TestTube2,
-    imaging: ImageIcon,
+  const iconMap = { prescription: FileCheck2, lab: TestTube2, imaging: ImageIcon }
+  const iconStyleMap = {
+    prescription: 'bg-blue-50 border-blue-100 text-blue-600',
+    lab: 'bg-violet-50 border-violet-100 text-violet-600',
+    imaging: 'bg-orange-50 border-orange-100 text-orange-600',
   }
   const Icon = iconMap[doc.type] || FileText
-
+  const iconStyle = iconStyleMap[doc.type] || 'bg-slate-50 border-slate-200 text-slate-500'
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-all hover:-translate-y-0.5 cursor-pointer group">
-      <div className="flex items-start justify-between mb-3">
-        <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center group-hover:bg-blue-50 transition-colors">
-          <Icon className="w-6 h-6 text-slate-500 group-hover:text-blue-600 transition-colors" />
+    <div role="button" tabIndex={0} aria-label={`Ouvrir le document : ${doc.name}`} className="group h-[208px] rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-slate-50/50 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 cursor-pointer flex flex-col">
+      <div className="flex items-start justify-between mb-5">
+        <div className={`w-11 h-11 rounded-xl border flex items-center justify-center transition-transform duration-200 group-hover:scale-105 ${iconStyle}`}>
+          <Icon className="w-5 h-5" />
         </div>
-        <div className="flex gap-2">
-          <button className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-colors">
-            <Download className="w-4 h-4 text-slate-500" />
+        <div className="flex gap-1.5">
+          <button type="button" aria-label={`Télécharger ${doc.name}`} className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition-all">
+            <Download className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
-      <h4 className="font-semibold text-slate-800 mb-1">{doc.name}</h4>
-      <p className="text-sm text-slate-500">{doc.date} · {doc.doctor}</p>
+      <h4 className="text-[14px] font-semibold text-slate-900 mb-1 leading-tight line-clamp-2 min-h-[2.5rem]">{doc.name}</h4>
+      <p className="text-[12px] text-slate-500 font-medium">{doc.date} • {doc.doctor}</p>
+      <span className="mt-auto pt-4 inline-flex items-center gap-1 text-[12px] font-semibold text-blue-600 opacity-80 transition-opacity group-hover:opacity-100">
+        Ouvrir <ChevronRight className="w-3.5 h-3.5" />
+      </span>
     </div>
   )
 }
 
-function QuickNoteField({ title, placeholder, value, onChange, icon: Icon }) {
+// --- Quick Note Field (with Focus Mode) ---
+function QuickNoteField({ 
+  title, 
+  placeholder, 
+  value, 
+  onChange, 
+  icon: Icon, 
+  autoFocus = false, 
+  cardId, 
+  activeCardId, 
+  enterFocusMode, 
+  exitFocusMode,
+  patientConsultations = [],
+  onSave,
+  autoSaveDelay = 3000
+}) {
   return (
-    <div className="rounded-[21px] border border-[#e2e8f0] bg-white p-5 shadow-[0_5px_16px_rgba(15,23,42,0.045)]">
-      <div className="flex items-center gap-2 mb-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50">
-          <Icon className="w-5 h-5 text-blue-600" />
-        </div>
-        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-      </div>
-      <textarea
+    <FocusableCard
+      cardId={cardId}
+      activeCardId={activeCardId}
+      enterFocusMode={enterFocusMode}
+      exitFocusMode={exitFocusMode}
+      title={title}
+      icon={Icon}
+    >
+      <MedicalTextarea
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={onChange}
         placeholder={placeholder}
-        className="w-full h-40 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl resize-none focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
+        autoFocus={autoFocus}
+        patientConsultations={patientConsultations}
+        onSave={onSave}
+        autoSaveDelay={autoSaveDelay}
       />
+    </FocusableCard>
+  )
+}
+
+// --- Empty State Component ---
+function EmptyState({ title, description, icon: Icon }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 text-center bg-white rounded-xl border border-dashed border-slate-300">
+      <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mb-3">
+        <Icon className="w-6 h-6 text-slate-400" />
+      </div>
+      <h3 className="text-sm font-semibold text-slate-800 mb-1">{title}</h3>
+      <p className="text-xs text-slate-500">{description}</p>
     </div>
   )
 }
 
-// Main Component
+// --- Main Component ---
 export default function PatientWorkspace() {
   const navigate = useNavigate()
-  const { id } = useParams()
-  const [activeTab, setActiveTab] = useState('overview')
-  const [consultationStatus, setConsultationStatus] = useState('not_started')
-  const [consultationStartTime, setConsultationStartTime] = useState(null)
+  const { id: patientIdParam } = useParams()
+  const [searchParams] = useSearchParams()
+  const startConsultation = searchParams.get('startConsultation') === 'true'
+  const visitId = searchParams.get('visitId')
+  const { profile, updateVisitStatus, notify } = useAppContext()
+  
+  const { activeCardId, isActive, enterFocusMode, exitFocusMode } = useFocusMode()
+
+  // --- State ---
+  const actionParam = searchParams.get('action')
+  const [activeTab, setActiveTab] = useState(startConsultation ? 'Constantes & Motif' : 'Historique')
+  const [consultationStatus, setConsultationStatus] = useState(startConsultation ? 'in_progress' : 'not_started')
+  const [showPatientSidebar, setShowPatientSidebar] = useState(false)
   const [timerSeconds, setTimerSeconds] = useState(0)
-  const [showAutosave, setShowAutosave] = useState(false)
-  
-  // New state for futuristic layout
-  const [consultationNotes, setConsultationNotes] = useState({
-    anamnese: '',
-    examen: '',
-    diagnostic: '',
-    traitement: '',
-    prescription: '',
-  })
-  
+  const [selectedEvent, setSelectedEvent] = useState(null)
+  const [showModal, setShowModal] = useState(searchParams.get('action') || null)
+  const [showSuccess, setShowSuccess] = useState(null)
+  const [showEndConfirmModal, setShowEndConfirmModal] = useState(false)
+  const [saveStatus, setSaveStatus] = useState('saved')
+
+  // --- Form States ---
+  const [prescriptionForm, setPrescriptionForm] = useState({ medications: '', notes: '' })
+  const [labForm, setLabForm] = useState({ type: '', notes: '' })
+  const [reportForm, setReportForm] = useState({ title: '', content: '' })
+  const [documentForm, setDocumentForm] = useState({ name: '', type: '' })
+  const [acteForm, setActeForm] = useState({ name: '', description: '', montant: '' })
+  // --- Session actes (local, sprint actuel — persistance Supabase à faire séparément) ---
+  // Structure: { id: string, name: string, description: string, montant: number }
+  // ⚠️ Branchement futur : au handleConfirmEndConsultation, passer sessionActes au service
+  //    d'encaissement (ex: comme billing_amount = sessionActesTotal ou lignes JSON)
+  const [sessionActes, setSessionActes] = useState([])
+
+  // --- Consultation Notes State ---
+  const [consultationReason, setConsultationReason] = useState('')
+  const [symptomsHistory, setSymptomsHistory] = useState('')
   const [vitals, setVitals] = useState({
-    poids: MOCK_PATIENT.poids,
-    taille: MOCK_PATIENT.taille,
-    tension: '120/80',
-    temperature: '36.8',
-    frequency: '78',
+    bloodPressureSystolic: '',
+    bloodPressureDiastolic: '',
+    heartRate: '',
+    temperature: '',
+    respiratoryRate: '',
+    oxygenSaturation: '',
+    weight: '',
+    height: '',
+  })
+  const [subjectiveNote, setSubjectiveNote] = useState('')
+  const [objectiveNote, setObjectiveNote] = useState('')
+  const [clinicalExam, setClinicalExam] = useState('')
+  const [assessmentNote, setAssessmentNote] = useState('')
+  const [planNote, setPlanNote] = useState('')
+
+  // --- Query Patient Data ---
+  const { data: patient, isLoading: loadingPatient, isError: patientLoadFailed, error: patientLoadError, refetch: retryPatientLoad } = useQuery({
+    queryKey: ['patient', patientIdParam],
+    queryFn: async () => {
+      try {
+        const data = await getPatientById(patientIdParam)
+        if (!data) return null
+        // antecedents/allergies/groupe_sanguin are doctor/admin-only and
+        // come from a separate RPC — getPatientById no longer carries them
+        // (see mm_get_patient_clinical / migration 20260912070000).
+        const clinical = await getPatientClinicalFields(patientIdParam)
+        return clinical ? { ...data, ...clinical } : data
+      } catch (err) {
+        console.error('Supabase fetch failed:', err)
+        throw err
+      }
+    },
+    enabled: !!patientIdParam,
+    retry: 1,
+    staleTime: 1000 * 60 * 5 // 5 mins cache
   })
 
-  // Timer effect
+  // --- Timer Effect ---
   useEffect(() => {
     let interval
-    if (consultationStatus === 'in_progress' && consultationStartTime) {
-      interval = setInterval(() => {
-        setTimerSeconds(Math.floor((Date.now() - new Date(consultationStartTime).getTime()) / 1000))
-      }, 1000)
+    if (consultationStatus === 'in_progress') {
+      interval = setInterval(() => { setTimerSeconds(prev => prev + 1) }, 1000)
     }
     return () => clearInterval(interval)
-  }, [consultationStatus, consultationStartTime])
+  }, [consultationStatus])
 
-  // Autosave effect
-  useEffect(() => {
-    if (consultationStatus === 'in_progress') {
-      const timeout = setTimeout(() => {
-        setShowAutosave(true)
-        setTimeout(() => setShowAutosave(false), 2000)
-      }, 1000)
-      return () => clearTimeout(timeout)
+  // --- Consultations du patient (pour suggestions historiques) ---
+  const patientConsultations = useMemo(() => {
+    return [].map(ev => ({
+      id: ev.id,
+      type: ev.type,
+      date: ev.date,
+      reason: ev.title,
+      notes: ev.details || ev.summary,
+      diagnosis: ev.title,
+      plan: ev.tags?.join(', ') || '',
+      symptoms: ev.summary,
+      clinicalExam: ev.details,
+      assessment: ev.details
+    }))
+  }, [])
+
+  // --- Sauvegarde auto locale (peut être remplacée par un appel API) ---
+  const handleAutoSaveField = useCallback(async (fieldKey, value) => {
+    throw new Error('Local consultation storage is disabled in production.')
+
+    try {
+      const key = `mm_autosave_${patientIdParam || 'demo'}_${fieldKey}`
+      localStorage.setItem(key, JSON.stringify({ value, savedAt: Date.now() }))
+    } catch (_err) {
+      // ignore storage errors
     }
-  }, [consultationNotes, consultationStatus])
+  }, [patientIdParam])
 
-  const handleStartConsultation = () => {
+  // --- Handlers ---
+  const handleStartConsultation = useCallback(() => {
     setConsultationStatus('in_progress')
-    setConsultationStartTime(new Date().toISOString())
-  }
+    setActiveTab('Constantes & Motif')
+  }, [])
 
-  const handleEndConsultation = () => {
+  const handleEndConsultation = useCallback(() => {
+    setShowEndConfirmModal(true)
+  }, [])
+
+  const handleConfirmEndConsultation = useCallback(() => {
+    setShowEndConfirmModal(false)
     setConsultationStatus('completed')
-    setConsultationStartTime(null)
     setTimerSeconds(0)
+    if (visitId) {
+      const totalActes = sessionActes.reduce((sum, a) => sum + a.montant, 0)
+      updateVisitStatus(visitId, VISIT_STATUSES.BILLING, {
+        amount: totalActes > 0 ? totalActes : 300, // Use actes total or default 300
+        sessionActes: sessionActes // Pass actes data for secretary view
+      })
+      notify({ title: 'Consultation terminée', description: 'Le patient a été envoyé à la caisse', tone: 'success' })
+    } else {
+      // FIXME: consultation démarrée sans visitId (ex: depuis DossierPatient ?startConsultation=true).
+      // updateVisitStatus est ignoré — les actes ne sont pas transmis à la caisse.
+      // À corriger quand la création de visite à la volée sera implémentée.
+      console.warn('[PatientWorkspace] handleConfirmEndConsultation: visitId absent — updateVisitStatus ignoré, actes non transmis à la caisse.')
+      notify({ title: 'Consultation enregistrée', description: 'Notes sauvegardées (aucun acte transmis à la caisse — visitId absent)', tone: 'info' })
+    }
+    navigate('/dashboard')
+  }, [visitId, updateVisitStatus, notify, navigate, sessionActes])
+
+  const handleSavePrescription = useCallback(() => {
+    setShowModal(null)
+    setShowSuccess('Ordonnance créée avec succès !')
+    setPrescriptionForm({ medications: '', notes: '' })
+  }, [])
+
+  const handleSaveLab = useCallback(() => {
+    setShowModal(null)
+    setShowSuccess('Demande d\'analyses envoyée !')
+    setLabForm({ type: '', notes: '' })
+  }, [])
+
+  const handleSaveReport = useCallback(() => {
+    setShowModal(null)
+    setShowSuccess('Compte-rendu enregistré !')
+    setReportForm({ title: '', content: '' })
+  }, [])
+
+  const handleSaveDocument = useCallback(() => {
+    setShowModal(null)
+    setShowSuccess('Document ajouté !')
+    setDocumentForm({ name: '', type: '' })
+  }, [])
+
+  const handleSaveActe = useCallback(() => {
+    const montantNum = parseFloat(acteForm.montant) || 0
+    if (acteForm.name.trim()) {
+      setSessionActes(prev => [
+        ...prev,
+        { id: `acte_${Date.now()}`, name: acteForm.name.trim(), description: acteForm.description.trim(), montant: montantNum }
+      ])
+    }
+    setShowModal(null)
+    setShowSuccess('Acte ajouté avec succès !')
+    setActeForm({ name: '', description: '', montant: '' })
+  }, [acteForm])
+
+  const handleManualSave = useCallback(async () => {
+    setSaveStatus('saving')
+    try {
+      await Promise.all([
+        handleAutoSaveField('consultation_reason', consultationReason),
+        handleAutoSaveField('symptoms_history', symptomsHistory),
+        handleAutoSaveField('clinical_exam', clinicalExam),
+        handleAutoSaveField('assessment', assessmentNote),
+        handleAutoSaveField('plan', planNote),
+        handleAutoSaveField('vitals', JSON.stringify(vitals)),
+      ])
+      setSaveStatus('saved')
+      notify({ title: 'Enregistré', description: 'Les données de la consultation ont été sauvegardées.', tone: 'success' })
+    } catch (_err) {
+      setSaveStatus('error')
+      notify({ title: 'Erreur', description: 'Impossible de sauvegarder.', tone: 'error' })
+    }
+  }, [consultationReason, symptomsHistory, clinicalExam, assessmentNote, planNote, vitals, handleAutoSaveField, notify])
+
+  // --- Derived Values ---
+  const age = patient ? calcAge(patient.date_naissance) : null
+  const bmi = calcBMI(vitals.weight, vitals.height)
+  const chronicDisease = patient?.antecedents || '—'
+  const currentTreatment = '—'
+  const emergencyContact = patient?.contact_urgence || '—'
+  const isConsultationActive = consultationStatus === 'in_progress'
+
+  // --- isDirty: true si au moins un champ de consultation contient des données non sauvegardées ---
+  const isDirty = useMemo(() => {
+    if (consultationStatus !== 'in_progress') return false
+    return (
+      consultationReason.trim() !== '' ||
+      symptomsHistory.trim() !== '' ||
+      clinicalExam.trim() !== '' ||
+      assessmentNote.trim() !== '' ||
+      planNote.trim() !== '' ||
+      Object.values(vitals).some(v => v !== '')
+    )
+  }, [consultationStatus, consultationReason, symptomsHistory, clinicalExam, assessmentNote, planNote, vitals])
+
+  // --- Blocage navigation interne (React Router useBlocker) ---
+  // Bloque dès qu'une consultation est active, indépendamment de isDirty
+  const blocker = useBlocker(consultationStatus === 'in_progress')
+
+  // --- Blocage fermeture onglet / rafraîchissement ---
+  useEffect(() => {
+    const handler = (e) => {
+      if (consultationStatus === 'in_progress') {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [consultationStatus])
+
+  // --- Loading State ---
+  if (loadingPatient) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-[#f8fafc]">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
+          <p className="text-slate-500 font-medium text-sm">Chargement du dossier...</p>
+        </div>
+      </div>
+    )
   }
 
-  const patient = MOCK_PATIENT
-  const age = calcAge(patient.date_naissance)
-  const bmi = vitals.poids / Math.pow(vitals.taille / 100, 2)
+  if (patientLoadFailed || !patient) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#f8fafc] p-6">
+        <div className="max-w-md rounded-2xl border border-red-200 bg-red-50 p-6 text-center">
+          <h1 className="text-lg font-bold text-red-900">Erreur de chargement du dossier</h1>
+          <p className="mt-2 text-sm text-red-800">{patientLoadError?.message || 'Patient introuvable.'}</p>
+          <button onClick={() => retryPatientLoad()} className="mt-4 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white">Réessayer</button>
+          <button onClick={() => navigate('/dashboard')} className="mt-3 block w-full text-sm font-semibold text-red-800">Retour au tableau de bord</button>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="min-h-screen bg-[#f8fafc]">
-      {/* Top Header */}
-      <header className="sticky top-0 z-50 bg-[#f8fafc] px-6 py-4">
-        <div className="max-w-[1800px] mx-auto">
-          <div className="bg-white border border-[#e2e8f0] rounded-[21px] px-6 py-5 shadow-[0_5px_16px_rgba(15,23,42,0.045)]">
-            <div className="flex items-center justify-between">
-              {/* Left: Back + Patient Info */}
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() => navigate('/dashboard')}
-                  className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-all"
-                >
-                  <ArrowLeft className="w-5 h-5 text-slate-600" />
-                </button>
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-gradient-to-r from-[#2563eb] to-[#14b8a6] flex items-center justify-center text-white font-bold text-lg">
-                    {patient.prenom[0]}{patient.nom[0]}
-                  </div>
-                  <div>
-                    <h1 className="text-2xl font-bold text-slate-900">
-                      {patient.prenom} {patient.nom}
-                    </h1>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="text-sm font-medium text-slate-600">
-                        {age} ans • {patient.sexe === 'F' ? 'Femme' : 'Homme'} • {patient.assurance}
-                      </span>
-                      <span className="text-slate-300">•</span>
-                      <span className="text-sm text-slate-500">Patient ID: {patient.id}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+    <section aria-label="Espace Patient" className="min-h-screen bg-[#f8fafc] flex flex-col pb-5">
+      {/* Backdrop for Focus Mode */}
+      <Backdrop isVisible={isActive} onClick={exitFocusMode} />
+      {/* --- Breadcrumb Style Top Bar --- */}
+      <motion.header
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35 }}
+        className="sticky top-0 z-50 bg-[#f8fafc]/95 backdrop-blur-sm px-6 pt-4 pb-3 border-b border-slate-200"
+      >
+        <div className="w-full flex justify-between items-center relative gap-5">
+          <div className="flex items-center min-w-0 flex-1">
+            {/* Retour Patients */}
+            <button
+              onClick={() => navigate('/dashboard')}
+              aria-label="Retour à la liste des patients"
+              className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-slate-100 transition-colors group"
+            >
+              <ArrowLeft className="w-4 h-4 text-slate-500 group-hover:text-slate-700" />
+              <span className="text-[13.5px] font-medium text-slate-500 group-hover:text-slate-700">Patients</span>
+            </button>
+          </div>
 
-              {/* Right: Status + Timer + CTA */}
-              <div className="flex items-center gap-4">
-                <StatusBadge status={consultationStatus} />
-                {consultationStatus === 'in_progress' && (
-                  <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 rounded-full border border-blue-200">
-                    <Clock className="w-4 h-4 text-blue-600" />
-                    <span className="text-sm font-semibold text-blue-800">
-                      {formatTimer(timerSeconds)}
-                    </span>
-                  </div>
-                )}
-                {consultationStatus === 'not_started' ? (
-                  <button
-                    onClick={handleStartConsultation}
-                    className="flex items-center gap-2 px-6 py-3 bg-[#2563eb] text-white rounded-[12px] font-semibold hover:bg-blue-700 transition-all shadow-[0_6px_16px_rgba(37,99,235,0.25)]"
+          {/* Center: Statut de consultation / Timer */}
+          <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center pointer-events-none z-10 hidden md:flex">
+            {consultationStatus === 'in_progress' && (
+              <motion.div
+                initial={{ opacity: 0, y: -2 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: 'easeOut' }}
+                className="flex items-center gap-2.5 select-none bg-white/60 px-4 py-1.5 rounded-full border border-slate-200/60 shadow-sm pointer-events-auto"
+              >
+                {/* Indicateur actif */}
+                <span className="relative flex h-3 w-3 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-50" />
+                  <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" />
+                </span>
+
+                <span className="font-bold text-[14px] text-slate-700 tracking-tight">
+                  En consultation
+                </span>
+
+                <span className="font-mono text-[15px] font-extrabold tabular-nums tracking-tighter text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md">
+                  {formatTimer(timerSeconds)}
+                </span>
+              </motion.div>
+            )}
+          </div>
+
+          {/* Bloc actions côté droit */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            {consultationStatus === 'in_progress' ? (
+              <>
+
+                {/* Badge total actes — lecture seule, masqué si 0 */}
+                {sessionActes.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.85 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.85 }}
+                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                    className="h-10 px-3.5 rounded-[0.625rem] flex items-center gap-2 select-none"
+                    style={{
+                      background: '#f8fafc',
+                      border: '1.5px solid #e2e8f0',
+                      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.9)',
+                    }}
+                    title={`${sessionActes.length} acte${sessionActes.length > 1 ? 's' : ''} : ${sessionActes.map(a => a.name).join(', ')}`}
                   >
-                    <Play className="w-4 h-4" />
-                    Commencer la consultation
-                  </button>
-                ) : consultationStatus === 'in_progress' ? (
-                  <div className="flex items-center gap-3">
-                    <button className="flex items-center gap-2 px-5 py-3 bg-amber-500 text-white rounded-[12px] font-semibold hover:bg-amber-600 transition-all shadow-[0_6px_16px_rgba(245,158,11,0.25)]">
-                      <Plus className="w-4 h-4" />
-                      + Acte
-                    </button>
-                    <button
-                      onClick={handleEndConsultation}
-                      className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-[12px] font-semibold hover:bg-emerald-700 transition-all shadow-[0_6px_16px_rgba(5,150,105,0.25)]"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      Terminer
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            </div>
+                    <Calculator className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span className="font-semibold text-[13px] text-slate-700 tabular-nums">
+                      {sessionActes.reduce((sum, a) => sum + a.montant, 0).toLocaleString('fr-FR')} MAD
+                    </span>
+                  </motion.div>
+                )}
 
-            {/* Chips */}
-            <div className="flex items-center gap-2 mt-5">
-              <Chip color="blue">CNSS</Chip>
-              <Chip color="amber">Diabétique</Chip>
-              <Chip color="red">Allergie PCN</Chip>
-            </div>
+                {/* Bouton + Acte (Même style que "Voir dossier") */}
+                <button
+                  onClick={() => setShowModal('addActe')}
+                  className="h-10 px-4 rounded-[0.625rem] font-bold text-[13px] bg-white text-[#334155] border-2 border-[#cbd5e1] hover:bg-[#f1f5f9] hover:border-[#94a3b8] transition-all flex items-center gap-1.5 shadow-sm hover:-translate-y-0.5 active:translate-y-0"
+                >
+                  <Plus className="w-4 h-4 text-slate-600" />
+                  Acte
+                </button>
+
+                {/* Bouton Dossier (Patient Infos) */}
+                <button
+                  onClick={() => setShowPatientSidebar(true)}
+                  className="h-10 px-4 rounded-[0.625rem] font-bold text-[13px] bg-white text-[#334155] border-2 border-[#cbd5e1] hover:bg-[#f1f5f9] hover:border-[#94a3b8] transition-all flex items-center gap-1.5 shadow-sm hover:-translate-y-0.5 active:translate-y-0"
+                >
+                  <User className="w-4 h-4 text-slate-600" />
+                  Dossier patient
+                </button>
+
+                {/* Bouton Terminer / Enregistrer (Même style que "Commencer") */}
+                <button
+                  onClick={handleEndConsultation}
+                  className="h-10 px-5 rounded-[0.625rem] font-bold text-[13px] bg-[#2563eb] text-white border-2 border-[#60a5fa] hover:bg-[#1e40af] hover:border-[#1e3a8a] transition-all flex items-center gap-2 shadow-[0_3px_10px_rgba(37,99,235,0.25)] hover:-translate-y-0.5 active:translate-y-0"
+                >
+                  <Save className="w-4 h-4 text-white" />
+                  Enregistrer
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setShowPatientSidebar(true)}
+                  className="h-10 px-4 rounded-[0.625rem] font-bold text-[13px] bg-white text-[#334155] border-2 border-[#cbd5e1] hover:bg-[#f1f5f9] hover:border-[#94a3b8] transition-all flex items-center gap-1.5 shadow-sm hover:-translate-y-0.5 active:translate-y-0"
+                >
+                  <User className="w-4 h-4 text-slate-600" />
+                  Dossier patient
+                </button>
+                
+                <button
+                  onClick={handleStartConsultation}
+                  className="h-10 px-5 rounded-[0.625rem] font-bold text-[13px] bg-[#2563eb] text-white border-2 border-[#60a5fa] hover:bg-[#1e40af] hover:border-[#1e3a8a] transition-all flex items-center gap-2 shadow-[0_3px_10px_rgba(37,99,235,0.25)] hover:-translate-y-0.5 active:translate-y-0"
+                >
+                  <Save className="w-4 h-4 text-white" />
+                  Enregistrer
+                </button>
+              </>
+            )}
           </div>
         </div>
-      </header>
+      </motion.header>
 
-      {/* Autosave indicator */}
-      <AnimatePresence>
-        {showAutosave && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="fixed top-28 right-6 z-50 bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 shadow-sm"
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            Brouillon enregistré
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Main Content */}
-      <main className="max-w-[1800px] mx-auto px-6 pb-10">
-        <div className="grid grid-cols-12 gap-6">
-          {/* Left: Patient Snapshot Sidebar (Sticky) */}
-          <div className="col-span-12 lg:col-span-3 order-2 lg:order-1">
-            <div className="sticky top-[140px] space-y-6">
-              {/* Patient Snapshot */}
-              <div className="bg-white rounded-[21px] border border-[#e2e8f0] shadow-[0_5px_16px_rgba(15,23,42,0.045)] overflow-hidden">
-                <div className="px-6 py-5 border-b border-[#e2e8f0]">
-                  <h3 className="text-sm font-semibold text-slate-800">Patient Snapshot</h3>
-                </div>
-                <div className="p-6 space-y-5">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Age</p>
-                      <p className="text-base font-semibold text-slate-800">{age} ans</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Groupe sanguin</p>
-                      <p className="text-base font-semibold text-slate-800">{patient.groupe_sanguin}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Poids</p>
-                      <p className="text-base font-semibold text-slate-800">{vitals.poids} kg</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Taille</p>
-                      <p className="text-base font-semibold text-slate-800">{vitals.taille} cm</p>
-                    </div>
-                    <div className="col-span-2">
-                      <p className="text-xs text-slate-500 mb-1">IMC</p>
-                      <p className="text-base font-semibold text-slate-800">{bmi.toFixed(1)} kg/m²</p>
-                    </div>
-                  </div>
-
-                  {/* Medical Alerts */}
-                  <div className="pt-5 border-t border-[#e2e8f0]">
-                    <p className="text-xs font-semibold text-slate-500 mb-3">Alertes</p>
-                    <div className="space-y-2">
-                      {MOCK_ALERTS.map(alert => (
-                        <div key={alert.id} className="flex items-center gap-2 p-3 rounded-xl border bg-amber-50 border-amber-200">
-                          <AlertTriangle className="w-4 h-4 text-amber-600" />
-                          <span className="text-sm font-medium text-amber-900">{alert.label}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Current Treatment */}
-                  <div className="pt-5 border-t border-[#e2e8f0]">
-                    <p className="text-xs font-semibold text-slate-500 mb-3">Traitement actuel</p>
-                    <div className="space-y-2">
-                      {MOCK_MEDICATIONS.map(med => (
-                        <div key={med.id} className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200">
-                          <Pill className="w-4 h-4 text-blue-600" />
-                          <div>
-                            <p className="text-sm font-semibold text-slate-800">{med.name}</p>
-                            <p className="text-xs text-slate-500">{med.dosage}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Recent Results */}
-              <div className="bg-white rounded-[21px] border border-[#e2e8f0] shadow-[0_5px_16px_rgba(15,23,42,0.045)] overflow-hidden">
-                <div className="px-6 py-5 border-b border-[#e2e8f0]">
-                  <h3 className="text-sm font-semibold text-slate-800">Résultats récents</h3>
-                </div>
-                <div className="p-6 space-y-3">
-                  {MOCK_RESULTS.map(result => (
-                    <div key={result.id} className="flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-200">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-800">{result.type}</p>
-                        <p className="text-xs text-slate-500">{result.date}</p>
-                      </div>
-                      <span className="text-base font-semibold text-emerald-700">{result.value}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Right: Consultation Workspace */}
-          <div className="col-span-12 lg:col-span-9 order-1 lg:order-2">
-            <AnimatePresence mode="wait">
-              {consultationStatus === 'not_started' ? (
-                <motion.div
-                  key="not-started"
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.3 }}
-                  className="bg-white rounded-[21px] border border-[#e2e8f0] p-16 text-center shadow-[0_5px_16px_rgba(15,23,42,0.045)]"
-                >
-                  <div className="w-24 h-24 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-6">
-                    <Stethoscope className="w-12 h-12 text-slate-400" />
-                  </div>
-                  <h3 className="text-xl font-bold text-slate-900 mb-3">
-                    Consultation non commencée
-                  </h3>
-                  <p className="text-base text-slate-500 mb-8 max-w-md mx-auto">
-                    Cliquez sur "Commencer la consultation" pour accéder à l'espace de travail clinique
-                  </p>
+      {/* --- Main Content Layout --- */}
+      <main className="flex-1 w-full px-6 py-5 w-full">
+        <div className="w-full">
+          {/* --- Main Content --- */}
+          <div className="space-y-5 w-full">
+            {/* Tabs Navigation */}
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.35, delay: 0.1 }}
+            >
+              <nav role="tablist" className="bg-gray-100 rounded-full p-1 flex w-full shadow-inner">
+                {['Constantes & Motif', 'Examen', 'Bilan', 'Historique', 'Documents'].map((tab) => (
                   <button
-                    onClick={handleStartConsultation}
-                    className="inline-flex items-center gap-2 px-8 py-4 bg-[#2563eb] text-white rounded-[14px] font-semibold hover:bg-blue-700 transition-all shadow-[0_8px_24px_rgba(37,99,235,0.35)]"
+                    key={tab}
+                    role="tab"
+                    aria-selected={activeTab === tab}
+                    onClick={() => setActiveTab(tab)}
+                    className={`flex-1 px-5 py-2 text-[13.5px] font-semibold rounded-full transition-all duration-200 ${
+                      activeTab === tab
+                        ? 'bg-white text-slate-900 shadow-[0_2px_6px_rgba(0,0,0,0.08)]'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
                   >
-                    <Play className="w-5 h-5" />
-                    Commencer la consultation
+                    {tab}
                   </button>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="in-progress"
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.3 }}
-                  className="space-y-6"
-                >
-                  {/* Vitals Section */}
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                    <div className="rounded-[21px] border border-[#e2e8f0] bg-white p-5 shadow-[0_5px_16px_rgba(15,23,42,0.045)]">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Scale className="w-5 h-5 text-blue-600" />
-                        <span className="text-xs font-semibold text-slate-600 uppercase">Poids</span>
-                      </div>
-                      <p className="text-3xl font-bold text-slate-900">{vitals.poids} <span className="text-sm text-slate-500">kg</span></p>
+                ))}
+              </nav>
+            </motion.div>
+
+            {/* --- Tab Content --- */}
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeTab}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.25 }}
+              >
+                {/* --- Constants & Motif Content --- */}
+                {activeTab === 'Constantes & Motif' && (
+                  <div className="space-y-5">
+                    {/* Consultation Reason & Symptoms */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <QuickNoteField
+                        cardId="consultation-reason"
+                        activeCardId={activeCardId}
+                        enterFocusMode={enterFocusMode}
+                        exitFocusMode={exitFocusMode}
+                        title="Motif de consultation"
+                        placeholder="Motif de la visite — ex. céphalées persistantes depuis 5 jours, plus marquées le matin..."
+                        icon={Stethoscope}
+                        value={consultationReason}
+                        onChange={(value) => setConsultationReason(value)}
+                        autoFocus={consultationStatus === 'in_progress'}
+                        patientConsultations={patientConsultations}
+                        onSave={(v) => handleAutoSaveField('consultation_reason', v)}
+                      />
+                      <QuickNoteField
+                        cardId="symptoms-history"
+                        activeCardId={activeCardId}
+                        enterFocusMode={enterFocusMode}
+                        exitFocusMode={exitFocusMode}
+                        title="Symptômes / Histoire"
+                        placeholder="Histoire de la maladie, symptômes, contexte..."
+                        icon={Activity}
+                        value={symptomsHistory}
+                        onChange={(value) => setSymptomsHistory(value)}
+                        patientConsultations={patientConsultations}
+                        onSave={(v) => handleAutoSaveField('symptoms_history', v)}
+                      />
                     </div>
-                    <div className="rounded-[21px] border border-[#e2e8f0] bg-white p-5 shadow-[0_5px_16px_rgba(15,23,42,0.045)]">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Ruler className="w-5 h-5 text-emerald-600" />
-                        <span className="text-xs font-semibold text-slate-600 uppercase">Taille</span>
+                    
+                    {/* Vitals Section - Target Grid Style */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-start justify-between mb-5">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50">
+                            <Heart className="w-4.5 h-4.5 text-blue-600" />
+                          </div>
+                          <h3 className="text-[15.5px] font-bold text-slate-900">Constantes vitales</h3>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-slate-400">
+                          <Info size={14} />
+                          <span className="text-[12px] font-medium">Valeurs anormales signalées</span>
+                        </div>
                       </div>
-                      <p className="text-3xl font-bold text-slate-900">{vitals.taille} <span className="text-sm text-slate-500">cm</span></p>
-                    </div>
-                    <div className="rounded-[21px] border border-[#e2e8f0] bg-white p-5 shadow-[0_5px_16px_rgba(15,23,42,0.045)]">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Activity className="w-5 h-5 text-purple-600" />
-                        <span className="text-xs font-semibold text-slate-600 uppercase">Tension</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                        <BloodPressureCard
+                          systolic={vitals.bloodPressureSystolic}
+                          diastolic={vitals.bloodPressureDiastolic}
+                          onSystolicChange={(e) => setVitals({...vitals, bloodPressureSystolic: e.target.value})}
+                          onDiastolicChange={(e) => setVitals({...vitals, bloodPressureDiastolic: e.target.value})}
+                        />
+                        <VitalCard
+                          icon={Wind}
+                          label="Fréq. cardiaque"
+                          unit="bpm"
+                          value={vitals.heartRate}
+                          onChange={(e) => setVitals({...vitals, heartRate: e.target.value})}
+                          placeholder="72"
+                        />
+                        <VitalCard
+                          icon={Thermometer}
+                          label="Température"
+                          unit="°C"
+                          value={vitals.temperature}
+                          onChange={(e) => setVitals({...vitals, temperature: e.target.value})}
+                          placeholder="37"
+                        />
+                        <VitalCard
+                          icon={Scale}
+                          label="Poids"
+                          unit="kg"
+                          value={vitals.weight}
+                          onChange={(e) => setVitals({...vitals, weight: e.target.value})}
+                          placeholder="70"
+                        />
+                        <VitalCard
+                          icon={Ruler}
+                          label="Taille"
+                          unit="cm"
+                          value={vitals.height}
+                          onChange={(e) => setVitals({...vitals, height: e.target.value})}
+                          placeholder="170"
+                        />
+                        <VitalCard
+                          icon={Droplets}
+                          label="SpO₂"
+                          unit="%"
+                          value={vitals.oxygenSaturation}
+                          onChange={(e) => setVitals({...vitals, oxygenSaturation: e.target.value})}
+                          placeholder="98"
+                        />
                       </div>
-                      <p className="text-3xl font-bold text-slate-900">{vitals.tension} <span className="text-sm text-slate-500">mmHg</span></p>
-                    </div>
-                    <div className="rounded-[21px] border border-[#e2e8f0] bg-white p-5 shadow-[0_5px_16px_rgba(15,23,42,0.045)]">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Thermometer className="w-5 h-5 text-amber-600" />
-                        <span className="text-xs font-semibold text-slate-600 uppercase">Température</span>
-                      </div>
-                      <p className="text-3xl font-bold text-slate-900">{vitals.temperature} <span className="text-sm text-slate-500">°C</span></p>
-                    </div>
-                    <div className="rounded-[21px] border border-[#e2e8f0] bg-white p-5 shadow-[0_5px_16px_rgba(15,23,42,0.045)]">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Heart className="w-5 h-5 text-red-600" />
-                        <span className="text-xs font-semibold text-slate-600 uppercase">Fréquence</span>
-                      </div>
-                      <p className="text-3xl font-bold text-slate-900">{vitals.frequency} <span className="text-sm text-slate-500">bpm</span></p>
                     </div>
                   </div>
+                )}
 
-                  {/* Notes Grid */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* --- Exam Content --- */}
+                {activeTab === 'Examen' && (
+                  <div className="space-y-5">
                     <QuickNoteField
-                      title="Anamnèse"
-                      placeholder="Motif de consultation, historique..."
-                      icon={BookOpen}
-                      value={consultationNotes.anamnese}
-                      onChange={(val) => setConsultationNotes(prev => ({...prev, anamnese: val}))}
-                    />
-                    <QuickNoteField
+                      cardId="clinical-exam"
+                      activeCardId={activeCardId}
+                      enterFocusMode={enterFocusMode}
+                      exitFocusMode={exitFocusMode}
                       title="Examen clinique"
-                      placeholder="Signes cliniques, observations..."
+                      placeholder="Observations de l'examen physique..."
                       icon={Stethoscope}
-                      value={consultationNotes.examen}
-                      onChange={(val) => setConsultationNotes(prev => ({...prev, examen: val}))}
-                    />
-                    <QuickNoteField
-                      title="Diagnostic"
-                      placeholder="Diagnostic principal, différentiels..."
-                      icon={Brain}
-                      value={consultationNotes.diagnostic}
-                      onChange={(val) => setConsultationNotes(prev => ({...prev, diagnostic: val}))}
-                    />
-                    <QuickNoteField
-                      title="Traitement"
-                      placeholder="Plan thérapeutique, recommandations..."
-                      icon={Pill}
-                      value={consultationNotes.traitement}
-                      onChange={(val) => setConsultationNotes(prev => ({...prev, traitement: val}))}
+                      value={clinicalExam}
+                      onChange={(value) => setClinicalExam(value)}
+                      patientConsultations={patientConsultations}
+                      onSave={(v) => handleAutoSaveField('clinical_exam', v)}
                     />
                   </div>
+                )}
 
-                  {/* Prescription Note */}
-                  <QuickNoteField
-                    title="Prescription"
-                    placeholder="Ordonnance..."
-                    icon={FileCheck2}
-                    value={consultationNotes.prescription}
-                    onChange={(val) => setConsultationNotes(prev => ({...prev, prescription: val}))}
-                  />
-
-                  {/* Action Buttons */}
-                  <div className="flex items-center gap-4 pt-2">
-                    <button
-                      onClick={handleEndConsultation}
-                      className="flex items-center gap-2 px-8 py-4 bg-emerald-600 text-white rounded-[14px] font-semibold hover:bg-emerald-700 transition-all shadow-[0_8px_24px_rgba(5,150,105,0.35)]"
-                    >
-                      <CheckCircle2 className="w-5 h-5" />
-                      Terminer la consultation
-                    </button>
-                    <button className="flex items-center gap-2 px-6 py-4 bg-slate-100 text-slate-800 rounded-[14px] font-semibold hover:bg-slate-200 transition-all">
-                      <Save className="w-5 h-5" />
-                      Sauvegarder
-                    </button>
+                {/* --- Bilan Content --- */}
+                {activeTab === 'Bilan' && (
+                  <div className="space-y-5">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <QuickNoteField
+                        cardId="assessment"
+                        activeCardId={activeCardId}
+                        enterFocusMode={enterFocusMode}
+                        exitFocusMode={exitFocusMode}
+                        title="Évaluation / Conclusion"
+                        placeholder="Votre diagnostic et évaluation..."
+                        icon={Brain}
+                        value={assessmentNote}
+                        onChange={(value) => setAssessmentNote(value)}
+                        patientConsultations={patientConsultations}
+                        onSave={(v) => handleAutoSaveField('assessment', v)}
+                      />
+                      <QuickNoteField
+                        cardId="plan"
+                        activeCardId={activeCardId}
+                        enterFocusMode={enterFocusMode}
+                        exitFocusMode={exitFocusMode}
+                        title="Plan de soins"
+                        placeholder="Plan de traitement et suivi..."
+                        icon={ListChecks}
+                        value={planNote}
+                        onChange={(value) => setPlanNote(value)}
+                        patientConsultations={patientConsultations}
+                        onSave={(v) => handleAutoSaveField('plan', v)}
+                      />
+                    </div>
+                    {false && (
+                      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                        <div className="flex items-center gap-2 mb-4">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50">
+                            <Pill className="w-4.5 h-4.5 text-blue-600" />
+                          </div>
+                          <h3 className="text-[15.5px] font-bold text-slate-900">Traitements en cours</h3>
+                        </div>
+                        <div className="space-y-2">
+                          {MOCK_MEDICATIONS.map((med) => (
+                            <div key={med.id} className="flex items-center justify-between p-3.5 bg-slate-50 rounded-lg border border-slate-200">
+                              <div>
+                                <p className="text-[13px] font-semibold text-slate-800">{med.name}</p>
+                                <p className="text-[11.5px] text-slate-500 mt-0.5">{med.dosage}</p>
+                              </div>
+                              {med.compliance === 'good' ? (
+                                <Chip color="emerald">Bon suivi</Chip>
+                              ) : (
+                                <Chip color="amber">À vérifier</Chip>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </motion.div>
-              )}
+                )}
+
+                {/* --- History Content --- */}
+                {activeTab === 'Historique' && (
+                  <div className="space-y-5">
+                    <div className="mb-4">
+                        <h2 className="text-[16px] font-bold text-slate-900">
+                          Parcours de soins
+                        </h2>
+                      </div>
+                    {/* Timeline */}
+                    {TIMELINE_EVENTS.length > 0 ? (
+                      <div className="relative w-full pt-1 before:absolute before:left-4 before:top-5 before:bottom-5 before:w-px before:bg-slate-200">
+                        {TIMELINE_EVENTS.map((event, index) => (
+                          <TimelineEvent
+                            key={event.id}
+                            event={event}
+                            index={index}
+                            onViewDetails={setSelectedEvent}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <EmptyState
+                        icon={CalendarClock}
+                        title="Aucun événement trouvé"
+                        description="Ce patient n'a pas encore de parcours de soins"
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* --- Documents Content --- */}
+                {activeTab === 'Documents' && (
+                  <div className="space-y-5">
+                    {false ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {DOCUMENTS.map((doc) => (
+                          <DocumentCard key={doc.id} doc={doc} />
+                        ))}
+                      </div>
+                    ) : (
+                      <EmptyState
+                        icon={FileText}
+                        title="Aucun document disponible"
+                        description="Ajoutez des documents pour ce patient"
+                      />
+                    )}
+                  </div>
+                )}
+              </motion.div>
             </AnimatePresence>
           </div>
         </div>
       </main>
-    </div>
+
+      {/* --- Modals --- */}
+      <AnimatePresence>
+        {showEndConfirmModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowEndConfirmModal(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="relative w-full max-w-md bg-white rounded-[21px] shadow-[0_12px_48px_rgba(0,0,0,0.12)] overflow-hidden"
+            >
+              <div className="p-6">
+                <div className="flex items-center justify-center w-14 h-14 bg-red-50 rounded-full mx-auto mb-4">
+                  <AlertTriangle className="w-7 h-7 text-red-600" />
+                </div>
+                <h2 className="text-lg font-bold text-slate-900 text-center mb-2">Terminer la consultation ?</h2>
+                <p className="text-sm text-slate-600 text-center mb-6">
+                  Le patient sera envoyé à la caisse pour paiement.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowEndConfirmModal(false)}
+                    className="flex-1 px-4 py-2.5 text-sm font-medium text-slate-700 bg-white border border-[#e2e8f0] rounded-[12px] hover:bg-slate-50 hover:border-slate-400 transition-all"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onClick={handleConfirmEndConsultation}
+                    className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-[#2563eb] border border-[#2563eb] rounded-[12px] hover:bg-blue-700 hover:border-blue-700 transition-all shadow-[0_2px_8px_rgba(37,99,235,0.2)]"
+                  >
+                    Terminer
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+        {selectedEvent && (
+          <EventDetailsModal event={selectedEvent} onClose={() => setSelectedEvent(null)} />
+        )}
+        {showModal === 'prescription' && (
+          <SimpleModal
+            title="Nouvelle Ordonnance"
+            description={`Pour ${patient.prenom} ${patient.nom}`}
+            icon={<Pill size={18} />}
+            color="#F59E0B"
+            onClose={() => setShowModal(null)}
+            onSave={handleSavePrescription}
+          >
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Médicaments
+                </label>
+                <textarea
+                  value={prescriptionForm.medications}
+                  onChange={(e) => setPrescriptionForm({ ...prescriptionForm, medications: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg resize-none focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
+                  rows={4}
+                  placeholder="Ex: Metformine 500mg 2x/jour"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Notes
+                </label>
+                <textarea
+                  value={prescriptionForm.notes}
+                  onChange={(e) => setPrescriptionForm({ ...prescriptionForm, notes: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg resize-none focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
+                  rows={2}
+                  placeholder="Instructions supplémentaires..."
+                />
+              </div>
+            </div>
+          </SimpleModal>
+        )}
+        {showModal === 'lab' && (
+          <SimpleModal
+            title="Demande d'Analyses"
+            description={`Pour ${patient.prenom} ${patient.nom}`}
+            icon={<Microscope size={18} />}
+            color="#3B82F6"
+            onClose={() => setShowModal(null)}
+            onSave={handleSaveLab}
+          >
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Type d'analyses
+                </label>
+                <select
+                  value={labForm.type}
+                  onChange={(e) => setLabForm({ ...labForm, type: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
+                >
+                  <option value="">Sélectionner...</option>
+                  <option value="blood">Sanguin</option>
+                  <option value="urine">Urinaire</option>
+                  <option value="imaging">Imagerie</option>
+                  <option value="other">Autre</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Notes
+                </label>
+                <textarea
+                  value={labForm.notes}
+                  onChange={(e) => setLabForm({ ...labForm, notes: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg resize-none focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
+                  rows={4}
+                  placeholder="Détails sur les analyses à effectuer..."
+                />
+              </div>
+            </div>
+          </SimpleModal>
+        )}
+        {showModal === 'report' && (
+          <SimpleModal
+            title="Nouveau Compte-Rendu"
+            description={`Pour ${patient.prenom} ${patient.nom}`}
+            icon={<FileText size={18} />}
+            color="#10B981"
+            onClose={() => setShowModal(null)}
+            onSave={handleSaveReport}
+          >
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Titre
+                </label>
+                <input
+                  value={reportForm.title}
+                  onChange={(e) => setReportForm({ ...reportForm, title: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
+                  placeholder="Ex: Consultation du 19/06/2026"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Contenu
+                </label>
+                <textarea
+                  value={reportForm.content}
+                  onChange={(e) => setReportForm({ ...reportForm, content: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg resize-none focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
+                  rows={6}
+                  placeholder="Rédigez votre compte-rendu ici..."
+                />
+              </div>
+            </div>
+          </SimpleModal>
+        )}
+        {showModal === 'document' && (
+          <SimpleModal
+            title="Ajouter un Document"
+            description={`Pour ${patient.prenom} ${patient.nom}`}
+            icon={<FilePlus size={18} />}
+            color="#6B7280"
+            onClose={() => setShowModal(null)}
+            onSave={handleSaveDocument}
+          >
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Nom du document
+                </label>
+                <input
+                  value={documentForm.name}
+                  onChange={(e) => setDocumentForm({ ...documentForm, name: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
+                  placeholder="Ex: Résultats d'analyses"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Type de document
+                </label>
+                <select
+                  value={documentForm.type}
+                  onChange={(e) => setDocumentForm({ ...documentForm, type: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
+                >
+                  <option value="">Sélectionner...</option>
+                  <option value="lab">Analyses</option>
+                  <option value="report">Compte-rendu</option>
+                  <option value="prescription">Ordonnance</option>
+                  <option value="other">Autre</option>
+                </select>
+              </div>
+              <div className="border-2 border-dashed border-[#e2e8f0] rounded-xl p-6 text-center bg-slate-50">
+                <FileText className="w-9 h-9 text-slate-400 mx-auto mb-2" />
+                <p className="text-xs text-slate-500">
+                  Glissez-déposez un fichier ou cliquez pour parcourir
+                </p>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  PDF, PNG, JPG (max 10MB)
+                </p>
+              </div>
+            </div>
+          </SimpleModal>
+        )}
+        {blocker.state === 'blocked' && (
+          <SimpleModal
+            title="Quitter la consultation ?"
+            description="Des données non enregistrées sont présentes"
+            icon={<AlertTriangle size={18} />}
+            color="#3b82f6"
+            onClose={() => blocker.reset()}
+            onSave={async () => {
+              await handleManualSave()
+              blocker.proceed()
+            }}
+            saveText="Enregistrer et quitter"
+            footer={
+              <button
+                onClick={() => blocker.proceed()}
+                className="text-[13px] font-medium text-red-500 hover:text-red-700 hover:underline transition-all py-1"
+              >
+                Quitter sans enregistrer
+              </button>
+            }
+          >
+            <p className="text-sm text-slate-600 leading-relaxed">
+              La session de consultation reste active en arrière-plan, mais les informations saisies dans ce formulaire <span className="font-medium text-slate-800">(motif, examen, constantes)</span> ne sont pas encore enregistrées.
+              <br /><br />
+              Enregistrez avant de quitter pour ne rien perdre.
+            </p>
+          </SimpleModal>
+        )}
+        {showModal === 'addActe' && (
+          <SimpleModal
+            title="Ajouter un Acte"
+            description={`Pour ${patient.prenom} ${patient.nom}`}
+            icon={<ClipboardList size={18} />}
+            color="#8B5CF6"
+            onClose={() => setShowModal(null)}
+            onSave={handleSaveActe}
+          >
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Nom de l'acte
+                </label>
+                <input
+                  value={acteForm.name}
+                  onChange={(e) => setActeForm({ ...acteForm, name: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
+                  placeholder="Ex: Consultation, Injection..."
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Description
+                </label>
+                <textarea
+                  value={acteForm.description}
+                  onChange={(e) => setActeForm({ ...acteForm, description: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg resize-none focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
+                  rows={2}
+                  placeholder="Détails sur l'acte effectué..."
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Montant (MAD)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={acteForm.montant}
+                    onChange={(e) => setActeForm({ ...acteForm, montant: e.target.value })}
+                    className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs pr-14"
+                    placeholder="0"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400 pointer-events-none">
+                    MAD
+                  </span>
+                </div>
+              </div>
+            </div>
+          </SimpleModal>
+        )}
+        {showSuccess && (
+          <SuccessModal message={showSuccess} onClose={() => setShowSuccess(null)} />
+        )}
+      </AnimatePresence>
+
+      {/* Modal Dossier Patient */}
+      {showPatientSidebar && (
+        <SimpleModal
+          title="Informations Patient"
+          onClose={() => setShowPatientSidebar(false)}
+          saveText="Fermer"
+          onSave={() => setShowPatientSidebar(false)}
+        >
+          <div className="pt-2">
+            <PatientSidebar
+              patient={patient}
+              age={age}
+              chronicDisease={chronicDisease}
+              currentTreatment={currentTreatment}
+              emergencyContact={emergencyContact}
+            />
+          </div>
+        </SimpleModal>
+      )}
+    </section>
   )
 }

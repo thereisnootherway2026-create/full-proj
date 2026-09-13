@@ -43,7 +43,7 @@ export default function TachesHub({
   notify
 }) {
   // Architectural requirement: Active Template state
-  const [activeTemplate, setActiveTemplate] = useState('template6') // Defaulting to the new Elation 3-Panel Hub
+  const [activeTemplate, setActiveTemplate] = useState('template1')
 
   const templatesList = [
     { id: 'template1', label: '1. Classic Split', icon: Layers, tooltip: 'Baseline layout: full-width category filter bar + 2-column master-detail panels' },
@@ -71,7 +71,7 @@ export default function TachesHub({
 
         {/* Template Selector Pill Buttons */}
         <div className="bg-white/10 p-1.5 rounded-xl flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-          {templatesList.map(tmpl => {
+          {templatesList.slice(0, 3).map(tmpl => {
             const Icon = tmpl.icon
             const isActive = activeTemplate === tmpl.id
             return (

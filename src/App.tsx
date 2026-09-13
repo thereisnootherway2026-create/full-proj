@@ -66,7 +66,14 @@ const router = createBrowserRouter([
 
               { path: '/patients', element: <PatientsPage /> },
               { path: '/patients/:id', element: <PatientsPage /> },
-              { path: '/patient-workspace/:id', element: <PatientWorkspace /> },
+              {
+                path: '/patient-workspace/:id',
+                element: (
+                  <RoleGuard role="docteur">
+                    <PatientWorkspace />
+                  </RoleGuard>
+                ),
+              },
 
               // 4. Facturation
               {

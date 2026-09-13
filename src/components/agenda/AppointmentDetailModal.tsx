@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Phone, ExternalLink, Loader2, DoorOpen } from 'lucide-react'
+import { X, Phone, ExternalLink, Loader2 } from 'lucide-react'
 import { format, parse } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { Appointment, AppointmentStatus } from '../../types/appointment'
 import { cn } from '../../lib/utils'
 import { useNavigate } from 'react-router-dom'
+import { useAppContext } from '../../context/AppContext'
 
 interface AppointmentDetailModalProps {
   appointment: Appointment | null
@@ -47,6 +48,7 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
   const [cancelReason, setCancelReason] = useState('patient_cancelled')
   const modalRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
+  const { can, notify } = useAppContext()
   
   // Button hover/pressed state
   const [modifierHeureHovered, setModifierHeureHovered] = useState(false)
@@ -55,8 +57,6 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
   const [annulerRdvPressed, setAnnulerRdvPressed] = useState(false)
   const [confirmerRdvHovered, setConfirmerRdvHovered] = useState(false)
   const [confirmerRdvPressed, setConfirmerRdvPressed] = useState(false)
-  const [ajouterSalleHovered, setAjouterSalleHovered] = useState(false)
-  const [ajouterSallePressed, setAjouterSallePressed] = useState(false)
   const [retourHovered, setRetourHovered] = useState(false)
   const [retourPressed, setRetourPressed] = useState(false)
   const [confirmerAnnulationHovered, setConfirmerAnnulationHovered] = useState(false)
@@ -127,8 +127,18 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
     try {
       await onUpdateStatus(appointment, target, metadata)
       onClose()
-    } catch (error) {
+    } catch (error: any) {
+      // Full error (message, code) stays in the console for diagnostics;
+      // the toast shows a concise, action-specific message so a genuine
+      // failure is never silently invisible to the user (this previously
+      // only logged to console with no user-facing feedback at all).
       console.error('Failed to update status:', error)
+      const fallback = target === 'CONFIRME'
+        ? "Impossible de confirmer ce rendez-vous."
+        : target === 'ANNULE'
+          ? "Impossible d'annuler ce rendez-vous."
+          : "Impossible de mettre à jour ce rendez-vous."
+      notify?.({ title: 'Erreur', description: error?.message || fallback, tone: 'error' })
     } finally {
       setLoadingAction(null)
     }
@@ -333,6 +343,7 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
             </div>
           ) : (
             <div className="flex gap-3">
+              {can('appointments.update') && (
               <button
                 type="button"
                 onClick={() => onEditTime?.(appointment)}
@@ -366,7 +377,9 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
               >
                 Modifier l&apos;heure
               </button>
+              )}
 
+              {can('appointments.cancel') && (
               <button
                 type="button"
                 onClick={() => setShowCancelConfirm(true)}
@@ -400,8 +413,9 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
               >
                 Annuler le RDV
               </button>
+              )}
 
-              {(appointment.status === 'PLANIFIE' || appointment.status === 'A_CONFIRMER') && (
+              {can('appointments.confirm') && (appointment.status === 'PLANIFIE' || appointment.status === 'A_CONFIRMER') && (
                 <button
                   type="button"
                   onClick={() => handleStatusChange('CONFIRME')}
@@ -438,46 +452,6 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
                 </button>
               )}
 
-              {appointment.status !== 'ARRIVE' && appointment.status !== 'ANNULE' && appointment.status !== 'TERMINE' && (
-                <button
-                  type="button"
-                  onClick={() => handleStatusChange('ARRIVE')}
-                  disabled={isLoadingAny || isPast}
-                  title={isPast ? "Impossible d'ajouter un RDV passe a la salle" : ""}
-                  style={{
-                    backgroundColor: ajouterSalleHovered ? '#0d5e4a' : '#0F6E56',
-                    color: '#FFFFFF',
-                    border: `2px solid ${ajouterSalleHovered ? '#064e3b' : '#34D399'}`,
-                    padding: '0.625rem 1rem',
-                    minHeight: '44px',
-                    transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-                    whiteSpace: 'nowrap',
-                    fontSize: '14px',
-                    fontWeight: 'bold',
-                    width: 'auto',
-                    flex: 1,
-                    transform: ajouterSallePressed ? 'translateY(-1px) scale(0.98)' : ajouterSalleHovered ? 'translateY(-2px)' : 'translateY(0)',
-                    boxShadow: ajouterSalleHovered ? '0 6px 16px -4px rgba(15, 110, 86, 0.15)' : 'none',
-                    opacity: (isLoadingAny || isPast) ? 0.5 : 1,
-                    cursor: (isLoadingAny || isPast) ? 'not-allowed' : 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.375rem'
-                  }}
-                  onMouseEnter={() => setAjouterSalleHovered(true)}
-                  onMouseLeave={() => { setAjouterSalleHovered(false); setAjouterSallePressed(false); }}
-                  onMouseDown={() => setAjouterSallePressed(true)}
-                  onMouseUp={() => setAjouterSallePressed(false)}
-                >
-                  {loadingAction === 'ARRIVE' ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <DoorOpen className="w-3.5 h-3.5" />
-                  )}
-                  Ajouter a la salle
-                </button>
-              )}
             </div>
           )}
         </div>

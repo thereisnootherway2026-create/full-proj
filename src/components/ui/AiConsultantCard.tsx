@@ -32,18 +32,7 @@ export default function AiConsultantCard() {
         `Recommandations:\n${(res.recommendedActions || []).map((a: string) => `• ${a}`).join('\n')}`
       
       setReport(formattedText)
-    } catch (err: any) {
-      setReport(`📊 BILAN STRATÉGIQUE IA DU MOIS (Fallback)
-
-Point Fort : 
-Votre chiffre d'affaires est stable à 35 500 MAD, avec un bon taux de satisfaction global (4.1/5). Vos patients apprécient la qualité de vos consultations.
-
-Alerte Opérationnelle : 
-Le temps d'attente moyen est monté à 45 minutes. L'analyse montre un goulot d'étranglement le lundi matin (jusqu'à 1h30 d'attente).
-
-Recommandation : 
-Espacez vos rendez-vous du lundi matin de 20 minutes au lieu de 15 minutes, et demandez à votre secrétaire de bloquer un créneau vide à 11h00.`)
-    } finally {
+    } catch (err: any) { setError('Service IA indisponible ou non configuré.') } finally {
       setLoading(false)
     }
   }

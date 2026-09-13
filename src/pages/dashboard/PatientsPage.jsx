@@ -7,7 +7,7 @@ import PatientFormModal from '../../components/forms/PatientFormModal'
 import { getPatients, getConsultations, getRdv } from '../../lib/api'
 import { useAppContext } from '../../context/AppContext'
 import PatientProfileView from './PatientProfileView'
-import { MOCK_PATIENTS, MOCK_CONSULTATIONS, MOCK_RDV } from '../../lib/mockData'
+
 
 const formatDateShort = (dateStr) => {
   if (!dateStr) return '-'
@@ -34,7 +34,10 @@ const PAGE_SIZE = 10
 function PatientsPage() {
   const navigate = useNavigate()
   const { id } = useParams()
-  const { profile } = useAppContext()
+  const { profile, canonicalRole } = useAppContext()
+  // Matches the /patient-workspace/:id route guard (RoleGuard role="docteur")
+  // exactly, so this link is never shown to a role that can't open it.
+  const canOpenWorkspace = canonicalRole === 'doctor'
   
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -61,10 +64,10 @@ function PatientsPage() {
     enabled: !!profile?.cabinet_id && !id
   })
 
-  // Use mock data as fallback when Supabase returns nothing
-  const patients = (patientsRaw && patientsRaw.length > 0) ? patientsRaw : MOCK_PATIENTS
-  const consultations = (consultationsRaw && consultationsRaw.length > 0) ? consultationsRaw : MOCK_CONSULTATIONS
-  const rdvs = (rdvsRaw && rdvsRaw.length > 0) ? rdvsRaw : MOCK_RDV
+  // We simply use the data provided by context; if it's empty, it's a real empty state
+  const patients = patientsRaw || []
+  const consultations = consultationsRaw || []
+  const rdvs = rdvsRaw || []
 
 
   // ── Build lookup maps for real data ──
@@ -209,9 +212,7 @@ function PatientsPage() {
     return <PatientProfileView patientId={id} onBack={() => navigate('/patients')} />
   }
 
-  if (isLoadingPatients || isLoadingConsultations || isLoadingRdvs) {
-    return <div className="flex justify-center p-20"><Loader2 className="w-10 h-10 animate-spin text-blue-600" /></div>
-  }
+
 
   return (
     <div className="space-y-6">
@@ -319,7 +320,11 @@ function PatientsPage() {
         </div>
 
         {/* Rows */}
-        {paginatedPatients.length === 0 ? (
+        {(isLoadingPatients || isLoadingConsultations || isLoadingRdvs) ? (
+          <div className="px-6 py-12 flex justify-center text-slate-400">
+             <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+          </div>
+        ) : paginatedPatients.length === 0 ? (
           <div className="px-6 py-12 text-center text-slate-400 text-[15px]">Aucun patient trouvé.</div>
         ) : paginatedPatients.map((p) => {
           const age = calcAge(p.date_naissance)
@@ -399,12 +404,15 @@ function PatientsPage() {
                 >
                   <Calendar className="w-4 h-4" />
                 </div>
-                <div
-                  className="p-2 rounded-xl bg-slate-50 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
-                  title="Voir dossier"
-                >
-                  <Eye className="w-4 h-4" />
-                </div>
+                {canOpenWorkspace && (
+                  <div
+                    className="p-2 rounded-xl bg-slate-50 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+                    title="Voir dossier"
+                    onClick={(e) => { e.stopPropagation(); navigate(`/patient-workspace/${p.id}`) }}
+                  >
+                    <Eye className="w-4 h-4" />
+                  </div>
+                )}
               </div>
             </button>
           )

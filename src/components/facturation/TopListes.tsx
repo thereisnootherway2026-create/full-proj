@@ -1,5 +1,6 @@
 import React from 'react';
 import { useFacturationStore } from './store';
+import { useFacturesQuery } from './queries';
 import { filterFactures, getBreakdowns } from './selectors';
 import { Card, SectionTitle, StatutBadge } from './ui';
 import { dh, fmtDate, num } from './format';

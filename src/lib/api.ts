@@ -75,10 +75,17 @@ export const getCaMensuel = async () => {
 }
 
 // — PATIENTS —
+// Administrative columns only — antecedents/allergies/groupe_sanguin are
+// clinical-adjacent, revoked at the column-privilege level for the shared
+// `authenticated` role (see migration 20260912070000), and only readable by
+// doctor/admin through mm_get_patient_clinical(). A bare select('*') here
+// would now error for everyone, not just secretaries.
+const PATIENT_ADMIN_COLUMNS = 'id, cabinet_id, nom, prenom, telephone, date_naissance, cin, adresse, mutuelle, numero_cnss, email, ville, sexe, created_at'
+
 export const getPatients = async () => {
   const { data, error } = await supabase
     .from('patients')
-    .select('*')
+    .select(PATIENT_ADMIN_COLUMNS)
     .order('created_at', { ascending: false })
   if (error) throw error
   return data
@@ -89,20 +96,39 @@ export const getPatientById = async (
 ) => {
   const { data, error } = await supabase
     .from('patients')
-    .select('*')
+    .select(PATIENT_ADMIN_COLUMNS)
     .eq('id', id)
     .single()
   if (error) throw error
   return data
 }
 
+// Doctor/admin only — enforced server-side by mm_get_patient_clinical, this
+// just returns null for anyone else instead of surfacing the RPC error as a
+// console exception on every load.
+export const getPatientClinicalFields = async (
+  id: string
+) => {
+  const { data, error } = await supabase.rpc('mm_get_patient_clinical', { p_patient_id: id })
+  if (error) return null
+  return Array.isArray(data) ? data[0] || null : data
+}
+
 export const createPatient = async (
   patient: Omit<Patient, 'id' | 'created_at'>
 ) => {
+  // Bare .select() = "select=*", which needs full-column SELECT privilege
+  // on patients — but authenticated only has it on the administrative
+  // columns (see migration 20260912070000). This broke patient creation
+  // for every role, not just secretary: confirmed live,
+  // "permission denied for table patients" on a plain INSERT...RETURNING *.
+  // The clinical-field WRITE protection itself is unaffected — that's
+  // enforced by the protect_patient_clinical_fields trigger, not by this
+  // SELECT-privilege boundary, so a doctor's INSERT can still set them.
   const { data, error } = await supabase
     .from('patients')
     .insert([patient])
-    .select()
+    .select(PATIENT_ADMIN_COLUMNS)
     .single()
   if (error) throw error
   return data
@@ -112,11 +138,13 @@ export const updatePatient = async (
   id: string,
   updates: Partial<Patient>
 ) => {
+  // Same fix as createPatient above — bare .select() needs full-column
+  // SELECT privilege authenticated doesn't have.
   const { data, error } = await supabase
     .from('patients')
     .update(updates)
     .eq('id', id)
-    .select()
+    .select(PATIENT_ADMIN_COLUMNS)
     .single()
   if (error) throw error
   return data
@@ -317,6 +345,43 @@ export const deleteRdv = async (
     .eq('id', id)
   if (error) throw error
 }
+
+export const confirmAppointment = async (id: string, method: string = 'PHONE') => {
+  const { data, error } = await supabase.rpc('confirm_appointment_v2', { p_rdv_id: id, p_method: method })
+  if (error) throw error
+  return data
+}
+
+export const cancelAppointment = async (id: string, reason?: string) => {
+  const { data, error } = await supabase.rpc('cancel_appointment_v2', { p_rdv_id: id, p_reason: reason })
+  if (error) throw error
+  return data
+}
+
+export const addToWaitingRoom = async (id: string) => {
+  const { data, error } = await supabase.rpc('add_to_waiting_room', { p_rdv_id: id })
+  if (error) throw error
+  return data
+}
+
+export const startConsultation = async (id: string) => {
+  const { data, error } = await supabase.rpc('start_consultation', { p_rdv_id: id })
+  if (error) throw error
+  return data
+}
+
+export const completeConsultation = async (id: string) => {
+  const { data, error } = await supabase.rpc('complete_consultation', { p_rdv_id: id })
+  if (error) throw error
+  return data
+}
+
+export const recordPayment = async (id: string, amount: number, method: string) => {
+  const { data, error } = await supabase.rpc('record_payment', { p_rdv_id: id, p_amount: amount, p_method: method })
+  if (error) throw error
+  return data
+}
+
 
 // — DOCUMENTS & PDF —
 export const getDocuments = async (

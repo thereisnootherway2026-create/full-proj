@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useFacturationStore } from './store';
+import { useFacturationMutations, useFacturesQuery } from './queries';
 import { factureNet, facturePaye, factureReste, factureHT, factureTVA, ligneTotal, Mode } from './data';
 import { dh, fmtDate, fmtDateLong, joursRetard } from './format';
 import { StatutBadge } from './ui';
@@ -9,7 +10,9 @@ import { cn } from '../../lib/utils';
 import { EncaisserModal } from './EncaisserModal';
 
 export function FactureDrawer() {
-  const { factures, ui, setFactureOuverteId, setStatut, addPaiement, removePaiement, showToast } = useFacturationStore();
+  const { ui, setFactureOuverteId, showToast } = useFacturationStore();
+  const { data: factures = [] } = useFacturesQuery();
+  const { cancelFacture, removePaiement, emitFacture } = useFacturationMutations();
   const [isEncaisserOpen, setIsEncaisserOpen] = useState(false);
   
   const factureId = ui.factureOuverteId;
@@ -44,22 +47,22 @@ export function FactureDrawer() {
     <>
       {/* Backdrop */}
       <div 
-        className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-40 transition-opacity"
+        className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 transition-opacity print:hidden"
         onClick={handleClose}
       />
       
       {/* Drawer */}
-      <div className="fixed inset-y-0 right-0 w-full max-w-2xl bg-white shadow-2xl z-50 flex flex-col animate-in slide-in-from-right duration-300">
+      <div className="fixed inset-y-0 right-0 w-full max-w-2xl bg-white shadow-2xl z-[60] flex flex-col animate-in slide-in-from-right duration-300 print:fixed print:inset-0 print:w-full print:max-w-none print:shadow-none print:z-[9999] print:bg-white">
         
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50 print:hidden">
           <div className="flex items-center gap-3">
-            <h2 className="text-lg font-bold text-slate-900">{facture.numero}</h2>
+            <h2 className="text-xl font-bold text-slate-900">{facture.numero}</h2>
             <StatutBadge statut={facture.statut} />
           </div>
           <button 
             onClick={handleClose}
-            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+            className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -166,7 +169,7 @@ export function FactureDrawer() {
                       <span className="font-bold text-slate-900">{dh(p.montant)}</span>
                       <button 
                         onClick={() => {
-                          if(confirm('Supprimer ce paiement ?')) removePaiement(facture.id, p.id);
+                          if(confirm('Supprimer ce paiement ?')) removePaiement({ fId: facture.id, pId: p.id });
                         }}
                         className="text-slate-400 hover:text-red-600 transition-colors"
                         title="Supprimer"
@@ -191,32 +194,35 @@ export function FactureDrawer() {
         </div>
 
         {/* Bottom Actions */}
-        <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+        <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between print:hidden">
           <div className="flex items-center gap-2">
-            <button className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 bg-white text-slate-700 rounded-lg hover:bg-slate-50 font-medium text-sm transition-colors shadow-sm">
+            <button 
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 bg-white text-slate-700 rounded-lg hover:bg-slate-50 font-medium text-sm transition-colors shadow-sm"
+            >
               <Printer className="w-4 h-4" />
               Imprimer
             </button>
-            {facture.statut === 'brouillon' && (
-              <button 
-                onClick={() => setStatut(facture.id, 'en_attente')}
-                className="inline-flex items-center gap-2 px-4 py-2 border border-blue-200 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 font-medium text-sm transition-colors"
-              >
-                <CheckCircle className="w-4 h-4" />
-                Marquer émise
-              </button>
-            )}
-            {facture.statut !== 'annulee' && (
-              <button 
-                onClick={() => {
-                  if(confirm('Voulez-vous vraiment annuler cette facture ?')) setStatut(facture.id, 'annulee');
-                }}
-                className="inline-flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium text-sm transition-colors"
-              >
-                <Ban className="w-4 h-4" />
-                Annuler
-              </button>
-            )}
+              {facture.statut === 'brouillon' && (
+                <button 
+                  onClick={() => emitFacture(facture.id)}
+                  className="inline-flex items-center gap-2 px-4 py-2 border border-blue-200 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 font-medium text-sm transition-colors"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  Émettre la facture
+                </button>
+              )}
+              {facture.statut !== 'annulee' && (
+                <button 
+                  onClick={() => {
+                    if(confirm('Voulez-vous vraiment annuler cette facture ?')) cancelFacture({ id: facture.id, reason: 'Annulation' });
+                  }}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium text-sm transition-colors"
+                >
+                  <Ban className="w-4 h-4" />
+                  Annuler la facture
+                </button>
+              )}
           </div>
           
           {reste > 0 && facture.statut !== 'annulee' && facture.statut !== 'brouillon' && (
