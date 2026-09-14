@@ -16,7 +16,7 @@ import {
   subscribeClinicVisits,
 } from '../../lib/visitService'
 import InvoiceFormModal from '../../components/forms/InvoiceFormModal'
-import { generateFSE } from '../../components/cnss/generateFSE'
+import { generateFSE, mockPatients } from '../../components/cnss/generateFSE'
 
 const fmtMAD = (n) => (n || 0).toLocaleString('fr-FR') + ' MAD'
 
@@ -244,10 +244,46 @@ export default function BillingPage() {
       return r
     })
 
+    const mockFseRecords = (mockPatients || []).map((p, idx) => ({
+      id: `mock_fse_${p.id}`,
+      visit_id: `mock_fse_vis_${p.id}`,
+      patient_id: `pat_mock_${p.id}`,
+      patientName: p.nomComplet,
+      patients: {
+        id: `pat_mock_${p.id}`,
+        nom: p.nomComplet.split(' ').slice(1).join(' ') || p.nomComplet,
+        prenom: p.nomComplet.split(' ')[0] || '',
+        nomPrenom: p.nomComplet,
+        name: p.nomComplet,
+        cin: p.cin,
+        cnss_number: p.immatriculation,
+        immatriculation: p.immatriculation,
+        date_naissance: p.dateNaissance,
+        date_of_birth: p.dateNaissance,
+        sexe: p.sexe,
+        gender: p.sexe,
+        adresse: p.adresse,
+        address: p.adresse,
+      },
+      montant: p.montant,
+      grandTotal: p.montant,
+      montantPaye: p.montant,
+      resteAPayer: 0,
+      status: 'paid',
+      paymentMethod: idx % 2 === 0 ? 'cash' : 'card',
+      created_at: new Date(Date.now() - idx * 3600000).toISOString(),
+      date: new Date().toLocaleDateString('fr-FR'),
+      notes: 'Consultation CNSS FSE',
+      motif: 'Consultation générale',
+      source: 'mock_fse'
+    }))
+
+    const combinedWithMock = [...mapped, ...mockFseRecords]
+
     // Strict Key Deduplication by visit_id / id to prevent identical patient entries
     const seenKeys = new Set()
     const deduplicated = []
-    for (const r of mapped) {
+    for (const r of combinedWithMock) {
       const key = r.visit_id || r.id
       if (!seenKeys.has(key)) {
         seenKeys.add(key)
