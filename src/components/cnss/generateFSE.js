@@ -190,12 +190,19 @@ export const generateFSE = async (dbPatient = {}, dbDoctor = {}, dbConsultation 
     const A4_HEIGHT = 595.28;
 
     const finalDoc = await PDFDocument.create();
+    const fontRegular = await finalDoc.embedFont(StandardFonts.Helvetica);
     const fontBold = await finalDoc.embedFont(StandardFonts.HelveticaBold);
     const fontCourier = await finalDoc.embedFont(StandardFonts.CourierBold);
     const fontSmall = await finalDoc.embedFont(StandardFonts.Helvetica);
 
-    // Official medical ink and debug colors
-    const INK_COLOR = rgb(0.08, 0.15, 0.35);
+    // Color Toggle: Professional Dark Blue rgb(0.1, 0.3, 0.7) or Black rgb(0, 0, 0)
+    const USE_DARK_BLUE = true;
+    const INK_COLOR = options.color
+      ? options.color
+      : USE_DARK_BLUE
+      ? rgb(0.1, 0.3, 0.7)
+      : rgb(0, 0, 0);
+
     const DEBUG_RED = rgb(0.9, 0.1, 0.1);
     const DEBUG_BLUE = rgb(0.1, 0.35, 0.8);
 
@@ -209,17 +216,17 @@ export const generateFSE = async (dbPatient = {}, dbDoctor = {}, dbConsultation 
       height: A4_HEIGHT,
     });
 
-    // 3. Precision Box Centering Helper
-    const drawCharInBox = (char, box, defaultSize = 8.5, boxIndex = 0) => {
+    // 3. Precision Box Centering Helper for Grid Numbers (CIN, Immatriculation, Date de Naissance, INPE)
+    const drawCharInBox = (char, box, defaultSize = 12.0, boxIndex = 0, gridFont = fontCourier) => {
       let size = defaultSize;
-      let charWidth = fontCourier.widthOfTextAtSize(char, size);
-      let capHeight = fontCourier.heightAtSize(size, { descender: false }) || size * 0.7;
+      let charWidth = gridFont.widthOfTextAtSize(char, size);
+      let capHeight = gridFont.heightAtSize(size, { descender: false }) || size * 0.7;
 
-      // Ensure the character does not overflow the individual box
-      while ((charWidth > box.width - 0.6 || capHeight > box.height - 0.6) && size > 4.5) {
+      // Ensure character fits neatly within individual box boundaries
+      while ((charWidth > box.width - 0.4 || capHeight > box.height - 0.4) && size > 5.0) {
         size -= 0.5;
-        charWidth = fontCourier.widthOfTextAtSize(char, size);
-        capHeight = fontCourier.heightAtSize(size, { descender: false }) || size * 0.7;
+        charWidth = gridFont.widthOfTextAtSize(char, size);
+        capHeight = gridFont.heightAtSize(size, { descender: false }) || size * 0.7;
       }
 
       // Mathematical center of individual box
@@ -228,7 +235,7 @@ export const generateFSE = async (dbPatient = {}, dbDoctor = {}, dbConsultation 
       const x = centerX - charWidth / 2;
       const y = centerY - capHeight / 2;
 
-      page1.drawText(char, { x, y, size, font: fontCourier, color: INK_COLOR });
+      page1.drawText(char, { x, y, size, font: gridFont, color: INK_COLOR });
 
       if (debug) {
         page1.drawRectangle({
@@ -251,7 +258,7 @@ export const generateFSE = async (dbPatient = {}, dbDoctor = {}, dbConsultation 
       }
     };
 
-    const drawArrayOfBoxes = (val, field, defaultSize = 8.5) => {
+    const drawArrayOfBoxes = (val, field, defaultSize = 12.0) => {
       const boxes = field.boxes || (Array.isArray(field) ? field : [field]);
       const clean = String(val || '').replace(/[^a-zA-Z0-9]/g, '');
       const count = Math.min(clean.length, boxes.length);
@@ -269,7 +276,7 @@ export const generateFSE = async (dbPatient = {}, dbDoctor = {}, dbConsultation 
       }
 
       for (let i = 0; i < count; i++) {
-        drawCharInBox(clean[i], boxes[i], defaultSize, i);
+        drawCharInBox(clean[i], boxes[i], defaultSize, i, fontCourier);
       }
 
       if (debug) {
@@ -296,7 +303,7 @@ export const generateFSE = async (dbPatient = {}, dbDoctor = {}, dbConsultation 
       }
     };
 
-    const drawTextInZone = (text, zone, defaultSize = 8.5, align = 'left') => {
+    const drawTextInZone = (text, zone, defaultSize = 11.0, align = 'left', textFont = fontRegular) => {
       if (!zone) return;
       const str = String(text || '').trim();
 
@@ -322,18 +329,18 @@ export const generateFSE = async (dbPatient = {}, dbDoctor = {}, dbConsultation 
       if (!str) return;
 
       let s = defaultSize;
-      let textWidth = fontBold.widthOfTextAtSize(str, s);
-      while (textWidth > zone.width - 4 && s > 5.0) {
+      let textWidth = textFont.widthOfTextAtSize(str, s);
+      while (textWidth > zone.width - 4 && s > 5.5) {
         s -= 0.5;
-        textWidth = fontBold.widthOfTextAtSize(str, s);
+        textWidth = textFont.widthOfTextAtSize(str, s);
       }
 
       const centerY = zone.y + zone.height / 2;
-      const capHeight = fontBold.heightAtSize(s, { descender: false }) || s * 0.7;
+      const capHeight = textFont.heightAtSize(s, { descender: false }) || s * 0.7;
       const y = centerY - capHeight / 2;
       const x = align === 'center' ? zone.x + (zone.width - textWidth) / 2 : zone.x + 3.0;
 
-      page1.drawText(str, { x, y, size: s, font: fontBold, color: INK_COLOR });
+      page1.drawText(str, { x, y, size: s, font: textFont, color: INK_COLOR });
     };
 
     const drawCheck = (box, defaultSize = 10.0) => {
