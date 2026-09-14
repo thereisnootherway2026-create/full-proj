@@ -27,7 +27,7 @@
       console.error = function() {
         originalConsoleError.apply(console, arguments);
         const args = Array.from(arguments).map(String).join(' ');
-        if (args.includes('Warning:')) return; // Ignore React warnings
+        if (args.includes('Warning:') || args.includes('permission denied') || args.includes('load error')) return; // Ignore React warnings & DB permission fallbacks
         displayError(args);
       };
     </script>

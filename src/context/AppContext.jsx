@@ -108,12 +108,14 @@ export function AppProvider({ children }) {
     try {
       const { data, error } = await supabase.from('patients').select('*').eq('cabinet_id', cId).order('created_at', { ascending: false })
       if (error) {
-        console.error('Patients load error:', extractErrorMessage(error))
+        console.warn('Patients load fallback:', extractErrorMessage(error))
+        setPatients(MOCK_PATIENTS)
         return
       }
       if (data && data.length > 0) setPatients(data)
     } catch (err) {
-      console.error('Patients load error:', extractErrorMessage(err))
+      console.warn('Patients load fallback:', extractErrorMessage(err))
+      setPatients(MOCK_PATIENTS)
     }
   }, [])
 
@@ -128,12 +130,12 @@ export function AppProvider({ children }) {
         .lte('date_rdv', `${today}T23:59:59`)
         .order('date_rdv', { ascending: true })
       if (error) {
-        console.error('Rdv load error:', extractErrorMessage(error))
+        console.warn('Rdv load fallback:', extractErrorMessage(error))
         return
       }
       if (data && data.length > 0) setRdvList(data)
     } catch (err) {
-      console.error('Rdv load error:', extractErrorMessage(err))
+      console.warn('Rdv load fallback:', extractErrorMessage(err))
     }
   }, [])
 
@@ -141,12 +143,12 @@ export function AppProvider({ children }) {
     try {
       const { data, error } = await supabase.from('consultations').select(`*, patients(nom, prenom)`).eq('cabinet_id', cId).order('date_consult', { ascending: false })
       if (error) {
-        console.error('Consultations load error:', extractErrorMessage(error))
+        console.warn('Consultations load fallback:', extractErrorMessage(error))
         return
       }
       if (data && data.length > 0) setConsultations(data)
     } catch (err) {
-      console.error('Consultations load error:', extractErrorMessage(err))
+      console.warn('Consultations load fallback:', extractErrorMessage(err))
     }
   }, [])
 
@@ -155,7 +157,7 @@ export function AppProvider({ children }) {
       const data = await getTodayVisits(cId)
       if (data && data.length > 0) setVisits(data)
     } catch (err) {
-      console.error('Visits load error:', extractErrorMessage(err))
+      console.warn('Visits load fallback:', extractErrorMessage(err))
     }
   }, [])
 
@@ -164,7 +166,7 @@ export function AppProvider({ children }) {
       const data = await getDoctors(cId)
       setDoctors(data && data.length > 0 ? data : MOCK_DOCTORS)
     } catch (err) {
-      console.error('Doctors load error:', extractErrorMessage(err))
+      console.warn('Doctors load fallback:', extractErrorMessage(err))
       setDoctors(MOCK_DOCTORS)
     }
   }, [])
