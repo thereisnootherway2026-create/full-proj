@@ -379,24 +379,29 @@ export const generateFSE = async (dbPatient = {}, dbDoctor = {}, dbConsultation 
 
     // 4. Extract data cleanly
     const fullName = (
+      dbPatient?.nomComplet ||
       dbPatient?.nomPrenom ||
       dbPatient?.name ||
       `${dbPatient?.first_name || ''} ${dbPatient?.last_name || ''}`.trim()
     ).toUpperCase();
 
-    const immat = dbPatient?.cnss_number || dbPatient?.immatriculation || '';
+    const immat = dbPatient?.immatriculation || dbPatient?.cnss_number || '';
     const cin = (dbPatient?.cin || '').toUpperCase();
-    const address = dbPatient?.address || dbPatient?.adresse || '';
+    const address = dbPatient?.adresse || dbPatient?.address || '';
     const totalAmount =
-      dbConsultation?.price != null ? String(dbConsultation.price) : dbConsultation?.montantTotal || '150.00';
+      dbPatient?.montant != null
+        ? String(dbPatient.montant)
+        : dbConsultation?.price != null
+        ? String(dbConsultation.price)
+        : dbConsultation?.montantTotal || '150.00';
     const piecesCount = String(
       dbConsultation?.pieces_jointes ||
         dbConsultation?.piecesJointes ||
         dbPatient?.pieces_jointes ||
         '1'
     );
-    const birthDate8 = cleanDateTo8Digits(dbPatient?.date_of_birth || dbPatient?.dateNaissance);
-    const gender = (dbPatient?.gender || dbPatient?.sexe || '').toUpperCase();
+    const birthDate8 = cleanDateTo8Digits(dbPatient?.dateNaissance || dbPatient?.date_of_birth);
+    const gender = (dbPatient?.sexe || dbPatient?.gender || '').toUpperCase();
 
     // Doctor & Establishment Data
     const inpe = dbDoctor?.inpe_code || dbDoctor?.inpe || '';
@@ -501,3 +506,26 @@ export const generateFSE = async (dbPatient = {}, dbDoctor = {}, dbConsultation 
     throw error;
   }
 };
+
+export const mockPatients = [
+  { id: 1, nomComplet: "Youssef Alaoui", sexe: "M", cin: "AB123456", immatriculation: "112233445", dateNaissance: "15051990", adresse: "Casablanca, Maroc", montant: 500 },
+  { id: 2, nomComplet: "Fatima Zahra Bennani", sexe: "F", cin: "CD987654", immatriculation: "998877665", dateNaissance: "22111985", adresse: "Rabat, Maroc", montant: 300 },
+  { id: 3, nomComplet: "Karim Tazi", sexe: "M", cin: "EE556677", immatriculation: "102938475", dateNaissance: "08022000", adresse: "Temara, Maroc", montant: 150 },
+  { id: 4, nomComplet: "Meryem Chraibi", sexe: "F", cin: "BH112233", immatriculation: "564738291", dateNaissance: "30071992", adresse: "Salé, Maroc", montant: 250 },
+  { id: 5, nomComplet: "Omar Idrissi", sexe: "M", cin: "ZG889900", immatriculation: "192837465", dateNaissance: "12121978", adresse: "Kenitra, Maroc", montant: 400 },
+  { id: 6, nomComplet: "Sara Bennis", sexe: "F", cin: "AE445566", immatriculation: "918273645", dateNaissance: "05041995", adresse: "Mohammedia, Maroc", montant: 200 },
+  { id: 7, nomComplet: "Mehdi El Fassi", sexe: "M", cin: "BK334455", immatriculation: "112211223", dateNaissance: "19091988", adresse: "Rabat, Maroc", montant: 600 },
+  { id: 8, nomComplet: "Najat Lahlou", sexe: "F", cin: "CB223344", immatriculation: "445566778", dateNaissance: "25011965", adresse: "Casablanca, Maroc", montant: 150 },
+  { id: 9, nomComplet: "Amine Kettani", sexe: "M", cin: "WA778899", immatriculation: "334455667", dateNaissance: "14062002", adresse: "Tanger, Maroc", montant: 350 },
+  { id: 10, nomComplet: "Houda Berrada", sexe: "F", cin: "PA112211", immatriculation: "990011223", dateNaissance: "03111999", adresse: "Fès, Maroc", montant: 200 },
+  { id: 11, nomComplet: "Tariq Mansouri", sexe: "M", cin: "AB998877", immatriculation: "556677889", dateNaissance: "27081983", adresse: "Meknès, Maroc", montant: 450 },
+  { id: 12, nomComplet: "Leila Guessous", sexe: "F", cin: "CD665544", immatriculation: "223344556", dateNaissance: "11031991", adresse: "Agadir, Maroc", montant: 300 },
+  { id: 13, nomComplet: "Yassine Filali", sexe: "M", cin: "EE332211", immatriculation: "778899001", dateNaissance: "09101975", adresse: "Rabat, Maroc", montant: 500 },
+  { id: 14, nomComplet: "Khadija Benjelloun", sexe: "F", cin: "BH990088", immatriculation: "112233445", dateNaissance: "16021960", adresse: "Casablanca, Maroc", montant: 150 },
+  { id: 15, nomComplet: "Ilyas Naciri", sexe: "M", cin: "ZG443322", immatriculation: "667788990", dateNaissance: "21071996", adresse: "Marrakech, Maroc", montant: 250 },
+  { id: 16, nomComplet: "Asma Amrani", sexe: "F", cin: "AE119922", immatriculation: "334455667", dateNaissance: "04121989", adresse: "Rabat, Maroc", montant: 400 },
+  { id: 17, nomComplet: "Reda Sefrioui", sexe: "M", cin: "BK887766", immatriculation: "998877665", dateNaissance: "29051981", adresse: "Oujda, Maroc", montant: 350 },
+  { id: 18, nomComplet: "Salma Hachimi", sexe: "F", cin: "CB554433", immatriculation: "102938475", dateNaissance: "18081994", adresse: "Tétouan, Maroc", montant: 200 },
+  { id: 19, nomComplet: "Hamza El Ouardi", sexe: "M", cin: "WA221100", immatriculation: "564738291", dateNaissance: "07062001", adresse: "Kénitra, Maroc", montant: 150 },
+  { id: 20, nomComplet: "Zineb Benali", sexe: "F", cin: "PA334455", immatriculation: "192837465", dateNaissance: "13011987", adresse: "Casablanca, Maroc", montant: 500 }
+];
