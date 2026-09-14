@@ -1934,7 +1934,7 @@ export default function DashboardPage() {
                               paidVisits={paidVisits}
                               allPayments={allPayments}
                               onViewPaymentHistory={handleViewPaymentHistory}
-                              onViewDossier={(patientId) => navigate(`/patients/${patientId}`)}
+                              onViewDossier={(patientId) => navigate(`/patients/${patientId}/dossier`)}
                               isUndoable={!isDoctor && lastUndoableAction?.rdv?.id === rdv.id}
                               onUndo={handleUndo}
                             />

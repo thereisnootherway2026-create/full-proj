@@ -22,6 +22,7 @@ import PatientsPage from './pages/dashboard/PatientsPage'
 import SettingsPage from './pages/dashboard/SettingsPage'
 import ConsultationWorkspace from './pages/dashboard/ConsultationWorkspace'
 import PatientWorkspace from './pages/dashboard/PatientWorkspace'
+import DossierPatient from './pages/dashboard/DossierPatient'
 import TasksPage from './pages/dashboard/TasksPage'
 
 function RootRedirect() {
@@ -71,6 +72,14 @@ const router = createBrowserRouter([
                 element: (
                   <RoleGuard role="docteur">
                     <PatientWorkspace />
+                  </RoleGuard>
+                ),
+              },
+              {
+                path: '/patients/:id/dossier',
+                element: (
+                  <RoleGuard role="docteur">
+                    <DossierPatient />
                   </RoleGuard>
                 ),
               },

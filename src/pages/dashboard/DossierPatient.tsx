@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Calendar,
   FileText,
   Plus,
-  CheckCircle2,
   Printer,
   Download,
   ChevronRight,
@@ -32,7 +31,10 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { usePatientDossier } from '../../hooks/usePatientDossier';
+import { useAppContext } from '../../context/AppContext';
+import { getOrdonnances } from '../../lib/api';
 
 /* ─── Animation variants ─── */
 const fadeUp = {
@@ -57,96 +59,38 @@ const nodePop = {
   }),
 };
 
-/* ─── Mock data ─── */
-const patient = {
-  prenom: 'Karim',
-  nom: 'Mansouri',
-  age: 42,
-  sexe: 'Homme',
-  ddn: '14/02/1982',
-  ville: 'Alger, Algérie',
-  tel: '+213 555 12 34 56',
-  email: 'k.mansouri@email.com',
-  groupe: 'A+',
-  medecin: 'Dr. Touggani',
-  statut: 'En consultation',
+/* ─── Helpers ─── */
+function calcAge(dateStr?: string | null): number | null {
+  if (!dateStr) return null;
+  const birth = new Date(dateStr);
+  if (Number.isNaN(birth.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+}
+
+function formatDateFr(dateStr?: string | null): string | null {
+  if (!dateStr) return null;
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+const PROBLEM_STATUS_STYLES: Record<string, { bg: string; border: string; text: string }> = {
+  'Actif': { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700' },
+  'À surveiller': { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700' },
+  'Stable': { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700' },
+  'Résolu': { bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-500' },
 };
 
-const vitals = [
-  { label: 'T.A.', value: '128/82', unit: 'mmHg', icon: HeartPulse, ok: true },
-  { label: 'SpO₂', value: '98', unit: '%', icon: Activity, ok: true },
-  { label: 'FC', value: '74', unit: 'bpm', icon: Zap, ok: true },
-  { label: 'Temp.', value: '37.2', unit: '°C', icon: Thermometer, ok: true },
-  { label: 'Poids', value: '78', unit: 'kg', icon: Weight, ok: true },
-  { label: 'IMC', value: '24.1', unit: 'kg/m²', icon: Ruler, ok: true },
-];
-
-const journeyData = [
-  {
-    id: 1,
-    type: 'Consultation',
-    title: 'Consultation en cours',
-    date: "Aujourd'hui, 09h30",
-    doctor: 'Dr. Touggani',
-    summary: 'Consultation de suivi — douleurs abdominales post-urgence. Évaluation clinique et bilan.',
-    linkText: 'Ouvrir la consultation',
-    isActive: true,
-  },
-  {
-    id: 2,
-    type: 'Urgence',
-    title: 'Urgence — Douleurs abdominales',
-    date: '19 juin 2024',
-    doctor: 'Dr. Benali',
-    summary: 'Admission aux urgences pour douleurs abdominales aiguës. Analyses sanguines. Prise en charge immédiate.',
-    linkText: 'Voir le compte rendu',
-  },
-  {
-    id: 3,
-    type: 'Laboratoire',
-    title: 'Bilan biologique complet',
-    date: '14 juin 2024',
-    doctor: 'Dr. Touggani',
-    summary: 'Formule sanguine complète, glycémie à jeun, bilan lipidique et hépatique.',
-    linkText: 'Voir les résultats',
-  },
-  {
-    id: 4,
-    type: 'Prescription',
-    title: 'Ordonnance médicale',
-    date: '10 juin 2024',
-    doctor: 'Dr. Touggani',
-    summary: 'Paracétamol 1g 3×/j — 7 jours. Oméprazole 20mg 1×/j avant repas — 14 jours.',
-    linkText: 'Voir l\'ordonnance',
-  },
-  {
-    id: 5,
-    type: 'Imagerie',
-    title: 'Radiographie thoracique',
-    date: '5 juin 2024',
-    doctor: 'Dr. Benali',
-    summary: 'Radiographie F+P sans particularité notable. Poumons clairs, silhouette cardiaque normale.',
-    linkText: 'Voir les images',
-  },
-  {
-    id: 6,
-    type: 'Consultation',
-    title: 'Consultation générale',
-    date: '28 mai 2024',
-    doctor: 'Dr. Touggani',
-    summary: 'Examen clinique complet. Tension artérielle stable. Bonne forme générale.',
-    linkText: 'Voir le compte rendu',
-  },
-  {
-    id: 7,
-    type: 'Laboratoire',
-    title: 'Bilan annuel',
-    date: '3 janv. 2024',
-    doctor: 'Dr. Touggani',
-    summary: 'Bilan de routine annuel. NFS, ionogramme, bilan rénal et hépatique dans les normes.',
-    linkText: 'Voir les résultats',
-  },
-];
+const OBSERVANCE_STYLES: Record<string, { bg: string; border: string; text: string }> = {
+  'Excellente': { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700' },
+  'Bonne': { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700' },
+  'Variable': { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700' },
+  'Mauvaise': { bg: 'bg-rose-50', border: 'border-rose-200', text: 'text-rose-700' },
+};
 
 type EventType = 'Consultation' | 'Laboratoire' | 'Prescription' | 'Document' | 'Administratif';
 
@@ -203,7 +147,7 @@ const TerminerModal = ({ onClose, onConfirm }: { onClose: () => void; onConfirm:
     onClick={onClose}
   >
     <motion.div
-      className="bg-white rounded-[20px] p-6 w-[360px] shadow-2xl"
+      className="bg-white rounded-[21px] p-6 w-[360px] shadow-[0_12px_48px_rgba(0,0,0,0.12)]"
       initial={{ scale: 0.92, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.92, opacity: 0 }}
       onClick={(e) => e.stopPropagation()}
     >
@@ -237,13 +181,79 @@ const TerminerModal = ({ onClose, onConfirm }: { onClose: () => void; onConfirm:
 /* ─── Main component ─── */
 const DossierPatient = () => {
   const { id: patientId } = useParams();
-  const { timeline, isLoading: timelineLoading } = usePatientDossier(patientId);
+  const { cabinetId } = useAppContext();
+  const {
+    patient,
+    clinical,
+    problems,
+    medications,
+    labResults,
+    vitals,
+    timeline,
+    isLoading,
+  } = usePatientDossier(patientId);
+  const timelineLoading = isLoading;
   const [activeTab, setActiveTab] = useState<'Parcours' | 'Informations' | 'Ordonnances'>('Parcours');
   const [activeFilter, setActiveFilter] = useState('Tous');
   const [searchQuery, setSearchQuery] = useState('');
   const [showTerminer, setShowTerminer] = useState(false);
 
-  const initials = `${patient.prenom[0]}${patient.nom[0]}`;
+  const { data: ordonnances, isLoading: ordonnancesLoading } = useQuery({
+    queryKey: ['ordonnances', cabinetId, patientId],
+    queryFn: () => getOrdonnances(cabinetId!, patientId),
+    enabled: !!cabinetId && !!patientId,
+  });
+
+  const parsedOrdonnances = useMemo(() => {
+    return (ordonnances || []).map((doc: any) => {
+      let parsedData: any = {};
+      try {
+        if (doc.consultations?.notes) parsedData = JSON.parse(doc.consultations.notes);
+      } catch (e) {
+        // Malformed/non-JSON notes — fall back to the raw document only.
+      }
+      return { ...doc, parsedData };
+    });
+  }, [ordonnances]);
+
+  const patientName = `${patient?.prenom || ''} ${patient?.nom || ''}`.trim() || 'Patient';
+  const age = calcAge(patient?.date_naissance);
+  const initials = `${(patient?.prenom?.[0] || '')}${(patient?.nom?.[0] || '')}`.toUpperCase() || '--';
+
+  const activeConditions = (problems || []).filter(
+    (p: any) => p.status === 'Actif' || p.status === 'À surveiller'
+  );
+  const activeProblems = (problems || []).filter((p: any) => p.status !== 'Résolu');
+  const activeMedications = (medications || []).filter((m: any) => m.status === 'Actif');
+
+  const latestVitals = vitals && vitals.length > 0 ? vitals[0] : null;
+  const heightM = latestVitals?.height ? latestVitals.height / 100 : null;
+  const imc = latestVitals?.weight && heightM ? latestVitals.weight / (heightM * heightM) : null;
+  const vitalsDisplay = [
+    { label: 'T.A.', value: latestVitals?.blood_pressure, unit: 'mmHg', icon: HeartPulse },
+    { label: 'SpO₂', value: latestVitals?.spo2, unit: '%', icon: Activity },
+    { label: 'FC', value: latestVitals?.heart_rate, unit: 'bpm', icon: Zap },
+    { label: 'Temp.', value: latestVitals?.temperature, unit: '°C', icon: Thermometer },
+    { label: 'Poids', value: latestVitals?.weight, unit: 'kg', icon: Weight },
+    { label: 'IMC', value: imc ? imc.toFixed(1) : null, unit: 'kg/m²', icon: Ruler },
+  ].filter((v) => v.value !== undefined && v.value !== null && v.value !== '');
+
+  const attentionItems = useMemo(() => {
+    const items: string[] = [];
+    (labResults || []).forEach((l: any) => {
+      if (l.status !== 'normal') items.push(`Résultat à vérifier : ${l.exam_name} (${l.status})`);
+    });
+    (problems || []).forEach((p: any) => {
+      if (p.status === 'À surveiller') items.push(`À surveiller : ${p.name}`);
+    });
+    if (!latestVitals) {
+      items.push('Constantes non mises à jour récemment');
+    } else {
+      const daysSince = (Date.now() - new Date(latestVitals.date_mesure).getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSince > 180) items.push('Constantes non mises à jour récemment');
+    }
+    return items;
+  }, [labResults, problems, latestVitals]);
 
   const filteredJourney = (timeline || []).filter((item) => {
     const typeMatch = filterMap[activeFilter] === null || item.type === filterMap[activeFilter];
@@ -270,7 +280,7 @@ const DossierPatient = () => {
             </button>
             <div>
               <p className="text-[15px] font-semibold text-[#0F172A] leading-tight">
-                {patient.prenom} {patient.nom}
+                {patientName}
               </p>
               <p className="text-[12px] text-[#94A3B8]">Dossier patient</p>
             </div>
@@ -314,7 +324,7 @@ const DossierPatient = () => {
       <div className="w-full px-6 py-7">
         {/* ── Vitals ribbon ── */}
           <motion.div
-            className="bg-white border border-[#CBD5E1] rounded-[18px] p-4 mb-7 shadow-[0_1px_3px_rgba(0,0,0,.04)]"
+            className="bg-white border border-slate-200 rounded-[21px] p-4 mb-7 shadow-[0_6px_18px_rgba(15,23,42,0.04)]"
             initial="hidden" animate="visible" custom={0} variants={fadeUp}
           >
           <div className="flex items-center justify-between flex-wrap gap-4">
@@ -325,10 +335,12 @@ const DossierPatient = () => {
               </div>
               <div>
                 <p className="text-[15px] font-bold text-[#0F172A]">
-                  {patient.prenom} {patient.nom}
+                  {patientName}
                 </p>
                 <p className="text-[13px] text-[#64748B]">
-                  {patient.age} ans • {patient.sexe} • Gr. {patient.groupe}
+                  {age !== null ? `${age} ans` : '—'}
+                  {patient?.sexe ? ` • ${patient.sexe}` : ''}
+                  {clinical?.groupe_sanguin ? ` • Gr. ${clinical.groupe_sanguin}` : ''}
                 </p>
               </div>
             </div>
@@ -338,20 +350,24 @@ const DossierPatient = () => {
 
             {/* Vitals */}
             <div className="flex items-center gap-5 flex-wrap">
-              {vitals.map((v, i) => {
-                const Icon = v.icon;
-                return (
-                  <div key={i} className="text-center">
-                    <div className="flex items-center gap-1 text-[#94A3B8] mb-0.5">
-                      <Icon className="w-3.5 h-3.5" />
-                      <span className="text-[11px] font-medium uppercase tracking-wide">{v.label}</span>
+              {vitalsDisplay.length === 0 ? (
+                <p className="text-[13px] text-[#94A3B8]">Aucune constante enregistrée</p>
+              ) : (
+                vitalsDisplay.map((v, i) => {
+                  const Icon = v.icon;
+                  return (
+                    <div key={i} className="text-center">
+                      <div className="flex items-center gap-1 text-[#94A3B8] mb-0.5">
+                        <Icon className="w-3.5 h-3.5" />
+                        <span className="text-[11px] font-medium uppercase tracking-wide">{v.label}</span>
+                      </div>
+                      <p className="text-[15px] font-bold text-[#0F172A]">
+                        {v.value} <span className="text-[11px] text-[#94A3B8] font-normal">{v.unit}</span>
+                      </p>
                     </div>
-                    <p className="text-[15px] font-bold text-[#0F172A]">
-                      {v.value} <span className="text-[11px] text-[#94A3B8] font-normal">{v.unit}</span>
-                    </p>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
 
             {/* Divider */}
@@ -366,6 +382,29 @@ const DossierPatient = () => {
               </div>
             </div>
           </div>
+
+          {/* Allergy + chronic condition badges — only shown once loaded and only if there's something real to report */}
+          {!isLoading && ((clinical?.allergies && clinical.allergies.trim()) || activeConditions.length > 0) && (
+            <div className="flex items-center gap-2 flex-wrap mt-4 pt-4 border-t border-[#E2E8F0]">
+              {clinical?.allergies && clinical.allergies.trim() && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-semibold bg-rose-50 border border-rose-200 text-rose-700">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  Allergie : {clinical.allergies}
+                </span>
+              )}
+              {activeConditions.map((p: any) => {
+                const style = PROBLEM_STATUS_STYLES[p.status] || PROBLEM_STATUS_STYLES['Stable'];
+                return (
+                  <span
+                    key={p.id}
+                    className={`px-3 py-1.5 rounded-full text-[12px] font-semibold border ${style.bg} ${style.border} ${style.text}`}
+                  >
+                    {p.name}
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </motion.div>
 
         {/* ── Two-column layout ── */}
@@ -374,7 +413,7 @@ const DossierPatient = () => {
           <div className="lg:col-span-4 space-y-5">
             {/* Summary stats */}
             <motion.div
-              className="bg-white border border-[#CBD5E1] rounded-[18px] p-5 shadow-[0_1px_2px_rgba(0,0,0,.04)]"
+              className="bg-white border border-slate-200 rounded-[21px] p-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)]"
               initial="hidden" animate="visible" custom={1} variants={fadeUp}
             >
               <p className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-4">RÉSUMÉ</p>
@@ -401,41 +440,85 @@ const DossierPatient = () => {
               </div>
             </motion.div>
 
-            {/* Alertes & Risques */}
+            {/* Points d'attention — real, computed from fetched data only. No panel at all when there's nothing to flag. */}
+            {!isLoading && attentionItems.length > 0 && (
+              <motion.div
+                className="bg-white border border-slate-200 rounded-[21px] p-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)]"
+                initial="hidden" animate="visible" custom={2} variants={fadeUp}
+              >
+                <p className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-4">POINTS D'ATTENTION</p>
+                <div className="space-y-2.5">
+                  {attentionItems.map((text, i) => (
+                    <div key={i} className="flex items-start gap-2.5 p-3 rounded-[12px] bg-amber-50 border border-amber-200">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <p className="text-[13px] text-amber-800">{text}</p>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Problèmes actifs */}
             <motion.div
-              className="bg-white border border-[#CBD5E1] rounded-[18px] p-5 shadow-[0_1px_2px_rgba(0,0,0,.04)]"
-              initial="hidden" animate="visible" custom={2} variants={fadeUp}
+              className="bg-white border border-slate-200 rounded-[21px] p-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)]"
+              initial="hidden" animate="visible" custom={3} variants={fadeUp}
             >
-              <p className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-4">ALERTES & RISQUES</p>
-              <div className="space-y-2.5">
-                <div className="flex items-center gap-3 p-3 rounded-[12px] bg-[#ECFDF5] border border-[#A7F3D0]">
-                  <CheckCircle2 className="w-4 h-4 text-[#059669] flex-shrink-0" />
-                  <div>
-                    <p className="text-[13px] font-semibold text-[#059669]">Aucune allergie connue</p>
-                    <p className="text-[12px] text-[#64748B]">Profil allergique vide</p>
-                  </div>
+              <p className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-4">PROBLÈMES ACTIFS</p>
+              {activeProblems.length === 0 ? (
+                <p className="text-[13px] text-[#64748B]">Aucun problème actif enregistré.</p>
+              ) : (
+                <div className="space-y-2.5">
+                  {activeProblems.map((p: any) => {
+                    const style = PROBLEM_STATUS_STYLES[p.status] || PROBLEM_STATUS_STYLES['Stable'];
+                    const since = formatDateFr(p.diagnosed_date);
+                    return (
+                      <div key={p.id} className="flex items-center justify-between gap-3 p-3 rounded-[12px] bg-[#F8FAFC] border border-slate-100">
+                        <div>
+                          <p className="text-[13px] font-semibold text-[#0F172A]">{p.name}</p>
+                          {since && <p className="text-[12px] text-[#64748B]">depuis {since}</p>}
+                        </div>
+                        <span className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${style.bg} ${style.border} ${style.text}`}>
+                          {p.status}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div className="flex items-center gap-3 p-3 rounded-[12px] bg-[#F8FAFC] border border-[#E2E8F0]">
-                  <Pill className="w-4 h-4 text-[#3B82F6] flex-shrink-0" />
-                  <div>
-                    <p className="text-[13px] font-semibold text-[#0F172A]">2 traitements en cours</p>
-                    <p className="text-[12px] text-[#64748B]">Paracétamol · Oméprazole</p>
-                  </div>
+              )}
+            </motion.div>
+
+            {/* Traitements en cours */}
+            <motion.div
+              className="bg-white border border-slate-200 rounded-[21px] p-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)]"
+              initial="hidden" animate="visible" custom={4} variants={fadeUp}
+            >
+              <p className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-4">TRAITEMENTS EN COURS</p>
+              {activeMedications.length === 0 ? (
+                <p className="text-[13px] text-[#64748B]">Aucun traitement en cours.</p>
+              ) : (
+                <div className="space-y-2.5">
+                  {activeMedications.map((m: any) => {
+                    const style = OBSERVANCE_STYLES[m.observance] || OBSERVANCE_STYLES['Bonne'];
+                    return (
+                      <div key={m.id} className="p-3 rounded-[12px] bg-[#F8FAFC] border border-slate-100">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <p className="text-[13px] font-semibold text-[#0F172A]">{m.medication_name}</p>
+                          <span className={`flex-shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${style.bg} ${style.border} ${style.text}`}>
+                            {m.observance}
+                          </span>
+                        </div>
+                        <p className="text-[12px] text-[#64748B]">{[m.dosage, m.posology].filter(Boolean).join(' — ')}</p>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div className="flex items-center gap-3 p-3 rounded-[12px] bg-[#FFFBEB] border border-[#FDE68A]">
-                  <AlertTriangle className="w-4 h-4 text-[#D97706] flex-shrink-0" />
-                  <div>
-                    <p className="text-[13px] font-semibold text-[#92400E]">Suivi post-urgence</p>
-                    <p className="text-[12px] text-[#64748B]">Urgence il y a 6 jours</p>
-                  </div>
-                </div>
-              </div>
+              )}
             </motion.div>
 
             {/* Actions rapides */}
             <motion.div
-              className="bg-white border border-[#CBD5E1] rounded-[18px] p-5 shadow-[0_1px_2px_rgba(0,0,0,.04)]"
-              initial="hidden" animate="visible" custom={3} variants={fadeUp}
+              className="bg-white border border-slate-200 rounded-[21px] p-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)]"
+              initial="hidden" animate="visible" custom={5} variants={fadeUp}
             >
               <p className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-4">ACTIONS RAPIDES</p>
               <div className="space-y-2.5">
@@ -491,27 +574,35 @@ const DossierPatient = () => {
 
             {/* Contact info */}
             <motion.div
-              className="bg-white border border-[#CBD5E1] rounded-[18px] p-5 shadow-[0_1px_2px_rgba(0,0,0,.04)]"
-              initial="hidden" animate="visible" custom={4} variants={fadeUp}
+              className="bg-white border border-slate-200 rounded-[21px] p-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)]"
+              initial="hidden" animate="visible" custom={6} variants={fadeUp}
             >
               <p className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-4">CONTACT</p>
               <div className="space-y-3">
-                <div className="flex items-center gap-3 text-[13px] text-[#64748B]">
-                  <Phone className="w-4 h-4 text-[#94A3B8]" />
-                  <span>{patient.tel}</span>
-                </div>
-                <div className="flex items-center gap-3 text-[13px] text-[#64748B]">
-                  <Mail className="w-4 h-4 text-[#94A3B8]" />
-                  <span>{patient.email}</span>
-                </div>
-                <div className="flex items-center gap-3 text-[13px] text-[#64748B]">
-                  <MapPin className="w-4 h-4 text-[#94A3B8]" />
-                  <span>{patient.ville}</span>
-                </div>
-                <div className="flex items-center gap-3 text-[13px] text-[#64748B]">
-                  <User className="w-4 h-4 text-[#94A3B8]" />
-                  <span>Suivi par {patient.medecin}</span>
-                </div>
+                {patient?.telephone && (
+                  <div className="flex items-center gap-3 text-[13px] text-[#64748B]">
+                    <Phone className="w-4 h-4 text-[#94A3B8]" />
+                    <span>{patient.telephone}</span>
+                  </div>
+                )}
+                {patient?.email && (
+                  <div className="flex items-center gap-3 text-[13px] text-[#64748B]">
+                    <Mail className="w-4 h-4 text-[#94A3B8]" />
+                    <span>{patient.email}</span>
+                  </div>
+                )}
+                {patient?.ville && (
+                  <div className="flex items-center gap-3 text-[13px] text-[#64748B]">
+                    <MapPin className="w-4 h-4 text-[#94A3B8]" />
+                    <span>{patient.ville}</span>
+                  </div>
+                )}
+                {patient?.cin && (
+                  <div className="flex items-center gap-3 text-[13px] text-[#64748B]">
+                    <User className="w-4 h-4 text-[#94A3B8]" />
+                    <span>CIN : {patient.cin}</span>
+                  </div>
+                )}
               </div>
             </motion.div>
           </div>
@@ -520,8 +611,8 @@ const DossierPatient = () => {
           <div className="lg:col-span-8 space-y-5">
             {/* Tabs — 3 only, no redundancy */}
             <motion.div
-              className="bg-white border border-[#CBD5E1] rounded-[14px] p-1 inline-flex shadow-[0_1px_2px_rgba(0,0,0,.04)]"
-              initial="hidden" animate="visible" custom={5} variants={fadeUp}
+              className="bg-white border border-slate-200 rounded-[14px] p-1 inline-flex shadow-[0_1px_2px_rgba(0,0,0,.04)]"
+              initial="hidden" animate="visible" custom={7} variants={fadeUp}
             >
               {(['Parcours', 'Informations', 'Ordonnances'] as const).map((tab) => (
                 <button
@@ -631,7 +722,7 @@ const DossierPatient = () => {
 
                               {/* Card */}
               <div
-                className={`bg-white border border-[#CBD5E1] border-l-4 ${cfg.border} rounded-[16px] p-5 shadow-[0_1px_2px_rgba(0,0,0,.04)] hover:shadow-[0_6px_20px_rgba(15,23,42,.08)] hover:-translate-y-0.5 transition-all duration-200 ${
+                className={`bg-white border border-slate-200 border-l-4 ${cfg.border} rounded-[16px] p-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)] hover:shadow-[0_6px_20px_rgba(15,23,42,.08)] hover:-translate-y-0.5 transition-all duration-200 ${
                   item.isActive ? 'ring-1 ring-[#3B82F6]/25 bg-[#FAFCFF]' : ''
                 }`}
               >
@@ -695,21 +786,21 @@ const DossierPatient = () => {
                   key="informations"
                   initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.25 }}
-                  className="bg-white border border-[#CBD5E1] rounded-[18px] p-6 shadow-[0_1px_2px_rgba(0,0,0,.04)] space-y-6"
+                  className="bg-white border border-slate-200 rounded-[21px] p-6 shadow-[0_6px_18px_rgba(15,23,42,0.04)] space-y-6"
                 >
                   <h2 className="text-[18px] font-bold text-[#0F172A]">Informations du patient</h2>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {[
-                      { label: 'Prénom', value: patient.prenom },
-                      { label: 'Nom', value: patient.nom },
-                      { label: 'Date de naissance', value: patient.ddn },
-                      { label: 'Âge', value: `${patient.age} ans` },
-                      { label: 'Sexe', value: patient.sexe },
-                      { label: 'Groupe sanguin', value: patient.groupe },
-                      { label: 'Téléphone', value: patient.tel },
-                      { label: 'Email', value: patient.email },
-                      { label: 'Ville', value: patient.ville },
-                      { label: 'Médecin traitant', value: patient.medecin },
+                      { label: 'Prénom', value: patient?.prenom || '—' },
+                      { label: 'Nom', value: patient?.nom || '—' },
+                      { label: 'Date de naissance', value: formatDateFr(patient?.date_naissance) || '—' },
+                      { label: 'Âge', value: age !== null ? `${age} ans` : '—' },
+                      { label: 'Sexe', value: patient?.sexe || '—' },
+                      { label: 'Groupe sanguin', value: clinical?.groupe_sanguin || '—' },
+                      { label: 'Téléphone', value: patient?.telephone || '—' },
+                      { label: 'Email', value: patient?.email || '—' },
+                      { label: 'Ville', value: patient?.ville || '—' },
+                      { label: 'CIN', value: patient?.cin || '—' },
                     ].map((field) => (
                       <div key={field.label} className="p-4 bg-[#F8FAFC] rounded-[14px] border border-[#E2E8F0]">
                         <p className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-1">
@@ -736,49 +827,54 @@ const DossierPatient = () => {
                 >
                   <div className="flex items-center justify-between">
                     <h2 className="text-[18px] font-bold text-[#0F172A]">Ordonnances</h2>
-                    <button className="h-[40px] px-4 rounded-[12px] bg-[#3B82F6] text-white text-[13px] font-semibold hover:bg-[#2563EB] transition-all flex items-center gap-2">
-                      <Plus className="w-4 h-4" />
-                      Nouvelle ordonnance
-                    </button>
                   </div>
 
-                  {[
-                    {
-                      date: '10 juin 2024',
-                      doctor: 'Dr. Touggani',
-                      drugs: ['Paracétamol 1g — 3×/j — 7 jours', 'Oméprazole 20mg — 1×/j avant repas — 14 jours'],
-                    },
-                    {
-                      date: '28 mai 2024',
-                      doctor: 'Dr. Touggani',
-                      drugs: ['Ibuprofène 400mg — 2×/j — 5 jours', 'Smecta — 3 sachets/j — 3 jours'],
-                    },
-                  ].map((ord, i) => (
-                    <div key={i} className="bg-white border border-[#CBD5E1] rounded-[16px] p-5 shadow-[0_1px_2px_rgba(0,0,0,.04)]">
-                      <div className="flex items-center justify-between mb-3">
-                        <div>
-                          <p className="text-[14px] font-semibold text-[#0F172A]">{ord.date}</p>
-                          <p className="text-[12px] text-[#94A3B8]">{ord.doctor}</p>
-                        </div>
-                        <div className="flex gap-2">
-                          <button className="w-9 h-9 flex items-center justify-center rounded-[10px] border border-[#CBD5E1] hover:bg-[#F8FAFC] transition-all">
-                            <Printer className="w-4 h-4 text-[#64748B]" />
-                          </button>
-                          <button className="w-9 h-9 flex items-center justify-center rounded-[10px] border border-[#CBD5E1] hover:bg-[#F8FAFC] transition-all">
-                            <Download className="w-4 h-4 text-[#64748B]" />
-                          </button>
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        {ord.drugs.map((drug, j) => (
-                          <div key={j} className="flex items-center gap-2 p-3 bg-[#F5F3FF] rounded-[12px]">
-                            <Pill className="w-4 h-4 text-[#8B5CF6] flex-shrink-0" />
-                            <span className="text-[13px] text-[#3B0764]">{drug}</span>
-                          </div>
-                        ))}
-                      </div>
+                  {ordonnancesLoading ? (
+                    <div className="flex flex-col items-center justify-center py-16 bg-white rounded-[16px] border border-[#E2E8F0] border-dashed">
+                      <div className="w-8 h-8 border-4 border-slate-100 border-t-[#3B82F6] rounded-full animate-spin mb-4" />
+                      <p className="text-[14px] font-medium text-[#64748B]">Chargement des ordonnances...</p>
                     </div>
-                  ))}
+                  ) : parsedOrdonnances.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-16 bg-slate-50 rounded-[16px] border border-[#E2E8F0] border-dashed text-center">
+                      <div className="w-12 h-12 bg-white rounded-xl border border-slate-100 flex items-center justify-center shadow-sm mb-3">
+                        <FileText className="w-6 h-6 text-slate-400" />
+                      </div>
+                      <h3 className="text-[14px] font-semibold text-[#0F172A]">Aucune ordonnance</h3>
+                      <p className="text-[13px] text-[#64748B] mt-1 max-w-[250px]">
+                        Ce patient n'a pas encore d'ordonnance enregistrée.
+                      </p>
+                    </div>
+                  ) : (
+                    parsedOrdonnances.map((doc: any) => {
+                      const drugs = (doc.parsedData?.medicaments || []).filter((m: any) => m.nom?.trim());
+                      return (
+                        <div key={doc.id} className="bg-white border border-slate-200 rounded-[16px] p-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)]">
+                          <div className="flex items-center justify-between mb-3">
+                            <div>
+                              <p className="text-[14px] font-semibold text-[#0F172A]">{formatDateFr(doc.created_at) || doc.created_at}</p>
+                              {doc.parsedData?.medecin && (
+                                <p className="text-[12px] text-[#94A3B8]">Dr. {doc.parsedData.medecin}</p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            {drugs.length > 0 ? (
+                              drugs.map((med: any, j: number) => (
+                                <div key={med.id || j} className="flex items-center gap-2 p-3 bg-[#F5F3FF] rounded-[12px]">
+                                  <Pill className="w-4 h-4 text-[#8B5CF6] flex-shrink-0" />
+                                  <span className="text-[13px] text-[#3B0764]">
+                                    {[med.nom, med.posologie, med.duree].filter(Boolean).join(' — ')}
+                                  </span>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-[13px] text-[#64748B]">{doc.nom_fichier}</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>

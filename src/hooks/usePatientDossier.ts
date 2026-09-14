@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { getPatientById } from '../lib/api'
+import { getPatientById, getPatientClinicalFields } from '../lib/api'
 import {
   getPatientVitals,
   getPatientProblems,
@@ -15,6 +15,12 @@ export function usePatientDossier(patientId: string | undefined) {
   const patientQuery = useQuery({
     queryKey: ['patient', patientId],
     queryFn: () => getPatientById(patientId!),
+    enabled,
+  })
+
+  const clinicalQuery = useQuery({
+    queryKey: ['patient_clinical', patientId],
+    queryFn: () => getPatientClinicalFields(patientId!),
     enabled,
   })
 
@@ -56,6 +62,7 @@ export function usePatientDossier(patientId: string | undefined) {
 
   const isLoading =
     patientQuery.isLoading ||
+    clinicalQuery.isLoading ||
     vitalsQuery.isLoading ||
     problemsQuery.isLoading ||
     medicationsQuery.isLoading ||
@@ -65,6 +72,7 @@ export function usePatientDossier(patientId: string | undefined) {
 
   const isError =
     patientQuery.isError ||
+    clinicalQuery.isError ||
     vitalsQuery.isError ||
     problemsQuery.isError ||
     medicationsQuery.isError ||
@@ -74,6 +82,7 @@ export function usePatientDossier(patientId: string | undefined) {
 
   return {
     patient: patientQuery.data,
+    clinical: clinicalQuery.data,
     vitals: vitalsQuery.data || [],
     problems: problemsQuery.data || [],
     medications: medicationsQuery.data || [],

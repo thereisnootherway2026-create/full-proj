@@ -400,9 +400,10 @@ export const getDocuments = async (
 }
 
 export const getOrdonnances = async (
-  cabinetId: string
+  cabinetId: string,
+  patientId?: string
 ) => {
-  const { data, error } = await supabase
+  let query = supabase
     .from('documents')
     .select(`
       *,
@@ -411,7 +412,12 @@ export const getOrdonnances = async (
     `)
     .eq('type_document', 'ordonnance')
     .eq('cabinet_id', cabinetId)
-    .order('created_at', { ascending: false })
+
+  if (patientId) {
+    query = query.eq('patient_id', patientId)
+  }
+
+  const { data, error } = await query.order('created_at', { ascending: false })
 
   if (error) throw error
   return data
