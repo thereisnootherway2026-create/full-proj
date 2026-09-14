@@ -16,7 +16,7 @@ import {
   subscribeClinicVisits,
 } from '../../lib/visitService'
 import InvoiceFormModal from '../../components/forms/InvoiceFormModal'
-import FeuilleDeSoinsGenerator from '../../components/cnss/FeuilleDeSoinsGenerator'
+import { generateFSE } from '../../components/cnss/generateFSE'
 
 const fmtMAD = (n) => (n || 0).toLocaleString('fr-FR') + ' MAD'
 
@@ -651,11 +651,50 @@ export default function BillingPage() {
       montantTotal: total,
       montantPaye: paid,
       resteAPayer: reste,
-      paymentMethod: record.paymentMethod || 'cash',
+      modePaiement: (record.paymentMethod || 'Espèces').toUpperCase(),
+      medecinNom: profile?.nom_complet || 'Dr. Othmane Touggani',
+      cabinetNom: profile?.cabinet_nom || 'Cabinet MacroMedica',
       notes: record.notes || 'Consultation Médicale',
       title: isPaid ? 'REÇU DE PAIEMENT MÉDICAL' : 'FACTURE MÉDICALE EN ATTENTE',
       isPaid: isPaid
     })
+  }
+
+  // Dynamic CNSS FSE PDF Generator Function
+  const handleGenerateCNSS = async (record) => {
+    try {
+      const patientObj = record?.patients || contextPatients?.find(p => p.id === record?.patient_id) || {
+        first_name: record?.patient_first_name || record?.patients?.prenom || record?.patientName?.split(' ')[0] || 'Patient',
+        last_name: record?.patient_last_name || record?.patients?.nom || record?.patientName?.split(' ').slice(1).join(' ') || '',
+        cin: record?.patients?.cin || record?.patient_cin || record?.cin || 'AB88419',
+        cnss_number: record?.patients?.cnss_number || record?.patient_cnss || record?.immatriculation || '123456789',
+        date_of_birth: record?.patients?.date_naissance || record?.patient_dob || record?.date_naissance || '1990-01-01',
+        gender: record?.patients?.sexe || record?.patient_gender || record?.sexe || 'F',
+        address: record?.patients?.adresse || record?.patient_address || record?.adresse || 'Casablanca, Maroc',
+      }
+
+      const doctorObj = {
+        inpe_code: profile?.inpe_code || '191023456',
+        first_name: profile?.first_name || profile?.nom_complet?.split(' ')[1] || 'Othmane',
+        last_name: profile?.last_name || profile?.nom_complet?.split(' ')[2] || 'Touggani',
+        name: profile?.nom_complet || 'Dr. Othmane Touggani',
+        specialty: profile?.specialite || 'Médecine générale',
+        city: 'Casablanca',
+      }
+
+      const consultationObj = {
+        price: record?.grandTotal || record?.montant || 150.00,
+        montantTotal: String(record?.grandTotal || record?.montant || 150.00),
+        type_soins: record?.motif || record?.type_soins || 'Maladie',
+        date: formatDateShort(record?.date || record?.created_at) || new Date().toLocaleDateString('fr-FR'),
+      }
+
+      await generateFSE(patientObj, doctorObj, consultationObj)
+      notify?.({ title: 'Feuille de Soins', message: 'PDF CNSS généré et téléchargé avec succès !', tone: 'success' })
+    } catch (err) {
+      console.error('Erreur génération FSE :', err)
+      alert('Erreur lors de la génération de la Feuille de Soins CNSS.')
+    }
   }
 
   const renderAssuranceBadge = (assurance) => {
@@ -724,20 +763,6 @@ export default function BillingPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* CNSS PDF Generator Button */}
-            <button
-              type="button"
-              onClick={() => setShowCnssGenerator(!showCnssGenerator)}
-              className={`h-10 px-4 rounded-xl font-semibold transition-all duration-200 hover:-translate-y-0.5 active:scale-95 shadow-sm text-xs flex items-center gap-2 border ${
-                showCnssGenerator
-                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-emerald-500/20'
-                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              <FileText size={15} className={showCnssGenerator ? 'text-white' : 'text-emerald-600'} />
-              <span>Générateur CNSS (FSE)</span>
-            </button>
-
             {/* Détails Avancés Button */}
             <button
               type="button"
@@ -759,17 +784,6 @@ export default function BillingPage() {
             </button>
           </div>
         </motion.div>
-
-        {/* CNSS Feuille de Soins PDF Generator Component */}
-        {showCnssGenerator && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-          >
-            <FeuilleDeSoinsGenerator />
-          </motion.div>
-        )}
 
         {/* Sleek Unpaid Invoices Banner */}
         {stats.pendingCount > 0 && (
@@ -1113,6 +1127,17 @@ export default function BillingPage() {
                               >
                                 <CreditCard size={14} />
                                 {r.isPartial || (r.resteAPayer !== undefined && r.resteAPayer > 0 && r.montantPaye > 0) ? `Encaisser le reste` : 'Encaisser'}
+                              </button>
+                            )}
+                            {(r.status === 'paid' || r.montantPaye > 0 || r.status === 'completed') && (
+                              <button
+                                type="button"
+                                onClick={() => handleGenerateCNSS(r)}
+                                className="h-9 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/80 rounded-xl text-xs font-bold transition-all duration-200 hover:-translate-y-0.5 active:scale-95 flex items-center gap-1.5 shadow-2xs"
+                                title="Générer et télécharger la Feuille de Soins CNSS (FSE)"
+                              >
+                                <FileText size={14} className="text-emerald-600" />
+                                <span>Générer FSE</span>
                               </button>
                             )}
                             <button

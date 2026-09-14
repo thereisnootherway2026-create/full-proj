@@ -5,6 +5,7 @@ import { generateFSE } from './generateFSE'
 export default function FeuilleDeSoinsGenerator() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatedPdfUrl, setGeneratedPdfUrl] = useState(null)
+  const [isDebugMode, setIsDebugMode] = useState(false)
 
   // Sample database objects matching MacroMedica schema
   const mockPatient = {
@@ -18,8 +19,11 @@ export default function FeuilleDeSoinsGenerator() {
   }
 
   const mockDoctor = {
+    name: 'Dr. Othmane Touggani',
+    specialty: 'Médecine Générale',
     inpe_code: '191023456',
     city: 'Casablanca',
+    etablissement: 'Cabinet Médical Touggani',
   }
 
   const mockConsultation = {
@@ -27,10 +31,10 @@ export default function FeuilleDeSoinsGenerator() {
     date: new Date().toLocaleDateString('fr-FR'),
   }
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (debug = isDebugMode) => {
     setIsGenerating(true)
     try {
-      const url = await generateFSE(mockPatient, mockDoctor, mockConsultation)
+      const url = await generateFSE(mockPatient, mockDoctor, mockConsultation, { debug })
       if (url) setGeneratedPdfUrl(url)
     } catch (err) {
       console.error('Error generating FSE:', err)
@@ -50,23 +54,39 @@ export default function FeuilleDeSoinsGenerator() {
           <div>
             <h3 className="font-bold text-lg text-gray-900">Génération Feuille de Soins CNSS</h3>
             <p className="text-xs text-gray-500 font-medium">
-              Génération automatique sur modèle officiel (FSE_VIERGE1) via injection de coordonnées et espacement dynamique.
+              Génération automatique sur modèle officiel (FSE_VIERGE1) avec calibration millimétrique des zones de saisie.
             </p>
           </div>
         </div>
 
-        <button
-          onClick={handleGenerate}
-          disabled={isGenerating}
-          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-2 disabled:opacity-50"
-        >
-          {isGenerating ? (
-            <RefreshCw size={15} className="animate-spin" />
-          ) : (
-            <Download size={15} />
-          )}
-          <span>{isGenerating ? 'Génération en cours...' : 'Imprimer Feuille de Soins (PDF)'}</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-xs font-semibold text-gray-600 cursor-pointer select-none bg-gray-50 px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-100 transition">
+            <input
+              type="checkbox"
+              checked={isDebugMode}
+              onChange={(e) => {
+                const val = e.target.checked
+                setIsDebugMode(val)
+                if (generatedPdfUrl) handleGenerate(val)
+              }}
+              className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+            />
+            <span>Mode Repères (Debug)</span>
+          </label>
+
+          <button
+            onClick={() => handleGenerate(isDebugMode)}
+            disabled={isGenerating}
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+          >
+            {isGenerating ? (
+              <RefreshCw size={15} className="animate-spin" />
+            ) : (
+              <Download size={15} />
+            )}
+            <span>{isGenerating ? 'Génération en cours...' : 'Imprimer Feuille de Soins (PDF)'}</span>
+          </button>
+        </div>
       </div>
 
       {generatedPdfUrl && (
