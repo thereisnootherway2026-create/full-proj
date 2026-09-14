@@ -77,7 +77,7 @@ const CountUp = ({ value, duration = 800 }) => {
 
 export default function BillingPage() {
   const queryClient = useQueryClient()
-  const { cabinetId, notify, refreshVisits, refreshConsultations, visits: contextVisits, patients: contextPatients, updateVisitStatus, updatePatientDebt } = useAppContext()
+  const { profile, cabinetId, notify, refreshVisits, refreshConsultations, visits: contextVisits, patients: contextPatients, updateVisitStatus, updatePatientDebt } = useAppContext()
 
   const [filter, setFilter] = useState('pending') // Default to 'pending' to prioritize unpaid invoices
   const [searchQuery, setSearchQuery] = useState('')

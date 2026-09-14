@@ -1,0 +1,584 @@
+{
+  "num_dossier": {
+    "x": 480.96,
+    "y": 493.33,
+    "width": 94.55,
+    "height": 8.22,
+    "label": "N° Dossier"
+  },
+  "check_entente_prealable": {
+    "x": 571.4,
+    "y": 520.46,
+    "width": 13.15,
+    "height": 11.51,
+    "label": "Entente préalable"
+  },
+  "check_execution": {
+    "x": 678.28,
+    "y": 521.28,
+    "width": 13.15,
+    "height": 10.69,
+    "label": "Exécution"
+  },
+  "assure_nom": {
+    "x": 505.63,
+    "y": 471.13,
+    "width": 242.54,
+    "height": 9.87,
+    "label": "Nom et prénom (Assuré)"
+  },
+  "immatriculation": {
+    "label": "N° Immatriculation",
+    "boxes": [
+      {
+        "x": 517.96,
+        "y": 462.08,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 528.65,
+        "y": 462.08,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 539.34,
+        "y": 462.08,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 550.02,
+        "y": 462.08,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 560.71,
+        "y": 462.08,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 571.4,
+        "y": 462.08,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 582.09,
+        "y": 462.08,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 592.78,
+        "y": 462.08,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 603.46,
+        "y": 462.08,
+        "width": 11.51,
+        "height": 8.22
+      }
+    ]
+  },
+  "cin_assure": {
+    "label": "N° CIN Assuré",
+    "boxes": [
+      {
+        "x": 644.57,
+        "y": 453.04,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 655.26,
+        "y": 453.04,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 665.95,
+        "y": 453.04,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 676.64,
+        "y": 453.04,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 687.32,
+        "y": 453.04,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 698.01,
+        "y": 453.04,
+        "width": 11.51,
+        "height": 8.22
+      },
+      {
+        "x": 709.52,
+        "y": 453.04,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 719.39,
+        "y": 453.04,
+        "width": 11.51,
+        "height": 8.22
+      }
+    ]
+  },
+  "check_conjoint": {
+    "x": 564.82,
+    "y": 423.44,
+    "width": 12.33,
+    "height": 10.69,
+    "label": "Conjoint"
+  },
+  "check_enfant": {
+    "x": 735.83,
+    "y": 423.44,
+    "width": 12.33,
+    "height": 10.69,
+    "label": "Enfant"
+  },
+  "adresse": {
+    "x": 468.63,
+    "y": 398.77,
+    "width": 323.93,
+    "height": 20.56,
+    "label": "Adresse"
+  },
+  "montant_frais": {
+    "x": 568.11,
+    "y": 375.75,
+    "width": 126.61,
+    "height": 18.09,
+    "label": "Montant"
+  },
+  "nombre_pieces": {
+    "x": 607.57,
+    "y": 356.84,
+    "width": 46.04,
+    "height": 16.44,
+    "label": "Pièces"
+  },
+  "beneficiaire_nom": {
+    "x": 501.52,
+    "y": 306.68,
+    "width": 242.54,
+    "height": 9.87,
+    "label": "Nom (Bénéficiaire)"
+  },
+  "date_naissance": {
+    "label": "Date de Naissance",
+    "boxes": [
+      {
+        "x": 621.55,
+        "y": 296.82,
+        "width": 11.51,
+        "height": 8.22
+      },
+      {
+        "x": 633.06,
+        "y": 296.82,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 654.44,
+        "y": 296.82,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 665.13,
+        "y": 296.82,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 686.5,
+        "y": 296.82,
+        "width": 11.51,
+        "height": 8.22
+      },
+      {
+        "x": 698.01,
+        "y": 296.82,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 707.88,
+        "y": 296.82,
+        "width": 11.51,
+        "height": 8.22
+      },
+      {
+        "x": 719.39,
+        "y": 296.82,
+        "width": 10.69,
+        "height": 8.22
+      }
+    ]
+  },
+  "cin_beneficiaire": {
+    "label": "N° CIN Bénéficiaire",
+    "boxes": [
+      {
+        "x": 515.49,
+        "y": 288.6,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 526.18,
+        "y": 288.6,
+        "width": 11.51,
+        "height": 8.22
+      },
+      {
+        "x": 537.69,
+        "y": 288.6,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 548.38,
+        "y": 288.6,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 559.07,
+        "y": 288.6,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 569.76,
+        "y": 288.6,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 580.44,
+        "y": 288.6,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 591.13,
+        "y": 288.6,
+        "width": 10.69,
+        "height": 8.22
+      }
+    ]
+  },
+  "check_sexe_m": {
+    "x": 563.18,
+    "y": 267.22,
+    "width": 12.33,
+    "height": 10.69,
+    "label": "Sexe M"
+  },
+  "check_sexe_f": {
+    "x": 648.68,
+    "y": 267.22,
+    "width": 12.33,
+    "height": 10.69,
+    "label": "Sexe F"
+  },
+  "inpe": {
+    "label": "INPE Médecin Traitant",
+    "boxes": [
+      {
+        "x": 503.16,
+        "y": 239.26,
+        "width": 11.51,
+        "height": 8.22
+      },
+      {
+        "x": 514.67,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 525.36,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 536.05,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 546.74,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 557.42,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 568.11,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 578.8,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 589.49,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      }
+    ]
+  },
+  "inpe_etablissement": {
+    "label": "INPE Établissement",
+    "boxes": [
+      {
+        "x": 716.1,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 726.79,
+        "y": 239.26,
+        "width": 11.51,
+        "height": 8.22
+      },
+      {
+        "x": 738.3,
+        "y": 239.26,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 748.16,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 758.85,
+        "y": 239.26,
+        "width": 11.51,
+        "height": 8.22
+      },
+      {
+        "x": 770.36,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 781.05,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 791.74,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 802.43,
+        "y": 239.26,
+        "width": 10.69,
+        "height": 8.22
+      }
+    ]
+  },
+  "medecin_traitant_nom": {
+    "x": 424.23,
+    "y": 203.91,
+    "width": 207.18,
+    "height": 27.96,
+    "label": "Médecin Traitant"
+  },
+  "etablissement_soins_nom": {
+    "x": 633.06,
+    "y": 203.91,
+    "width": 193.21,
+    "height": 27.96,
+    "label": "Établissement de soins"
+  },
+  "check_maladie": {
+    "x": 513.85,
+    "y": 171.02,
+    "width": 12.33,
+    "height": 12.33,
+    "label": "Maladie"
+  },
+  "check_maternite": {
+    "x": 761.32,
+    "y": 175.95,
+    "width": 12.33,
+    "height": 12.33,
+    "label": "Maternité"
+  },
+  "check_hospitalisation": {
+    "x": 514.67,
+    "y": 151.29,
+    "width": 12.33,
+    "height": 12.33,
+    "label": "Hospitalisation"
+  },
+  "check_accident": {
+    "x": 761.32,
+    "y": 148,
+    "width": 12.33,
+    "height": 12.33,
+    "label": "Accident"
+  },
+  "fait_a_assure": {
+    "x": 448.08,
+    "y": 108.53,
+    "width": 110.99,
+    "height": 9.87,
+    "label": "Fait à (Assuré)"
+  },
+  "date_bas_gauche": {
+    "label": "Date (Assuré)",
+    "boxes": [
+      {
+        "x": 473.56,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 483.43,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 503.16,
+        "y": 90.44,
+        "width": 9.04,
+        "height": 8.22
+      },
+      {
+        "x": 512.2,
+        "y": 90.44,
+        "width": 10.69,
+        "height": 8.22
+      },
+      {
+        "x": 531.94,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 541.8,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 551.67,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 561.53,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      }
+    ]
+  },
+  "fait_a_medecin": {
+    "x": 645.39,
+    "y": 108.53,
+    "width": 110.99,
+    "height": 9.87,
+    "label": "Fait à (Médecin)"
+  },
+  "date_bas_droite": {
+    "label": "Date (Médecin)",
+    "boxes": [
+      {
+        "x": 680.75,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 690.61,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 710.34,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 720.21,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 739.94,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 749.81,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      },
+      {
+        "x": 759.67,
+        "y": 90.44,
+        "width": 9.04,
+        "height": 8.22
+      },
+      {
+        "x": 768.72,
+        "y": 90.44,
+        "width": 9.87,
+        "height": 8.22
+      }
+    ]
+  }
+}
