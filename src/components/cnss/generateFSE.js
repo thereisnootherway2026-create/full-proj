@@ -329,8 +329,12 @@ export const generateFSE = async (dbPatient = {}, dbDoctor = {}, dbConsultation 
       if (!str) return;
 
       let s = defaultSize;
+      // Pre-scale if string length is > 30 characters (long names / addresses)
+      if (str.length > 30 && s > 9.0) {
+        s = 9.0;
+      }
       let textWidth = textFont.widthOfTextAtSize(str, s);
-      while (textWidth > zone.width - 4 && s > 5.5) {
+      while (textWidth > zone.width - 4 && s > 4.5) {
         s -= 0.5;
         textWidth = textFont.widthOfTextAtSize(str, s);
       }
@@ -535,4 +539,40 @@ export const mockPatients = [
   { id: 18, nomComplet: "Salma Hachimi", sexe: "F", cin: "CB554433", immatriculation: "102938475", dateNaissance: "18081994", adresse: "Tétouan, Maroc", montant: 200 },
   { id: 19, nomComplet: "Hamza El Ouardi", sexe: "M", cin: "WA221100", immatriculation: "564738291", dateNaissance: "07062001", adresse: "Kénitra, Maroc", montant: 150 },
   { id: 20, nomComplet: "Zineb Benali", sexe: "F", cin: "PA334455", immatriculation: "192837465", dateNaissance: "13011987", adresse: "Casablanca, Maroc", montant: 500 }
+];
+
+export const mockPatientsEdgeCases = [
+  { 
+    id: 1, 
+    nomComplet: "Moulay Abderrahmane El Idrissi Alaoui", // Extremely long name
+    sexe: "M", 
+    cin: "AB123456", 
+    immatriculation: "112233445", 
+    dateNaissance: "15051990", 
+    adresse: "Appartement 45, Résidence Les Jardins, Boulevard de la Corniche, Harhoura, Temara, 12000, Maroc", // Extremely long address
+    montant: 15000.50, // 7-digit price
+    piecesJointes: 15 // Double-digit attachments
+  },
+  { 
+    id: 2, 
+    nomComplet: "Lalla Fatima Zahra Bint Mohammed Cherkaoui", 
+    sexe: "F", 
+    cin: "CD987654", 
+    immatriculation: "998877665", 
+    dateNaissance: "22111985", 
+    adresse: "Secteur 22, Immeuble B, 4ème étage, Avenue Hassan II, Quartier Agdal, Rabat", 
+    montant: 300, 
+    piecesJointes: 0 // Zero attachments 
+  },
+  { 
+    id: 3, 
+    nomComplet: "Jean-Baptiste Marie François De La Croix", 
+    sexe: "M", 
+    cin: "EE556677", 
+    immatriculation: "102938475", 
+    dateNaissance: "08022000", 
+    adresse: "Lot 14, Zone Industrielle, Route de Casablanca, BP 1054", 
+    montant: 150.75, // Decimal price
+    piecesJointes: 7 
+  }
 ];

@@ -16,7 +16,7 @@ import {
   subscribeClinicVisits,
 } from '../../lib/visitService'
 import InvoiceFormModal from '../../components/forms/InvoiceFormModal'
-import { generateFSE, mockPatients } from '../../components/cnss/generateFSE'
+import { generateFSE, mockPatients, mockPatientsEdgeCases } from '../../components/cnss/generateFSE'
 
 const fmtMAD = (n) => (n || 0).toLocaleString('fr-FR') + ' MAD'
 
@@ -278,7 +278,43 @@ export default function BillingPage() {
       source: 'mock_fse'
     }))
 
-    const combinedWithMock = [...mapped, ...mockFseRecords]
+    const mockEdgeCaseRecords = (mockPatientsEdgeCases || []).map((p, idx) => ({
+      id: `mock_edge_${p.id}`,
+      visit_id: `mock_edge_vis_${p.id}`,
+      patient_id: `pat_edge_${p.id}`,
+      patientName: p.nomComplet,
+      patients: {
+        id: `pat_edge_${p.id}`,
+        nom: p.nomComplet.split(' ').slice(1).join(' ') || p.nomComplet,
+        prenom: p.nomComplet.split(' ')[0] || '',
+        nomPrenom: p.nomComplet,
+        name: p.nomComplet,
+        cin: p.cin,
+        cnss_number: p.immatriculation,
+        immatriculation: p.immatriculation,
+        date_naissance: p.dateNaissance,
+        date_of_birth: p.dateNaissance,
+        sexe: p.sexe,
+        gender: p.sexe,
+        adresse: p.adresse,
+        address: p.adresse,
+        piecesJointes: p.piecesJointes,
+        pieces_jointes: p.piecesJointes,
+      },
+      montant: p.montant,
+      grandTotal: p.montant,
+      montantPaye: p.montant,
+      resteAPayer: 0,
+      status: 'paid',
+      paymentMethod: 'card',
+      created_at: new Date(Date.now() + (3 - idx) * 3600000).toISOString(),
+      date: new Date().toLocaleDateString('fr-FR'),
+      notes: `STRESS TEST: ${p.piecesJointes} PJ`,
+      motif: 'Stress Test CNSS',
+      source: 'mock_edge'
+    }))
+
+    const combinedWithMock = [...mockEdgeCaseRecords, ...mapped, ...mockFseRecords]
 
     // Strict Key Deduplication by visit_id / id to prevent identical patient entries
     const seenKeys = new Set()
