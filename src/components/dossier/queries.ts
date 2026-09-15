@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { getPatientById, getPatientClinicalFields } from '@/lib/api';
+import { getPatientProblems } from '@/lib/dossierApi';
 import { DossierEvent, DossierEventRow } from './types';
 
 /**
@@ -108,6 +109,21 @@ export function useDossierRdvStatus(patientId: string | undefined) {
         activeStatus,
         prochainRdv: upcoming ? { id: upcoming.id, date: upcoming.date_rdv } : null,
       };
+    },
+    enabled: !!patientId,
+  });
+}
+
+/**
+ * Header inline chips. Only 'Actif' / 'À surveiller' problems are shown —
+ * same filter the old DossierPatient.tsx used for its header badges.
+ */
+export function useProblemesActifs(patientId: string | undefined) {
+  return useQuery({
+    queryKey: ['dossier-problemes-actifs', patientId],
+    queryFn: async () => {
+      const problems = await getPatientProblems(patientId!);
+      return (problems || []).filter((p: any) => p.status === 'Actif' || p.status === 'À surveiller');
     },
     enabled: !!patientId,
   });
