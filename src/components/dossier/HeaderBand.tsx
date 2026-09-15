@@ -55,11 +55,11 @@ export function HeaderBand({
   if (patient?.cin) metaParts.push(patient.cin);
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4 flex flex-wrap items-center justify-between gap-4 print:hidden">
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4 flex flex-wrap items-center justify-between gap-4 print:shadow-none print:border-0 print:px-0">
       <div className="flex items-center gap-3 min-w-0">
         <button
           onClick={() => navigate(-1)}
-          className="p-2 rounded-xl hover:bg-slate-100 text-slate-500 transition-colors flex-shrink-0"
+          className="p-2 rounded-xl hover:bg-slate-100 text-slate-500 transition-colors flex-shrink-0 print:hidden"
           aria-label="Retour"
         >
           <ArrowLeft className="w-5 h-5" />
@@ -96,7 +96,7 @@ export function HeaderBand({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 flex-shrink-0">
+      <div className="flex items-center gap-2 flex-shrink-0 print:hidden">
         <button
           onClick={onOrdonnance}
           className="h-9 px-3.5 rounded-lg bg-blue-50 text-blue-700 text-[13px] font-semibold hover:bg-blue-100 transition-colors flex items-center gap-1.5"

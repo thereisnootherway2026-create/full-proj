@@ -7,6 +7,7 @@ import { HeaderBand } from './HeaderBand';
 import { ConclusionStrip } from './ConclusionStrip';
 import { ParcoursTimeline } from './ParcoursTimeline';
 import { InfoLine } from './InfoLine';
+import { Skeleton, ErrorState } from '../facturation/ui';
 import {
   usePatient,
   useDossierEvents,
@@ -75,8 +76,20 @@ export function DossierPatientPage() {
   const { profile, currentUser } = useAppContext();
   const [showTerminer, setShowTerminer] = useState(false);
 
-  const { data: patient, isLoading: patientLoading } = usePatient(patientId);
-  const { data: events = [], isLoading: eventsLoading } = useDossierEvents(patientId);
+  const {
+    data: patient,
+    isLoading: patientLoading,
+    isError: patientError,
+    error: patientErrorObj,
+    refetch: refetchPatient,
+  } = usePatient(patientId);
+  const {
+    data: events = [],
+    isLoading: eventsLoading,
+    isError: eventsError,
+    error: eventsErrorObj,
+    refetch: refetchEvents,
+  } = useDossierEvents(patientId);
   const { data: rdvStatus } = useDossierRdvStatus(patientId);
   const { data: facturation } = usePatientFacturation(patientId);
   const { data: problemesActifs = [] } = useProblemesActifs(patientId);
@@ -94,12 +107,26 @@ export function DossierPatientPage() {
   const acteur = profile?.nom_complet || currentUser?.name || '';
 
   const isLoading = patientLoading || eventsLoading;
+  const isError = patientError || eventsError;
 
   return (
-    <div className="min-h-screen bg-slate-50 py-6 px-4 print:bg-white print:py-0">
+    // Same escape-hatch print technique as FactureDrawer.tsx: DashboardLayout
+    // and its sidebar carry no print:hidden classes at all, so this page
+    // becomes a full-viewport, opaque overlay at print time instead —
+    // it paints over the surrounding chrome rather than depending on it
+    // to hide itself.
+    <div className="min-h-screen bg-slate-50 py-6 px-4 print:fixed print:inset-0 print:z-[9999] print:bg-white print:py-6 print:overflow-visible print:min-h-0 print:h-auto">
       <div className="max-w-5xl mx-auto space-y-5 print:space-y-3">
         {isLoading ? (
           <DossierSkeleton />
+        ) : isError ? (
+          <ErrorState
+            error={(patientErrorObj || eventsErrorObj) as Error}
+            onRetry={() => {
+              if (patientError) refetchPatient();
+              if (eventsError) refetchEvents();
+            }}
+          />
         ) : (
           <>
             <HeaderBand
@@ -130,10 +157,30 @@ export function DossierPatientPage() {
 
 function DossierSkeleton() {
   return (
-    <div className="space-y-5 animate-pulse">
-      <div className="h-[76px] bg-white rounded-2xl border border-slate-200" />
-      <div className="h-[70px] bg-white rounded-2xl border border-slate-200" />
-      <div className="h-[420px] bg-white rounded-2xl border border-slate-200" />
+    <div className="space-y-5">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4 flex items-center gap-3">
+        <Skeleton className="w-10 h-10 rounded-xl" />
+        <div className="flex-1 space-y-2">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-3 w-56" />
+        </div>
+      </div>
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4 space-y-2">
+        <Skeleton className="h-3 w-32" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-3/4" />
+      </div>
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4 space-y-3">
+        <Skeleton className="h-4 w-48" />
+        <div className="flex gap-2">
+          <Skeleton className="h-7 w-16 rounded-full" />
+          <Skeleton className="h-7 w-28 rounded-full" />
+          <Skeleton className="h-7 w-20 rounded-full" />
+        </div>
+        <Skeleton className="h-16 w-full rounded-xl" />
+        <Skeleton className="h-16 w-full rounded-xl" />
+        <Skeleton className="h-16 w-full rounded-xl" />
+      </div>
     </div>
   );
 }
