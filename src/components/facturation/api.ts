@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { processVisitPayment } from '@/lib/visitService';
-import { DELAI_PAIEMENT_JOURS, Facture, Mode, Paiement, Statut } from './data';
+import { DELAI_PAIEMENT_JOURS, Facture, FactureLigne, Mode, Paiement, Statut } from './data';
 
 const PAGE_SIZE = 1000;
 const MS_DAY = 86400000;
@@ -30,7 +30,7 @@ export const fetchFactures = async (clinicId: string, patientId?: string): Promi
   for (let from = 0; ; from += PAGE_SIZE) {
     let query = supabase
       .from('payments')
-      .select('id, visit_id, patient_id, amount, amount_paid, status, method, paid_at, created_at, visits:visit_id(doctor_id), patients:patient_id(nom, prenom, mutuelle)')
+      .select('id, visit_id, consultation_id, patient_id, amount, amount_paid, status, method, paid_at, created_at, visits:visit_id(doctor_id), patients:patient_id(nom, prenom, mutuelle)')
       .eq('clinic_id', clinicId)
       .in('status', ['pending', 'paid']);
     if (patientId) query = query.eq('patient_id', patientId);
@@ -42,6 +42,32 @@ export const fetchFactures = async (clinicId: string, patientId?: string): Promi
     if (!data || data.length < PAGE_SIZE) break;
   }
 
+  // Fetch itemized lines for any linked consultations
+  const consultIds = Array.from(new Set(rows.map(r => r.consultation_id).filter(Boolean)));
+  const lignesByConsultId: Record<string, FactureLigne[]> = {};
+  if (consultIds.length > 0) {
+    try {
+      const { data: lignesData } = await supabase
+        .from('facture_lignes')
+        .select('id, consultation_id, libelle_snapshot, prix_unitaire_snapshot, quantite')
+        .in('consultation_id', consultIds);
+
+      if (lignesData) {
+        lignesData.forEach((l: any) => {
+          if (!lignesByConsultId[l.consultation_id]) lignesByConsultId[l.consultation_id] = [];
+          lignesByConsultId[l.consultation_id].push({
+            id: l.id,
+            libelle: l.libelle_snapshot,
+            prixUnitaire: Number(l.prix_unitaire_snapshot) || 0,
+            quantite: Number(l.quantite) || 1,
+          });
+        });
+      }
+    } catch {
+      // Non-blocking fallback
+    }
+  }
+
   return rows.map((p): Facture => {
     const montant = Number(p.amount) || 0;
     const paye = Number(p.amount_paid) || 0;
@@ -49,12 +75,24 @@ export const fetchFactures = async (clinicId: string, patientId?: string): Promi
     const paiements: Paiement[] = paye > 0
       ? [{ id: p.id, date: p.paid_at || p.created_at, montant: paye, mode: modeFromDB(p.method) }]
       : [];
+
+    const explicitLignes = p.consultation_id ? lignesByConsultId[p.consultation_id] : undefined;
+    const lignes: FactureLigne[] = explicitLignes && explicitLignes.length > 0
+      ? explicitLignes
+      : [{
+          id: `default-${p.id}`,
+          libelle: 'Consultation & Prestations médicales',
+          prixUnitaire: montant,
+          quantite: 1,
+        }];
+
     return {
       id: p.id,
       numero: `FAC-${String(p.id).slice(0, 6).toUpperCase()}`,
       dateEmission: p.created_at,
       dateEcheance: new Date(new Date(p.created_at).getTime() + DELAI_PAIEMENT_JOURS * MS_DAY).toISOString(),
       visitId: p.visit_id || null,
+      consultationId: p.consultation_id || null,
       praticienId: p.visits?.doctor_id || '',
       patientId: p.patient_id,
       patientNom: patient ? `${patient.prenom || ''} ${patient.nom || ''}`.trim() || 'Patient inconnu' : 'Patient inconnu',
@@ -63,6 +101,7 @@ export const fetchFactures = async (clinicId: string, patientId?: string): Promi
       paye,
       statut: computeStatut(p.status, montant, paye, p.created_at),
       paiements,
+      lignes,
     };
   });
 };

@@ -13,11 +13,13 @@ import { readActeUsage } from './acteUsage'
 //     - this device's own counter (acteUsage.js), bumped whenever an acte is
 //       added in this modal, because actes typed into a consultation are not
 //       persisted server-side yet (PatientWorkspace "Branchement futur").
-//  2. public.actes_catalogue (source 'catalogue'): the clinic's catalogue
-//     (cabinet_id = current_clinic_id() by RLS). Gives the standard price and
-//     suggests acts never invoiced. Empty on the live database today.
-//  3. A short built-in list of common acts (source 'default'), only so the field
-//     is never a blank box on a clinic with no history. It is labelled
+//  2. public.actes_catalogue (source 'catalogue'): the clinic's catalogue, managed in
+//     Paramètres > Actes (cabinet_id = current_clinic_id() by RLS). Once the clinic has
+//     at least one active acte, the suggestions ARE the catalogue: same names, standard
+//     price for the Montant, ordered by how often each is used (usage only ranks, it never
+//     adds names). Free typing in the field still works for one-off acts.
+//  3. Only while the catalogue is empty: usage-derived names, then a short built-in list
+//     of common acts (source 'default') so the field is never a blank box. Labelled
 //     "Actes courants", never "les plus utilisés".
 //
 // Verified with rolled-back simulated-JWT tests: a doctor of the owning clinic
@@ -71,12 +73,24 @@ export const toActeSuggestion = (a) => ({
   values: { name: a.label, ...(a.price > 0 ? { montant: String(a.price) } : {}) },
 })
 
+// Catalogue mode: the clinic's active actes, most used first (server + device counts), then alphabetical.
+function catalogueSuggestions(usage, catalogue, local) {
+  const counts = new Map()
+  ;[...usage, ...local].forEach((u) => { const k = foldKey(u.label); counts.set(k, (counts.get(k) || 0) + (u.count || 1)) })
+  return catalogue
+    .filter((c) => norm(c.libelle))
+    .map((c) => ({ label: norm(c.libelle), price: Number(c.prix) || 0, source: 'catalogue', count: counts.get(foldKey(c.libelle)) || 0 }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'fr'))
+    .map(toActeSuggestion)
+}
+
 // usage: [{ label, price, count }] from the server; catalogue: [{ libelle, prix }];
 // local: [{ label, price, count }] from this device; defaults: [label].
 // Order: counted acts (server + device counts added together, most used first),
 // then catalogue acts never counted (alphabetical), then the built-in common acts
 // not already present. The catalogue's standard price wins over invoiced/typed prices.
 export function mergeActeSources(usage, catalogue = [], local = [], defaults = DEFAULT_ACTES) {
+  if (catalogue.some((c) => norm(c.libelle))) return catalogueSuggestions(usage, catalogue, local)
   const standard = new Map(catalogue.map((c) => [foldKey(c.libelle), Number(c.prix) || 0]))
   const counted = new Map()
   const add = (list) => list.forEach((u, i) => {

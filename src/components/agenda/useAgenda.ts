@@ -10,6 +10,12 @@ export interface AgendaAppointmentInput {
   patientName: string
   patientNumber: string
   status: AgendaAppointmentStatus
+  // Real length of the appointment (rdv.duree_minutes). Missing = one grid step.
+  durationMinutes?: number
+  // Just cancelled: still drawn for the length of its exit animation, then removed.
+  leaving?: boolean
+  // Just confirmed: plays the one-off confirmation animation.
+  justConfirmed?: boolean
 }
 
 export interface AgendaCalendarAppointmentInput extends AgendaAppointmentInput {
@@ -33,6 +39,28 @@ export interface AgendaAppointmentItem extends AgendaItemBase {
   patientName: string
   patientNumber: string
   status: AgendaAppointmentStatus
+  startLabel: string // real start (may sit between two grid steps, e.g. 09:10)
+  endLabel: string
+  spanSlots: number // grid steps the appointment covers, >= 1
+  leaving?: boolean
+  justConfirmed?: boolean
+}
+
+// Grid geometry shared by the list (day) and grid (week) views: which step an appointment
+// starts in, and how many steps its duration covers — clamped to the end of the day.
+export const slotSpan = (
+  startMinutes: number,
+  durationMinutes: number,
+  gridStart: number,
+  gridEnd: number,
+  step: number
+) => {
+  const slot = gridStart + Math.floor((startMinutes - gridStart) / step) * step
+  const end = startMinutes + Math.max(durationMinutes, 1)
+  const lastSlot = gridEnd // generateSlots() includes gridEnd itself
+  const span = Math.max(1, Math.ceil((end - slot) / step))
+  const maxSpan = Math.floor((lastSlot - slot) / step) + 1
+  return { slot, span: Math.min(span, Math.max(1, maxSpan)) }
 }
 
 export interface AgendaFreeItem extends AgendaItemBase {
@@ -174,18 +202,29 @@ export function useAgenda({
         return left!.originalIndex - right!.originalIndex
       }) as Array<AgendaAppointmentInput & { minutes: number; originalIndex: number }>
 
+    // Bucket by the grid step an appointment STARTS IN (not exact equality: a 09:10 appointment
+    // on a 15-min grid used to match no step and silently vanish from the day). Steps covered
+    // by an earlier appointment's duration are "occupied": not offered as free.
+    type Placed = AgendaAppointmentInput & { minutes: number; slot: number; span: number }
     const overlapsByMinute = new Map<number, number>()
-    const appointmentsByMinute = new Map<number, Array<AgendaAppointmentInput & { minutes: number }>>()
+    const appointmentsByMinute = new Map<number, Placed[]>()
+    const occupiedSlots = new Set<number>()
 
     visibleAppointments.forEach((appointment) => {
-      overlapsByMinute.set(
+      const { slot, span } = slotSpan(
         appointment.minutes,
-        (overlapsByMinute.get(appointment.minutes) ?? 0) + 1
+        appointment.durationMinutes ?? slotMinutes,
+        startMinutes,
+        endMinutes,
+        slotMinutes
       )
+      overlapsByMinute.set(slot, (overlapsByMinute.get(slot) ?? 0) + 1)
 
-      const bucket = appointmentsByMinute.get(appointment.minutes) ?? []
-      bucket.push(appointment)
-      appointmentsByMinute.set(appointment.minutes, bucket)
+      const bucket = appointmentsByMinute.get(slot) ?? []
+      bucket.push({ ...appointment, slot, span })
+      appointmentsByMinute.set(slot, bucket)
+
+      for (let i = 1; i < span; i += 1) occupiedSlots.add(slot + i * slotMinutes)
     })
 
     const selectedDay = startOfDay(date).getTime()
@@ -212,6 +251,11 @@ export function useAgenda({
             patientName: appointment.patientName,
             patientNumber: appointment.patientNumber,
             status: appointment.status,
+            startLabel: formatMinutes(appointment.minutes),
+            endLabel: formatMinutes(appointment.minutes + (appointment.durationMinutes ?? slotMinutes)),
+            spanSlots: appointment.span,
+            leaving: appointment.leaving,
+            justConfirmed: appointment.justConfirmed,
             isPast: false,
             isNow: false,
             isFuture: false,
@@ -221,6 +265,10 @@ export function useAgenda({
         })
         return
       }
+
+      // Covered by a longer appointment that started in an earlier step: its row already
+      // spans this step, so nothing is rendered here (and it is not bookable).
+      if (occupiedSlots.has(slotMinutesValue)) return
 
       baseItems.push({
         type: 'free',

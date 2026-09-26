@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import {
   addDays,
@@ -8,6 +8,8 @@ import {
   endOfMonth,
   endOfWeek,
   format,
+  getISOWeek,
+  isToday,
   startOfDay,
   startOfMonth,
   startOfWeek,
@@ -16,27 +18,33 @@ import {
   subWeeks,
 } from 'date-fns'
 import { fr } from 'date-fns/locale'
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Loader2, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Loader2, Plus, CalendarX } from 'lucide-react'
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { cn } from '../../lib/utils'
 
 import AgendaDayView from '../../components/agenda/AgendaDayView'
 import AppointmentDetailModal from '../../components/agenda/AppointmentDetailModal'
 import AppointmentFormModal from '../../components/forms/AppointmentFormModal'
+import CancelledAppointmentsDrawer from '../../components/agenda/CancelledAppointmentsDrawer'
 import { useAppContext } from '../../context/AppContext'
 import { supabase } from '../../lib/supabase'
+import { useAgendaConfig } from '../../lib/agendaConfig'
 import { cancelAppointment, confirmAppointment, markAppointmentArrived } from '../../lib/appointmentService'
 import WeeklyAgenda from '../../components/agenda/WeeklyAgenda'
 import MonthlyAgenda from '../../components/agenda/MonthlyAgenda'
 
 import type {
   AgendaAppointmentInput,
+  AgendaAppointmentStatus,
   AgendaCalendarAppointmentInput,
 } from '../../components/agenda/useAgenda'
 import type { Appointment, AppointmentStatus, AppointmentType } from '../../types/appointment'
 import type { Rdv } from '../../types'
 
 type DailyRdv = Pick<Rdv, 'id' | 'patient_id' | 'date_rdv' | 'status' | 'notes' | 'created_at'> & {
+  // Only selected once the agenda migration exists (see useAgendaConfig().schemaReady).
+  duree_minutes?: number | null
+  type_consultation_id?: string | null
   patients?: {
     nom?: string | null
     prenom?: string | null
@@ -49,15 +57,15 @@ type AppointmentMeta = {
   confirmationState?: 'PLANIFIE' | 'CONFIRME'
   confirmedAt?: string | null
   confirmedBy?: string | null
+  cancellationReason?: string
+  cancelledAt?: string | null
+  cancelledBy?: string | null
   clinicalContext?: string
   patientName?: string
   phone?: string
   type?: string
 }
 
-const WORKDAY_START = '08:00'
-const WORKDAY_END = '18:00'
-const SLOT_MINUTES = 15
 const META_PREFIX = '__AGENDA_META__'
 
 const formatPatientNumber = (value?: string | null) =>
@@ -113,6 +121,9 @@ const buildAppointmentMeta = (
     confirmationState: current.confirmationState || 'PLANIFIE',
     confirmedAt: current.confirmedAt || null,
     confirmedBy: current.confirmedBy || null,
+    cancellationReason: current.cancellationReason || null,
+    cancelledAt: current.cancelledAt || null,
+    cancelledBy: current.cancelledBy || null,
     clinicalContext: current.clinicalContext || '',
     patientName: current.patientName || '',
     phone: current.phone || '',
@@ -122,20 +133,30 @@ const buildAppointmentMeta = (
 }
 
 const mapAppointmentStatus = (rdv: DailyRdv, meta: AppointmentMeta): AppointmentStatus => {
-  if (rdv.status === 'annule') return 'ANNULE'
-  if (rdv.status === 'absent') return 'ABSENT'
-  if (rdv.status === 'arrive' || rdv.status === 'en_consultation') return 'ARRIVE'
-  if (rdv.status === 'termine' || rdv.status === 'paye' || rdv.status === 'credit') return 'TERMINE'
+  const s = String(rdv.status || '').toLowerCase()
+  if (s === 'annule' || s === 'cancelled') return 'ANNULE'
+  if (s === 'absent' || s === 'no_show') return 'ABSENT'
+  if (s === 'arrive' || s === 'en_consultation') return 'ARRIVE'
+  if (s === 'termine' || s === 'paye' || s === 'credit' || s === 'completed') return 'TERMINE'
+  // rdv.status 'confirme' is the DB's default "scheduled" state for every new RDV, not a real
+  // confirmation — only the explicit confirm action (stored in the notes meta) counts.
   if (meta.confirmationState === 'CONFIRME' || meta.confirmedAt) return 'CONFIRME'
   return 'PLANIFIE'
 }
+
+// Length of the .agenda-leaving exit animation in index.css.
+const AGENDA_LEAVE_MS = 900
+// Length of the .agenda-confirmed animation in index.css.
+const AGENDA_CONFIRM_MS = 1000
 
 const mapAgendaStatus = (rdv: DailyRdv): AgendaAppointmentStatus => {
   const meta = parseAppointmentMeta(rdv.notes)
   return mapAppointmentStatus(rdv, meta)
 }
 
-const mapRdvToAppointment = (rdv: DailyRdv): Appointment => {
+// fallbackDuration: used until the appointment has a real duree_minutes (pre-migration rows
+// were always shown as one grid step).
+const mapRdvToAppointment = (rdv: DailyRdv, fallbackDuration: number): Appointment => {
   const meta = parseAppointmentMeta(rdv.notes)
   const patientName =
     `${rdv.patients?.prenom || ''} ${rdv.patients?.nom || ''}`.trim() ||
@@ -152,7 +173,7 @@ const mapRdvToAppointment = (rdv: DailyRdv): Appointment => {
     age: calculateAge(rdv.patients?.date_naissance),
     date,
     time: formatTimeFromIso(rdv.date_rdv),
-    duration: SLOT_MINUTES,
+    duration: rdv.duree_minutes || fallbackDuration,
     type: ((meta.type || 'Consultation') as AppointmentType),
     status: mapAppointmentStatus(rdv, meta),
     notes: meta.clinicalContext || '',
@@ -160,6 +181,9 @@ const mapRdvToAppointment = (rdv: DailyRdv): Appointment => {
     createdAt: rdv.created_at,
     confirmedAt: meta.confirmedAt || undefined,
     confirmedBy: meta.confirmedBy || undefined,
+    cancellationReason: meta.cancellationReason,
+    cancelledAt: meta.cancelledAt || undefined,
+    cancelledBy: meta.cancelledBy || undefined,
   }
 }
 
@@ -273,6 +297,7 @@ function AgendaPrimaryButton({
 
 const AppointmentsPage: React.FC = () => {
   const { profile, notify, can } = useAppContext()
+  const agenda = useAgendaConfig(profile?.cabinet_id)
   const queryClient = useQueryClient()
   // Agenda opens on the week view; Jour / Mois are one click away.
   const [view, setView] = useState<'day' | 'week' | 'month'>('week')
@@ -281,6 +306,30 @@ const AppointmentsPage: React.FC = () => {
   const [draftSlot, setDraftSlot] = useState<{ date: string; time: string } | null>(null)
   const [editingAppointmentId, setEditingAppointmentId] = useState<string | null>(null)
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null)
+  const [showCancelledDrawer, setShowCancelledDrawer] = useState(false)
+  // Just-cancelled appointments still on screen for their exit animation, with the status they
+  // had before cancelling. `cancelBump` replays the "N RDV annulés" bump when one lands there.
+  const [leavingAppointments, setLeavingAppointments] = useState<Map<string, AgendaAppointmentStatus>>(new Map())
+  const [cancelBump, setCancelBump] = useState(0)
+  const failedCancelsRef = useRef(new Set<string>())
+  // Just-confirmed appointments playing the confirmation animation.
+  const [justConfirmedIds, setJustConfirmedIds] = useState<Set<string>>(new Set())
+  const stopConfirmFlash = (id: string) => {
+    setJustConfirmedIds((current) => {
+      if (!current.has(id)) return current
+      const next = new Set(current)
+      next.delete(id)
+      return next
+    })
+  }
+  const stopLeaving = (id: string) => {
+    setLeavingAppointments((current) => {
+      if (!current.has(id)) return current
+      const next = new Map(current)
+      next.delete(id)
+      return next
+    })
+  }
 
   const handleViewChange = (newView: 'day' | 'week' | 'month') => {
     setIsAnimating(true)
@@ -347,8 +396,8 @@ const AppointmentsPage: React.FC = () => {
     isFetching,
     error,
   } = useQuery({
-    queryKey: ['agenda-range', profile?.cabinet_id, view, rangeStartKey, rangeEndKey],
-    enabled: Boolean(profile?.cabinet_id),
+    queryKey: ['agenda-range', profile?.cabinet_id, view, rangeStartKey, rangeEndKey, agenda.schemaReady],
+    enabled: Boolean(profile?.cabinet_id) && !agenda.isLoading,
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data, error: queryError } = await supabase
@@ -360,11 +409,11 @@ const AppointmentsPage: React.FC = () => {
           status,
           notes,
           created_at,
+          ${agenda.schemaReady ? 'duree_minutes, type_consultation_id,' : ''}
           patients (nom, prenom, telephone)
         `)
         .eq('cabinet_id', profile!.cabinet_id)
-        .gte('date_rdv', `${rangeStartKey}T00:00:00`)
-        .lte('date_rdv', `${rangeEndKey}T23:59:59`)
+        .or(`and(date_rdv.gte.${rangeStartKey}T00:00:00,date_rdv.lte.${rangeEndKey}T23:59:59),and(appointment_day.gte.${rangeStartKey},appointment_day.lte.${rangeEndKey})`)
         .order('date_rdv', { ascending: true })
 
       if (queryError) {
@@ -382,16 +431,20 @@ const AppointmentsPage: React.FC = () => {
 
   const agendaAppointments = useMemo<AgendaCalendarAppointmentInput[]>(() => {
     return dailyRdvs
-      .filter((rdv) => mapAgendaStatus(rdv) !== 'ANNULE')
+      .filter((rdv) => mapAgendaStatus(rdv) !== 'ANNULE' || leavingAppointments.has(rdv.id))
       .map((rdv) => ({
         id: rdv.id,
         date: format(new Date(rdv.date_rdv), 'yyyy-MM-dd'),
         time: formatTimeFromIso(rdv.date_rdv),
         patientName: `${rdv.patients?.prenom || ''} ${rdv.patients?.nom || ''}`.trim() || parseAppointmentMeta(rdv.notes).patientName || 'Patient inconnu',
         patientNumber: formatPatientNumber(rdv.patient_id),
-        status: mapAgendaStatus(rdv),
+        // A leaving block keeps its pre-cancel colours while it animates out.
+        status: leavingAppointments.get(rdv.id) ?? mapAgendaStatus(rdv),
+        durationMinutes: rdv.duree_minutes || agenda.settings.pasMinutes,
+        leaving: leavingAppointments.has(rdv.id),
+        justConfirmed: justConfirmedIds.has(rdv.id),
       }))
-  }, [dailyRdvs])
+  }, [dailyRdvs, agenda.settings.pasMinutes, leavingAppointments, justConfirmedIds])
 
   const dayAppointments = useMemo<AgendaAppointmentInput[]>(() => {
     return agendaAppointments
@@ -402,22 +455,54 @@ const AppointmentsPage: React.FC = () => {
       }))
   }, [agendaAppointments, selectedDayKey])
 
+  const cancelledAppointments = useMemo(() => {
+    // A leaving appointment joins the cancelled list once its exit animation is done.
+    return dailyRdvs
+      .filter((rdv) => mapAgendaStatus(rdv) === 'ANNULE' && !leavingAppointments.has(rdv.id))
+      .map((rdv) => mapRdvToAppointment(rdv, agenda.settings.pasMinutes))
+  }, [dailyRdvs, agenda.settings.pasMinutes, leavingAppointments])
+
+  const currentPeriodCancelledAppointments = useMemo(() => {
+    if (view === 'day') {
+      return cancelledAppointments.filter((a) => a.date === selectedDayKey)
+    }
+    return cancelledAppointments
+  }, [cancelledAppointments, view, selectedDayKey])
+
+  // Cancelled appointments whose slot has since been booked by an active appointment — the
+  // same half-open overlap rule as rdv_no_overlap_per_cabinet, checked on the loaded range.
+  const takenSlotIds = useMemo(() => {
+    const active = dailyRdvs
+      .filter((rdv) => { const s = mapAgendaStatus(rdv); return s !== 'ANNULE' && s !== 'ABSENT' && s !== 'TERMINE' })
+      .map((rdv) => {
+        const start = new Date(rdv.date_rdv).getTime()
+        return { start, end: start + (rdv.duree_minutes || agenda.settings.pasMinutes) * 60000 }
+      })
+    const taken = new Set<string>()
+    for (const appt of currentPeriodCancelledAppointments) {
+      const start = new Date(`${appt.date}T${appt.time}:00`).getTime()
+      const end = start + appt.duration * 60000
+      if (active.some((a) => a.start < end && a.end > start)) taken.add(appt.id)
+    }
+    return taken
+  }, [dailyRdvs, currentPeriodCancelledAppointments, agenda.settings.pasMinutes])
+
   const stats = useMemo(() => {
-    const confirmed = agendaAppointments.filter((a) => a.status === 'CONFIRME').length
-    const pending = agendaAppointments.filter((a) => a.status === 'PLANIFIE' || a.status === 'A_CONFIRMER').length
-    const cancelled = agendaAppointments.filter((a) => a.status === 'ANNULE').length
+    const confirmed = dailyRdvs.filter((a) => mapAgendaStatus(a) === 'CONFIRME').length
+    const pending = dailyRdvs.filter((a) => mapAgendaStatus(a) === 'PLANIFIE' || mapAgendaStatus(a) === 'A_CONFIRMER').length
+    const cancelled = dailyRdvs.filter((a) => mapAgendaStatus(a) === 'ANNULE').length
     return {
-      total: agendaAppointments.length,
+      total: dailyRdvs.length,
       confirmed,
       pending,
-      cancelled
+      cancelled,
     }
-  }, [agendaAppointments])
+  }, [dailyRdvs])
 
   const selectedAppointment = useMemo(() => {
     const match = dailyRdvs.find((rdv) => rdv.id === selectedAppointmentId)
-    return match ? mapRdvToAppointment(match) : null
-  }, [dailyRdvs, selectedAppointmentId])
+    return match ? mapRdvToAppointment(match, agenda.settings.pasMinutes) : null
+  }, [dailyRdvs, selectedAppointmentId, agenda.settings.pasMinutes])
 
   const editingAppointment = useMemo(() => {
     return dailyRdvs.find((rdv) => rdv.id === editingAppointmentId) ?? null
@@ -429,15 +514,56 @@ const AppointmentsPage: React.FC = () => {
     })
   }
 
+  const handleReschedule = async (appointment: Appointment) => {
+    let patient = null
+    if (appointment.patientId) {
+      const { data } = await supabase.from('patients').select('*').eq('id', appointment.patientId).single()
+      if (data) patient = data
+    }
+    if (!patient) {
+      const nameParts = (appointment.patientName || '').trim().split(' ')
+      patient = {
+        id: appointment.patientId,
+        nom: nameParts.slice(1).join(' ') || nameParts[0] || 'Patient',
+        prenom: nameParts.length > 1 ? nameParts[0] : '',
+        telephone: appointment.phone && appointment.phone !== '-' ? appointment.phone : '',
+      }
+    }
+    setPatientForBooking(patient)
+    // Propose the cancelled slot itself while it is still ahead. Defaulting to "today 09:00"
+    // collided with the patient's own appointment today (rdv_one_active_per_patient_per_day).
+    const originalStart = new Date(`${appointment.date}T${appointment.time}:00`)
+    setDraftSlot(originalStart > new Date()
+      ? { date: appointment.date, time: appointment.time }
+      : { date: format(new Date(), 'yyyy-MM-dd'), time: '09:00' })
+  }
+
   const handleAppointmentStatusUpdate = async (appointment: Appointment, status: AppointmentStatus, metadata?: any) => {
     const rdv = dailyRdvs.find((item) => item.id === appointment.id)
     if (!rdv) return
 
-    const queryKey = ['agenda-range', profile?.cabinet_id, view, rangeStartKey, rangeEndKey]
+    const queryKey = ['agenda-range', profile?.cabinet_id, view, rangeStartKey, rangeEndKey, agenda.schemaReady]
     const previousData = queryClient.getQueryData(queryKey)
-    const statusUpdatedAt = new Date().toISOString()
 
-    // OPTIMISTIC UPDATE
+    if (status === 'ANNULE') {
+      // The block stays in its slot for its exit animation (rose pulse, strike, slow fade), then
+      // moves to the cancelled list and the "RDV annulés" link bumps.
+      const priorStatus = mapAgendaStatus(rdv)
+      failedCancelsRef.current.delete(rdv.id)
+      setLeavingAppointments((current) => new Map(current).set(rdv.id, priorStatus))
+      window.setTimeout(() => {
+        stopLeaving(rdv.id)
+        if (!failedCancelsRef.current.delete(rdv.id)) setCancelBump((n) => n + 1)
+      }, AGENDA_LEAVE_MS)
+    }
+
+    if (status === 'CONFIRME') {
+      // The block turns "Confirmé" right away (optimistic); this plays the validation flash on it.
+      setJustConfirmedIds((current) => new Set(current).add(rdv.id))
+      window.setTimeout(() => stopConfirmFlash(rdv.id), AGENDA_CONFIRM_MS)
+    }
+
+    // OPTIMISTIC UPDATE: update exact cache key
     queryClient.setQueryData(queryKey, (old: DailyRdv[] | undefined) => {
       if (!old) return old
       return old.map((item) => {
@@ -457,12 +583,14 @@ const AppointmentsPage: React.FC = () => {
             newNotes = buildAppointmentMeta(item.notes, {
               cancellationReason: metadata.reason,
               cancelledAt: new Date().toISOString(),
+              cancelledBy: profile?.id,
               phone: appointment.phone,
               patientName: appointment.patientName,
               type: appointment.type,
             })
           }
-          return { ...item, status: status.toLowerCase(), notes: newNotes }
+          const dbStatus = status === 'ANNULE' ? 'cancelled' : status === 'CONFIRME' ? 'confirme' : status.toLowerCase()
+          return { ...item, status: dbStatus, notes: newNotes }
         }
         return item
       })
@@ -480,17 +608,22 @@ const AppointmentsPage: React.FC = () => {
             patientName: appointment.patientName,
             type: appointment.type,
           })
+          try {
+            // Update metadata notes BEFORE status change so RLS restrictive policy on non-cancelled rows passes
+            await supabase
+              .from('rdv')
+              .update({ notes: newNotes })
+              .eq('id', appointment.id)
+          } catch (e) {
+            console.warn('Could not update metadata notes before cancelling:', e)
+          }
         }
 
         await cancelAppointment(appointment.id, metadata?.reason || null)
-
-        if (metadata?.reason) {
-          const { error: notesError } = await supabase
-            .from('rdv')
-            .update({ notes: newNotes })
-            .eq('id', appointment.id)
-          if (notesError) throw notesError
-        }
+        notify({
+          title: 'Rendez-vous annulé',
+          description: `Le créneau a été libéré et le rendez-vous de ${appointment.patientName} a été déplacé dans les rendez-vous annulés.`,
+        })
       } else if (status === 'CONFIRME') {
         const now = new Date().toISOString()
         const newNotes = buildAppointmentMeta(rdv.notes, {
@@ -509,6 +642,11 @@ const AppointmentsPage: React.FC = () => {
           .update({ notes: newNotes })
           .eq('id', appointment.id)
         if (notesError) throw notesError
+
+        notify({
+          title: 'Rendez-vous confirmé',
+          description: `Le rendez-vous de ${appointment.patientName} est confirmé.`,
+        })
       } else if (status === 'ARRIVE') {
         // Was a raw, ungated `rdv.update({status:'arrive'})` — any same-
         // clinic authenticated user could call this directly regardless of
@@ -516,6 +654,10 @@ const AppointmentsPage: React.FC = () => {
         // (appointments.mark_arrived), matching every other status change
         // on this page.
         await markAppointmentArrived(appointment.id)
+        notify({
+          title: 'Patient arrivé',
+          description: `${appointment.patientName} a été marqué comme arrivé.`,
+        })
       }
 
       await refreshDay()
@@ -523,6 +665,9 @@ const AppointmentsPage: React.FC = () => {
       const errorMsg = error?.message || (typeof error === 'object' ? JSON.stringify(error) : String(error))
       console.error('Status update error:', errorMsg)
       // ROLLBACK
+      if (status === 'ANNULE') failedCancelsRef.current.add(appointment.id)
+      stopLeaving(appointment.id)
+      stopConfirmFlash(appointment.id)
       queryClient.setQueryData(queryKey, previousData)
       notify({
         title: 'Erreur',
@@ -569,6 +714,30 @@ const AppointmentsPage: React.FC = () => {
     return label.charAt(0).toUpperCase() + label.slice(1).toLowerCase()
   }, [selectedDate, view])
 
+  // Header: a short context line ("Semaine 39", "Aujourd'hui · jeudi", "2026") over a compact
+  // one-line title ("21 – 27 sept. 2026", "24 septembre", "Septembre").
+  const headerTitle = useMemo(() => {
+    const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+    if (view === 'week') {
+      const start = startOfWeek(selectedDate, { weekStartsOn: 1 })
+      const end = endOfWeek(selectedDate, { weekStartsOn: 1 })
+      const title = start.getFullYear() !== end.getFullYear()
+        ? `${format(start, 'd MMM yyyy', { locale: fr })} – ${format(end, 'd MMM yyyy', { locale: fr })}`
+        : start.getMonth() !== end.getMonth()
+          ? `${format(start, 'd MMM', { locale: fr })} – ${format(end, 'd MMM yyyy', { locale: fr })}`
+          : `${format(start, 'd')} – ${format(end, 'd MMM yyyy', { locale: fr })}`
+      return { overline: `Semaine ${getISOWeek(selectedDate)}`, title }
+    }
+    if (view === 'month') {
+      return { overline: format(selectedDate, 'yyyy'), title: cap(format(selectedDate, 'MMMM', { locale: fr })) }
+    }
+    const weekday = format(selectedDate, 'EEEE', { locale: fr })
+    return {
+      overline: isToday(selectedDate) ? `Aujourd'hui · ${weekday}` : weekday,
+      title: format(selectedDate, 'd MMMM yyyy', { locale: fr }),
+    }
+  }, [selectedDate, view])
+
   if (!profile?.cabinet_id) {
     return (
       <div className="w-full px-6">
@@ -589,10 +758,34 @@ const AppointmentsPage: React.FC = () => {
           <div className="flex items-center justify-between">
             {/* Left: Date section */}
             <div className="flex flex-1 items-center gap-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600 shadow-inner">
+              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 ring-1 ring-inset ring-blue-100">
                 <CalendarIcon size={20} />
               </div>
-              <h1 className={cn("text-lg font-black text-slate-900 leading-none", view !== 'day' && "capitalize")}>{periodLabel}</h1>
+              <div className="min-w-0">
+                {/* Context line: which week / day / year */}
+                <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                  {headerTitle.overline}
+                </span>
+                <h1 className="mt-0.5 whitespace-nowrap text-xl font-black leading-tight tracking-tight text-slate-900">
+                  {headerTitle.title}
+                </h1>
+                {currentPeriodCancelledAppointments.length > 0 && (
+                  <button
+                    // Re-mounted on each cancellation so the bump animation replays.
+                    key={cancelBump}
+                    type="button"
+                    onClick={() => setShowCancelledDrawer(true)}
+                    title="Voir les rendez-vous annulés pour cette période"
+                    className={cn(
+                      "-mx-1.5 mt-0.5 inline-flex w-fit items-center gap-1 rounded-md px-1.5 text-xs font-bold text-rose-600 hover:text-rose-800 hover:underline underline-offset-2 transition-colors",
+                      cancelBump > 0 && "cancelled-count-bump"
+                    )}
+                  >
+                    <CalendarX size={13} />
+                    {currentPeriodCancelledAppointments.length} RDV annulé{currentPeriodCancelledAppointments.length > 1 ? 's' : ''}
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Center: View toggles & Date navigation */}
@@ -642,7 +835,7 @@ const AppointmentsPage: React.FC = () => {
             </div>
 
             {/* Right: Action button */}
-            <div className="flex flex-1 justify-end">
+            <div className="flex flex-1 items-center justify-end gap-3">
               {can('appointments.create') && (
                 <AgendaPrimaryButton onClick={() => setDraftSlot({ date: selectedDayKey, time: '09:00' })}>
                   <Plus size={18} />
@@ -666,9 +859,9 @@ const AppointmentsPage: React.FC = () => {
             <AgendaDayView
               date={selectedDate}
               appointments={dayAppointments}
-              startTime={WORKDAY_START}
-              endTime={WORKDAY_END}
-              slotMinutes={SLOT_MINUTES}
+              startTime={agenda.settings.heureDebut}
+              endTime={agenda.settings.heureFin}
+              slotMinutes={agenda.settings.pasMinutes}
               onSelectAppointment={setSelectedAppointmentId}
               onCreateAt={can('appointments.create') ? (time) => setDraftSlot({ date: selectedDayKey, time }) : undefined}
             />
@@ -678,6 +871,9 @@ const AppointmentsPage: React.FC = () => {
             <WeeklyAgenda
               selectedDate={selectedDate}
               appointments={agendaAppointments}
+              startTime={agenda.settings.heureDebut}
+              endTime={agenda.settings.heureFin}
+              slotMinutes={agenda.settings.pasMinutes}
               onSelectAppointment={setSelectedAppointmentId}
               onDayClick={(date) => {
                 setSelectedDate(date)
@@ -729,6 +925,16 @@ const AppointmentsPage: React.FC = () => {
           }}
         />
 
+        <CancelledAppointmentsDrawer
+          isOpen={showCancelledDrawer}
+          onClose={() => setShowCancelledDrawer(false)}
+          appointments={currentPeriodCancelledAppointments}
+          takenSlotIds={takenSlotIds}
+          onSelectAppointment={setSelectedAppointmentId}
+          onReschedule={can('appointments.create') ? handleReschedule : undefined}
+          periodLabel={periodLabel}
+        />
+
         <AppointmentDetailModal
           isOpen={Boolean(selectedAppointment)}
           appointment={selectedAppointment}
@@ -737,6 +943,7 @@ const AppointmentsPage: React.FC = () => {
             setSelectedAppointmentId(null)
             setEditingAppointmentId(appointment.id)
           }}
+          onReschedule={can('appointments.create') ? handleReschedule : undefined}
           onUpdateStatus={handleAppointmentStatusUpdate}
         />
       </div>

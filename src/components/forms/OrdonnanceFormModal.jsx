@@ -1,246 +1,226 @@
-import { useEffect, useState } from 'react'
-import { Loader2, Plus, Trash2 } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { AlertTriangle, Loader2, Plus, Settings2, Trash2 } from 'lucide-react'
 import Modal from '../common/Modal'
+import Button from '../common/Button'
+import IconButton from '../common/IconButton'
 import { useAppContext } from '../../context/AppContext'
-import { useCabinetId } from '../../hooks/useCabinetId'
-import { getPatients, createConsultation, createDocument } from '../../lib/api'
 import { supabase } from '../../lib/supabase'
+import { createOrdonnance, emitOrdonnance } from '../../lib/api'
+import { MedicamentField, PosologieField, PresetChips, allergyMatch, allergyTokens } from '../consultation/PlanBlocks'
+import { DUREE_PRESETS } from '../../data/medicationSuggestions'
+import { readMedicationUsage, recordMedicationUse, usageScope } from '../../lib/medicationUsage'
+import { formatDoctorLabel, stripDoctorTitle } from '../../lib/professionalName'
+import { buildLetterhead, clinicToday, letterheadGaps } from '../../lib/letterhead'
 
-function OrdonnanceFormModal({ open, onClose, onSuccess }) {
-  const { notify, profile, cabinet } = useAppContext()
-  const { cabinetId } = useCabinetId()
+const isImageDataUrl = (v) => typeof v === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(v)
+const inputCls = 'h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-[13.5px] text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300'
+const newRow = () => ({ id: crypto.randomUUID?.() || String(Math.random()), nom: '', posologie: '', duree: '' })
+const blankForm = (doctorId) => ({ doctorId, date: clinicToday(), medicaments: [newRow()], instructions: '', signe: true })
 
-  const { data: patients = [] } = useQuery({
-    queryKey: ['patients'],
-    queryFn: getPatients,
-    enabled: open,
-  })
+// The letterhead exactly as it will be printed. Read-only: it is configured once in
+// Paramètres → Profil & Cabinet, never retyped per ordonnance.
+function LetterheadPreview({ header, onEdit }) {
+  const gaps = letterheadGaps(header)
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/60">
+      <div className="flex items-start gap-4 px-4 py-3.5">
+        {isImageDataUrl(header.logo) && <img src={header.logo} alt="" className="h-12 w-auto max-w-[88px] shrink-0 object-contain" />}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[14px] font-bold uppercase tracking-wide text-slate-900">{header.medecin ? formatDoctorLabel(header.medecin) : 'Médecin prescripteur'}</p>
+          <p className="text-[12.5px] text-slate-600">{header.specialite}</p>
+        </div>
+        <div className="hidden min-w-0 max-w-[45%] text-right text-[12px] leading-snug text-slate-600 sm:block">
+          {header.adresse && <p className="truncate">{header.adresse}</p>}
+          {header.telephone && <p className="font-semibold">Tél : {header.telephone}</p>}
+          {header.ville && <p>{header.ville}</p>}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-2">
+        {gaps.length > 0
+          ? <p className="flex items-center gap-1.5 text-[12px] font-medium text-amber-700"><AlertTriangle className="h-3.5 w-3.5" /> À compléter : {gaps.join(', ')}</p>
+          : <p className="text-[12px] text-slate-500">En-tête issu de vos paramètres</p>}
+        <Button variant="link" onClick={onEdit} className="!text-[12.5px]"><Settings2 className="mr-1 inline h-3.5 w-3.5" />Modifier dans Paramètres</Button>
+      </div>
+    </div>
+  )
+}
 
-  const [form, setForm] = useState({
-    patient_id: '',
-    date: new Date().toISOString().split('T')[0],
-    ville: '',
-    medicaments: [{ id: Date.now().toString(), nom: '', posologie: '', duree: '' }],
-    instructions: '',
-    signe: true,
-    nomMedecin: '',
-    specialite: '',
-    adresse: '',
-    telephone: '',
-  })
-  
-  const [loading, setLoading] = useState(false)
+// Creation-only: opened from a patient's dossier, so the patient is already known (no picker).
+// Secretaries can save a draft; only a doctor/admin can also emit it (the legal, signed document).
+// Keep it mounted and drive it with `open`, so Modal can animate both the opening and the closing.
+function OrdonnanceFormModal({ open, onClose, onSuccess, patient, patientId, encounterId }) {
+  const { notify, profile, user, cabinet, doctors, canonicalRole } = useAppContext()
+  const navigate = useNavigate()
+  const isDoctor = canonicalRole === 'doctor'
+  const canEmit = isDoctor || canonicalRole === 'admin'
+  const scope = usageScope(profile?.clinic_id || profile?.cabinet_id, profile?.id)
+  const usage = useMemo(() => readMedicationUsage(scope), [scope])
+  const tokens = useMemo(() => allergyTokens(patient?.allergies), [patient?.allergies])
+
+  const [form, setForm] = useState(() => blankForm(''))
+  const [pending, setPending] = useState(null) // 'draft' | 'emit' | null
   const [error, setError] = useState(null)
+  const [pickedSpecialite, setPickedSpecialite] = useState(null)
 
-  useEffect(() => {
-    if (open) {
-      setForm({
-        patient_id: '',
-        date: new Date().toISOString().split('T')[0],
-        ville: cabinet?.adresse?.split(',')[0] || cabinet?.ville || '',
-        medicaments: [{ id: Date.now().toString(), nom: '', posologie: '', duree: '' }],
-        instructions: '',
-        signe: true,
-        nomMedecin: profile?.nom_complet || '',
-        specialite: profile?.specialite || 'Médecin généraliste',
-        adresse: cabinet?.adresse || '',
-        telephone: cabinet?.telephone || '',
-      })
-      setError(null)
-    }
-  }, [open, profile, cabinet])
-
-  const handleMedsChange = (id, key, value) => {
-    setForm(c => ({
-      ...c,
-      medicaments: c.medicaments.map(m => m.id === id ? { ...m, [key]: value } : m)
-    }))
-  }
-
-  const addMed = () => {
-    setForm(c => ({
-      ...c,
-      medicaments: [...c.medicaments, { id: Date.now().toString(), nom: '', posologie: '', duree: '' }]
-    }))
-  }
-
-  const removeMed = (id) => {
-    setForm(c => ({
-      ...c,
-      medicaments: c.medicaments.length > 1 ? c.medicaments.filter(m => m.id !== id) : c.medicaments
-    }))
-  }
-
-  const handleSubmit = async (event) => {
-    event.preventDefault()
+  // Reset before paint on every opening, so the entering animation never shows the last form.
+  useLayoutEffect(() => {
+    if (!open) return
+    setForm(blankForm(isDoctor ? profile?.id || '' : ''))
     setError(null)
+    setPending(null)
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    if (!form.patient_id) { setError('Sélectionnez un patient.'); return }
-    if (!form.medicaments[0].nom.trim()) { setError('Au moins un médicament est requis.'); return }
+  const prescriber = isDoctor ? profile : doctors?.find((d) => d.id === form.doctorId)
 
-    if (!cabinetId) {
-      setError('Session expirée — reconnectez-vous.')
-      return
-    }
+  // A secretary prescribing for a colleague: that doctor's own specialty (the doctors list
+  // doesn't carry it). Tolerant: an older database without the column just uses the default.
+  useEffect(() => {
+    setPickedSpecialite(null)
+    if (isDoctor || !form.doctorId) return undefined
+    let live = true
+    supabase.from('profiles').select('specialite').eq('id', form.doctorId).maybeSingle()
+      .then(({ data }) => { if (live) setPickedSpecialite(data?.specialite || null) })
+    return () => { live = false }
+  }, [isDoctor, form.doctorId])
 
-    setLoading(true)
+  const header = buildLetterhead({ doctor: pickedSpecialite ? { ...prescriber, specialite: pickedSpecialite } : prescriber, user, cabinet })
+
+  const setMed = (id, key, value) => setForm((c) => ({ ...c, medicaments: c.medicaments.map((m) => (m.id === id ? { ...m, [key]: value } : m)) }))
+  const pickMedication = (id, med) => {
+    recordMedicationUse(scope, med.nom)
+    setForm((c) => ({ ...c, medicaments: c.medicaments.map((m) => (m.id === id ? { ...m, nom: med.nom, duree: m.duree.trim() || med.duree } : m)) }))
+  }
+  const addMed = () => setForm((c) => ({ ...c, medicaments: [...c.medicaments, newRow()] }))
+  const removeMed = (id) => setForm((c) => ({ ...c, medicaments: c.medicaments.length > 1 ? c.medicaments.filter((m) => m.id !== id) : [newRow()] }))
+
+  const goToSettings = () => { onClose(); navigate('/parametres') }
+
+  const submit = async (emit) => {
+    setError(null)
+    if (!form.doctorId) { setError('Sélectionnez le médecin prescripteur.'); return }
+    const incomplete = form.medicaments.findIndex((m) => !m.nom.trim() && (m.posologie.trim() || m.duree.trim()))
+    if (incomplete >= 0) { setError(`Ligne ${incomplete + 1} : le nom du médicament est manquant.`); return }
+    const lignes = form.medicaments.filter((m) => m.nom.trim()).map(({ nom, posologie, duree }) => ({ medicament: nom.trim(), posologie: posologie.trim(), duree: duree.trim() }))
+    if (!lignes.length) { setError('Ajoutez au moins un médicament.'); return }
+    if (!form.date) { setError('La date de prescription est requise.'); return }
+
+    setPending(emit ? 'emit' : 'draft')
     try {
-      const selectedPatient = patients.find(p => p.id === form.patient_id)
-      
-      const newConsultation = await createConsultation({
-        cabinet_id: cabinetId,
-        patient_id: form.patient_id,
-        montant: 0,
-        statut: 'paye',
-        date_consult: form.date,
-        notes: JSON.stringify({
-          type: 'ordonnance',
-          medicaments: form.medicaments.filter(m => m.nom.trim()),
-          instructions: form.instructions,
-          ville: form.ville,
+      const id = await createOrdonnance({
+        patientId,
+        doctorId: form.doctorId,
+        encounterId: encounterId ?? null,
+        datePrescription: form.date,
+        // Snapshot of the letterhead at prescription time: a later change in Paramètres
+        // must not alter an ordonnance that was already issued.
+        entete: {
+          nomMedecin: header.medecin,
+          specialite: header.specialite,
+          adresse: header.adresse,
+          telephone: header.telephone,
+          ville: header.ville,
           signe: form.signe,
-          medecin: form.nomMedecin,
-          specialite: form.specialite,
-          adresse: form.adresse,
-          telephone: form.telephone
-        })
+        },
+        instructions: form.instructions.trim(),
+        lignes,
       })
-
-      await createDocument({
-        cabinet_id: cabinetId,
-        patient_id: form.patient_id,
-        consultation_id: newConsultation.id,
-        type_document: 'ordonnance',
-        nom_fichier: `ordonnance_${selectedPatient.nom}_${selectedPatient.prenom}_${form.date}.pdf`.replace(/\s+/g, '_'),
-        storage_path: 'pending' // Usually updated when PDF is actually generated in storage
-      })
-
-      // Generate PDF in background (optional, depends on if Edge function is deployed)
-      try {
-        supabase.functions.invoke('generate-pdf', {
-          body: {
-            type_document: 'ordonnance',
-            patient_id: form.patient_id,
-            cabinet_id: cabinetId,
-            consultation_id: newConsultation.id
-          }
-        }).catch(console.warn) // Fire and forget
-      } catch (e) {
-        console.warn('PDF gen function failed', e)
-      }
-
-      notify({ title: 'Succès', description: 'Ordonnance créée avec succès.' })
+      if (emit) await emitOrdonnance(id)
+      notify({ title: emit ? 'Ordonnance émise' : 'Brouillon enregistré', description: emit ? 'L’ordonnance est signée et prête à imprimer.' : 'Vous pourrez l’émettre depuis le dossier.', tone: 'success' })
       onSuccess?.()
       onClose()
     } catch (err) {
       console.error('Ordonnance submit error:', err)
-      setError(err.message || "Erreur lors de l'enregistrement de l'ordonnance")
+      setError(err.message || "Erreur lors de l'enregistrement de l'ordonnance.")
     } finally {
-      setLoading(false)
+      setPending(null)
     }
   }
 
+  const surname = stripDoctorTitle(header.medecin).split(' ').pop()
+  const footer = (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <Button variant="secondary" onClick={onClose} disabled={!!pending}>Annuler</Button>
+      <Button variant="secondary" onClick={() => submit(false)} disabled={!!pending}>
+        {pending === 'draft' ? <><Loader2 className="h-4 w-4 animate-spin" /> Enregistrement…</> : 'Enregistrer en brouillon'}
+      </Button>
+      {canEmit && (
+        <Button variant="accent" onClick={() => submit(true)} disabled={!!pending}>
+          {pending === 'emit' ? <><Loader2 className="h-4 w-4 animate-spin" /> Émission…</> : "Émettre l'ordonnance"}
+        </Button>
+      )}
+    </div>
+  )
+
   return (
-    <Modal open={open} onClose={onClose} title="Nouvelle ordonnance" description="Saisissez les médicaments et personnalisez l'en-tête." width="max-w-4xl">
-      <form onSubmit={handleSubmit} className="space-y-6">
-        
-        {/* Section 1: En-tête */}
-        <div className="rounded-[24px] bg-slate-50 p-5 ring-1 ring-slate-100">
-          <p className="mb-4 text-base font-semibold text-slate-800">En-tête de l'ordonnance</p>
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-600">Nom du médecin</span>
-              <input value={form.nomMedecin} onChange={(e) => setForm(c => ({...c, nomMedecin: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-600">Spécialité</span>
-              <input value={form.specialite} onChange={(e) => setForm(c => ({...c, specialite: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-600">Adresse du cabinet</span>
-              <input value={form.adresse} onChange={(e) => setForm(c => ({...c, adresse: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-600">Téléphone</span>
-              <input value={form.telephone} onChange={(e) => setForm(c => ({...c, telephone: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" />
-            </label>
-          </div>
-        </div>
+    <Modal open={open} onClose={pending ? () => {} : onClose} title="Nouvelle ordonnance"
+      description={patient ? `Pour ${`${patient.prenom || ''} ${patient.nom || ''}`.trim()}` : undefined} width="max-w-3xl" footer={footer}>
+      <div className="space-y-5 py-1">
+        <LetterheadPreview header={header} onEdit={goToSettings} />
 
-        {/* Section 2: Patient & Info */}
-        <div className="grid gap-4 md:grid-cols-3">
-          <label className="block md:col-span-2">
-            <span className="mb-2 block text-base font-medium text-slate-700">Patient *</span>
-            <select value={form.patient_id} onChange={(e) => setForm(c => ({...c, patient_id: e.target.value}))} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-blue-300">
-              <option value="">— Rechercher un patient —</option>
-              {patients.map(p => (
-                <option key={p.id} value={p.id}>{p.prenom} {p.nom} {p.telephone ? `(${p.telephone})` : ''}</option>
-              ))}
-            </select>
+        <div className={`grid gap-4 ${isDoctor ? 'sm:grid-cols-[220px]' : 'sm:grid-cols-2'}`}>
+          {!isDoctor && (
+            <label className="block">
+              <span className="mb-1 block text-[12px] font-semibold text-slate-700">Médecin prescripteur *</span>
+              <select value={form.doctorId} onChange={(e) => setForm((c) => ({ ...c, doctorId: e.target.value }))} className={inputCls}>
+                <option value="">— Sélectionner —</option>
+                {(doctors || []).map((d) => <option key={d.id} value={d.id}>{formatDoctorLabel(d.nom_complet)}</option>)}
+              </select>
+            </label>
+          )}
+          <label className="block">
+            <span className="mb-1 block text-[12px] font-semibold text-slate-700">Date de prescription</span>
+            <input type="date" value={form.date} max={clinicToday()} onChange={(e) => setForm((c) => ({ ...c, date: e.target.value }))} className={inputCls} />
           </label>
-          <div className="grid grid-cols-2 gap-4">
-            <label className="block">
-               <span className="mb-2 block text-base font-medium text-slate-700">Date</span>
-               <input type="date" value={form.date} onChange={(e) => setForm(c => ({...c, date: e.target.value}))} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none focus:border-blue-300" />
-            </label>
-            <label className="block">
-               <span className="mb-2 block text-base font-medium text-slate-700">Ville</span>
-               <input type="text" value={form.ville} onChange={(e) => setForm(c => ({...c, ville: e.target.value}))} placeholder="Ville" className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none focus:border-blue-300" />
-            </label>
-          </div>
         </div>
 
-        {/* Section 3: Médicaments */}
-        <div className="space-y-3">
-          <span className="block text-base font-medium text-slate-700">Médicaments (Rx)</span>
-          {form.medicaments.map((med, index) => (
-            <div key={med.id} className="flex gap-2 items-start">
-              <div className="pt-3 font-semibold text-slate-400 w-6 text-center">{index + 1}.</div>
-              <input value={med.nom} onChange={e => handleMedsChange(med.id, 'nom', e.target.value)} placeholder="Nom du médicament (ex: Paracétamol 1g)" className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-blue-300" />
-              <input value={med.posologie} onChange={e => handleMedsChange(med.id, 'posologie', e.target.value)} placeholder="Posologie (ex: 1 cp 3x/j)" className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-blue-300" />
-              <input value={med.duree} onChange={e => handleMedsChange(med.id, 'duree', e.target.value)} placeholder="Durée (ex: 7 jours)" className="w-32 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-blue-300" />
-              <button type="button" onClick={() => removeMed(med.id)} className="shrink-0 rounded-2xl border border-slate-200 bg-white p-3 text-slate-400 hover:text-red-500 hover:border-red-200 transition">
-                <Trash2 className="h-5 w-5" />
-              </button>
-            </div>
-          ))}
-          <button type="button" onClick={addMed} className="interactive ml-8 flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700">
+        <div>
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[13px] font-semibold text-slate-800">Médicaments <span className="font-serif italic text-slate-400">Rx</span></span>
+            <span className="text-[12px] text-slate-400">{form.medicaments.filter((m) => m.nom.trim()).length} / 30</span>
+          </div>
+          <div className="space-y-2.5">
+            {form.medicaments.map((med, index) => {
+              const hit = allergyMatch(med.nom, tokens)
+              return (
+                <div key={med.id}>
+                  <div className="flex items-start gap-2">
+                    <span className="w-5 shrink-0 pt-2.5 text-center text-[12px] font-bold text-slate-400">{index + 1}.</span>
+                    <div className="grid min-w-0 flex-1 grid-cols-1 gap-2 sm:grid-cols-[2fr_2fr_1fr]">
+                      <MedicamentField value={med.nom} onChange={(v) => setMed(med.id, 'nom', v)} onPick={(m) => pickMedication(med.id, m)} usage={usage} />
+                      <PosologieField value={med.posologie} onChange={(v) => setMed(med.id, 'posologie', v)} />
+                      <div>
+                        <input value={med.duree} onChange={(e) => setMed(med.id, 'duree', e.target.value)} placeholder="Durée" aria-label={`Durée ${index + 1}`} className={inputCls} />
+                        {!med.duree.trim() && med.nom.trim() && <PresetChips options={DUREE_PRESETS.slice(0, 4)} onPick={(v) => setMed(med.id, 'duree', v)} />}
+                      </div>
+                    </div>
+                    <IconButton size="lg" label={`Retirer le médicament ${index + 1}`} className="hover:!text-red-600" onClick={() => removeMed(med.id)}><Trash2 className="h-4 w-4" /></IconButton>
+                  </div>
+                  {hit && <p role="alert" className="ml-7 mt-1.5 flex items-center gap-1.5 text-[12.5px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> Allergie déclarée : « {hit} ». Vérifiez avant de prescrire.</p>}
+                </div>
+              )
+            })}
+          </div>
+          <Button variant="ghost" size="sm" onClick={addMed} disabled={form.medicaments.length >= 30} className="ml-5 mt-2 !text-blue-600 hover:!bg-blue-50">
             <Plus className="h-4 w-4" /> Ajouter un médicament
-          </button>
+          </Button>
         </div>
 
         <label className="block">
-          <span className="mb-2 block text-base font-medium text-slate-700">Notes / Instructions supplémentaires (optionnel)</span>
-          <textarea value={form.instructions} onChange={(e) => setForm(c => ({...c, instructions: e.target.value}))} rows={2} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-blue-300" placeholder="A prendre au milieu du repas, etc." />
+          <span className="mb-1 block text-[12px] font-semibold text-slate-700">Instructions supplémentaires <span className="font-normal text-slate-400">(facultatif)</span></span>
+          <textarea value={form.instructions} maxLength={1000} onChange={(e) => setForm((c) => ({ ...c, instructions: e.target.value }))} rows={2}
+            className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13.5px] text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300"
+            placeholder="À prendre au milieu du repas, etc." />
         </label>
 
-        {/* Section 4: Signature */}
-        <div className="flex items-center gap-3 rounded-[24px] bg-slate-50 p-4 ring-1 ring-slate-100">
-           <input type="checkbox" id="signe" checked={form.signe} onChange={(e) => setForm(c => ({...c, signe: e.target.checked}))} className="h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-600" />
-           <label htmlFor="signe" className="text-base font-medium text-slate-700 cursor-pointer select-none">
-             Apposer ma signature sur le document
-           </label>
-           {form.signe && (
-             <blockquote className="ml-auto font-[cursive] text-lg text-slate-800 italic pr-4">
-               Dr. {form.nomMedecin.split(' ').pop()}
-             </blockquote>
-           )}
-        </div>
+        <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-4 py-3">
+          <input type="checkbox" checked={form.signe} onChange={(e) => setForm((c) => ({ ...c, signe: e.target.checked }))} className="h-4 w-4 rounded border-slate-300 accent-blue-600" />
+          <span className="text-[13.5px] font-medium text-slate-700">Apposer la signature imprimée du médecin</span>
+          {form.signe && surname && <span className="ml-auto font-[cursive] text-[17px] text-slate-800">{formatDoctorLabel(surname)}</span>}
+        </label>
 
-        {error && (
-          <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
-            ⚠️ {error}
-          </div>
-        )}
-
-        <div className="flex justify-end gap-3 pt-2">
-          <button type="button" onClick={onClose} className="interactive rounded-2xl border border-slate-200 bg-white px-5 py-3 text-base font-medium text-slate-700">Annuler</button>
-          <button type="submit" disabled={loading} className="interactive inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-base font-medium text-white disabled:opacity-70">
-            {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> Enregistrement...</> : 'Générer l\'ordonnance'}
-          </button>
-        </div>
-      </form>
+        {error && <p role="alert" className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-[13px] font-medium text-red-700"><AlertTriangle className="h-4 w-4 shrink-0" /> {error}</p>}
+      </div>
     </Modal>
   )
 }

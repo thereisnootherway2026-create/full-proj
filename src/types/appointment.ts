@@ -26,6 +26,16 @@ export interface Appointment {
   updatedAt?: string
   confirmedAt?: string
   confirmedBy?: string
+  cancellationReason?: string
+  cancelledAt?: string
+  cancelledBy?: string
+}
+
+export const CANCELLATION_REASONS: Record<string, string> = {
+  patient_cancelled: 'Le patient a annulé',
+  no_show: "Le patient ne s'est pas présenté",
+  doctor_unavailable: 'Médecin indisponible',
+  other: 'Autre raison',
 }
 
 export const STATUS_CONFIG: Record<

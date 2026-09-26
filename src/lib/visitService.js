@@ -61,13 +61,17 @@ export async function getTodayVisits(clinicId) {
 // Visits from an EARLIER day that are still in billing with money owing. They are not part of
 // the live queue (getTodayVisits); the dashboard shows them in Historique, where they can be
 // collected. Carries billing_amount / total_paid / remaining_balance like getTodayVisits.
+// Earlier-day visits that still owe money: left at the cashier unpaid ('billing'), or closed
+// after a partial payment ('completed' with a pending payment — migration 20260923060000).
+// Only the pending payment is embedded (inner join), so remaining_balance is that debt.
 export async function getOutstandingBalanceVisits(clinicId) {
   const today = new Date().toLocaleDateString('fr-CA', { timeZone: 'Africa/Casablanca' })
   const { data, error } = await supabase
     .from('visits')
-    .select(`${VISIT_SELECT}, payments(id, amount, amount_paid, status)`)
+    .select(`${VISIT_SELECT}, payments!inner(id, amount, amount_paid, status)`)
     .eq('clinic_id', clinicId)
-    .eq('status', 'billing')
+    .in('status', ['billing', 'completed'])
+    .eq('payments.status', 'pending')
     .lt('queue_date', today)
     .order('queue_date', { ascending: true })
 
@@ -90,10 +94,22 @@ export async function getDoctorQueue(clinicId, doctorId) {
   return data || []
 }
 
-export async function addAppointmentToWaitingRoom(rdvId, doctorId) {
+export async function addAppointmentToWaitingRoom(rdvId, doctorId = null) {
   const { data, error } = await supabase.rpc('create_visit_from_rdv', {
     p_rdv_id: rdvId,
-    p_doctor_id: doctorId,
+    p_doctor_id: doctorId || null,
+  })
+
+  if (error) throw error
+  return data
+}
+
+// Takes a just-added patient back out of the queue (mis-click): the visit is withdrawn and the
+// appointment, if any, returns to "not arrived" — still booked. Server-side window: 10 minutes,
+// patient still waiting.
+export async function undoAddToWaitingRoom(visitId) {
+  const { data, error } = await supabase.rpc('undo_add_to_waiting_room', {
+    p_visit_id: visitId,
   })
 
   if (error) throw error

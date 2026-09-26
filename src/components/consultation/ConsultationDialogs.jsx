@@ -1,5 +1,6 @@
-import { Check, Loader2 } from 'lucide-react'
+import { Check, Loader2, Printer } from 'lucide-react'
 import Button from '../common/Button'
+import { printDocument, useDocumentHeader } from './DocumentComposer'
 
 function Overlay({ children, onClose, label }) {
   return (
@@ -68,6 +69,7 @@ const HANDOFF_TEXT = {
 }
 
 export function DoneScreen({ note, patientName, result, onContinue }) {
+  const header = useDocumentHeader()
   const treatments = note.traitements.filter((r) => r.medicament.trim())
   const follow = [note.followUpDate && fmtDay(note.followUpDate), note.followUpNotes.trim()].filter(Boolean).join(' · ')
   const items = [
@@ -76,8 +78,8 @@ export function DoneScreen({ note, patientName, result, onContinue }) {
     ['Ordonnance', note.ordonnance && treatments.length ? `${treatments.length} médicament(s)` : ''],
     ['Examens', note.examens.join(' · ')],
     ['Suivi', follow],
-    ['Documents', note.documents.join(' · ')],
   ]
+  const printable = note.documents.filter((d) => note.documentDrafts?.[d]?.body?.trim())
   return (
     <div className="mx-auto max-w-xl px-5 py-12">
       <div className="flex items-center gap-3">
@@ -89,10 +91,19 @@ export function DoneScreen({ note, patientName, result, onContinue }) {
       </div>
       <div className="mt-5 divide-y divide-slate-100 border-y border-slate-100">
         {items.map(([label, text]) => <Row key={label} label={label}>{text || <span className="text-slate-300">—</span>}</Row>)}
+        <Row label="Documents">
+          {note.documents.length === 0 ? <span className="text-slate-300">—</span> : (
+            <span className="flex flex-wrap gap-1.5">
+              {note.documents.map((d) => (printable.includes(d)
+                ? <Button key={d} variant="secondary" size="sm" onClick={() => printDocument(d, note.documentDrafts[d], header)}><Printer className="h-3.5 w-3.5" /> {d}</Button>
+                : <span key={d} className="text-slate-800">{d}</span>))}
+            </span>
+          )}
+        </Row>
       </div>
       <p className="mt-4 text-[13px] font-medium text-slate-600" role="status">{HANDOFF_TEXT[result?.handoff] || HANDOFF_TEXT.none}</p>
       <div className="mt-6 flex justify-end">
-        <Button variant="primary" onClick={onContinue}>
+        <Button variant="success" onClick={onContinue}>
           {result?.handoff === 'none' ? 'Retour au dossier' : 'Retour au tableau de bord'}
         </Button>
       </div>

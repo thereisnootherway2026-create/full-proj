@@ -8,11 +8,14 @@ export interface FilterState {
   praticienId: string;
   assureurId: string;
   statut: string;
+  patientId?: string;
+  patientNom?: string;
 }
 
 export interface UIState {
-  tab: 'apercu' | 'factures' | 'paiements' | 'debiteurs' | 'avance';
+  tab: 'apercu' | 'factures' | 'paiements' | 'debiteurs' | 'tiers' | 'avance';
   factureOuverteId: string | null;
+  factureInitialView?: 'detail' | 'pay';
   recuPaiementId: string | null; // references a paiement.id
   toast: { message: string; type: 'success' | 'error' } | null;
 }
@@ -24,7 +27,7 @@ interface FacturationStore {
 
   setFilter: (key: keyof FilterState, value: string) => void;
   setTab: (tab: UIState['tab']) => void;
-  setFactureOuverteId: (id: string | null) => void;
+  setFactureOuverteId: (id: string | null, initialView?: 'detail' | 'pay') => void;
   setRecuPaiementId: (id: string | null) => void;
   showToast: (message: string, type?: 'success' | 'error') => void;
   hideToast: () => void;
@@ -37,11 +40,13 @@ export const useFacturationStore = create<FacturationStore>((set, get) => ({
     praticienId: '',
     assureurId: '',
     statut: '',
+    patientId: '',
+    patientNom: '',
   },
   ui: {
     tab: 'apercu',
     factureOuverteId: null,
-    recuPaiementId: null,
+    factureInitialView: 'detail',
     toast: null,
   },
   toastTimeout: null,
@@ -51,7 +56,9 @@ export const useFacturationStore = create<FacturationStore>((set, get) => ({
   })),
 
   setTab: (tab) => set((state) => ({ ui: { ...state.ui, tab } })),
-  setFactureOuverteId: (id) => set((state) => ({ ui: { ...state.ui, factureOuverteId: id } })),
+  setFactureOuverteId: (id, initialView = 'detail') => set((state) => ({
+    ui: { ...state.ui, factureOuverteId: id, factureInitialView: initialView }
+  })),
   setRecuPaiementId: (id) => set((state) => ({ ui: { ...state.ui, recuPaiementId: id } })),
 
   showToast: (message, type = 'success') => {

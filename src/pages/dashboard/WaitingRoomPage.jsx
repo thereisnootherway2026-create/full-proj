@@ -189,8 +189,11 @@ export default function WaitingRoomPage() {
 
   // Planifiés: confirmed rdvs not yet added to the visit queue.
   const planifies = useMemo(() =>
-    rdvList
-      .filter(r => r.status === RDV_STATUSES.SCHEDULED)
+    (rdvList || [])
+      .filter(r => 
+        ['confirme', 'scheduled', 'CONFIRME', 'SCHEDULED'].includes(r.status) &&
+        (!r.arrival_status || ['NOT_ARRIVED', 'not_arrived'].includes(r.arrival_status))
+      )
       .sort((a, b) => new Date(a.date_rdv) - new Date(b.date_rdv)),
     [rdvList]
   )

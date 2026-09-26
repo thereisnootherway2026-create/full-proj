@@ -114,6 +114,72 @@ export const getPatientClinicalFields = async (
   return Array.isArray(data) ? data[0] || null : data
 }
 
+// Allergies / antécédents / traitements statuses (three-state, see
+// lib/clinical/clinicalStatus). Doctor/admin only, enforced server-side by
+// mm_set_patient_clinical (migration 20260924190000): never a direct table
+// update. A null status leaves that list untouched. Returns the same shape as
+// getPatientClinicalFields.
+export const setPatientClinical = async (
+  id: string,
+  changes: {
+    allergiesStatus?: 'unknown' | 'none' | 'listed' | null
+    allergies?: string | null
+    antecedentsStatus?: 'unknown' | 'none' | 'listed' | null
+    antecedents?: string | null
+    medicationsStatus?: 'unknown' | 'none' | 'listed' | null
+  },
+) => {
+  const { data, error } = await supabase.rpc('mm_set_patient_clinical', {
+    p_patient_id: id,
+    p_allergies_status: changes.allergiesStatus ?? null,
+    p_allergies: changes.allergies ?? null,
+    p_antecedents_status: changes.antecedentsStatus ?? null,
+    p_antecedents: changes.antecedents ?? null,
+    p_medications_status: changes.medicationsStatus ?? null,
+  })
+  if (error) {
+    const raw = String(error.message || '').toLowerCase()
+    if (raw.includes('could not find the function') || error.code === 'PGRST202') {
+      throw new Error('Enregistrement indisponible : la mise à jour de la base de données n\'est pas encore appliquée.')
+    }
+    if (raw.includes('not authorized')) throw new Error('Réservé au médecin.')
+    if (raw.includes('empty list')) throw new Error('Saisissez au moins un élément, ou choisissez « Aucun connu ».')
+    throw new Error('Enregistrement impossible. Réessayez dans un instant.')
+  }
+  return Array.isArray(data) ? data[0] || null : data
+}
+
+// date_naissance_approx is administrative (readable by every role) but only
+// exists once migration 20260924190100 is applied; until then this returns false
+// instead of breaking the patient page.
+export const getPatientAgeApprox = async (id: string): Promise<boolean> => {
+  const { data, error } = await supabase.from('patients').select('date_naissance_approx').eq('id', id).maybeSingle()
+  if (error || !data) return false
+  return Boolean((data as { date_naissance_approx?: boolean }).date_naissance_approx)
+}
+
+// Age / sexe are administrative columns (patients.update). When the approx
+// column does not exist yet (migration not applied), the update is retried
+// without it rather than failing the whole save.
+export const updatePatientAgeSexe = async (
+  id: string,
+  fields: { date_naissance?: string | null, date_naissance_approx?: boolean, sexe?: 'homme' | 'femme' | null },
+) => {
+  const updates: Record<string, unknown> = {}
+  if (fields.date_naissance !== undefined) updates.date_naissance = fields.date_naissance
+  if (fields.sexe !== undefined) updates.sexe = fields.sexe
+  if (fields.date_naissance_approx !== undefined) updates.date_naissance_approx = fields.date_naissance_approx
+  const run = (payload: Record<string, unknown>) => supabase.from('patients').update(payload).eq('id', id).select(PATIENT_ADMIN_COLUMNS).single()
+  let { data, error } = await run(updates)
+  if (error && 'date_naissance_approx' in updates && String(error.message || '').includes('date_naissance_approx')) {
+    const { date_naissance_approx: _omit, ...rest } = updates
+    void _omit
+    ;({ data, error } = await run(rest))
+  }
+  if (error) throw error
+  return data
+}
+
 export const createPatient = async (
   patient: Omit<Patient, 'id' | 'created_at'>
 ) => {
@@ -358,8 +424,11 @@ export const cancelAppointment = async (id: string, reason?: string) => {
   return data
 }
 
-export const addToWaitingRoom = async (id: string) => {
-  const { data, error } = await supabase.rpc('add_to_waiting_room', { p_rdv_id: id })
+export const addToWaitingRoom = async (id: string, doctorId?: string | null) => {
+  const { data, error } = await supabase.rpc('add_to_waiting_room', {
+    p_rdv_id: id,
+    p_doctor_id: doctorId || null,
+  })
   if (error) throw error
   return data
 }
@@ -421,6 +490,83 @@ export const getOrdonnances = async (
 
   if (error) throw error
   return data
+}
+
+// — ORDONNANCES (dedicated table, real prescriptions) —
+export const getOrdonnancesForPatient = async (cabinetId: string, patientId: string) => {
+  const { data, error } = await supabase
+    .from('ordonnances')
+    .select(`
+      *,
+      lignes:ordonnance_lignes(id, ordre, medicament, posologie, duree),
+      doctor:doctor_id(nom_complet)
+    `)
+    .eq('cabinet_id', cabinetId)
+    .eq('patient_id', patientId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data || []).map((o: any) => ({
+    ...o,
+    lignes: [...(o.lignes || [])].sort((a: any, b: any) => a.ordre - b.ordre),
+  }))
+}
+
+export const createOrdonnance = async (params: {
+  patientId: string
+  doctorId: string
+  encounterId?: string | null
+  datePrescription?: string | null
+  entete?: Record<string, any>
+  instructions?: string | null
+  lignes: { medicament: string; posologie?: string; duree?: string }[]
+}) => {
+  const { data, error } = await supabase.rpc('mm_create_ordonnance', {
+    p_patient_id: params.patientId,
+    p_doctor_id: params.doctorId,
+    p_encounter_id: params.encounterId ?? null,
+    p_date_prescription: params.datePrescription ?? null,
+    p_entete: params.entete ?? {},
+    p_instructions: params.instructions ?? null,
+    p_lignes: params.lignes,
+  })
+  if (error) throw error
+  return data as string
+}
+
+export const updateOrdonnance = async (id: string, params: {
+  doctorId?: string
+  encounterId?: string | null
+  datePrescription?: string | null
+  entete?: Record<string, any>
+  instructions?: string | null
+  lignes?: { medicament: string; posologie?: string; duree?: string }[]
+}) => {
+  const { error } = await supabase.rpc('mm_update_ordonnance', {
+    p_id: id,
+    p_doctor_id: params.doctorId ?? null,
+    p_encounter_id: params.encounterId ?? null,
+    p_date_prescription: params.datePrescription ?? null,
+    p_entete: params.entete ?? null,
+    p_instructions: params.instructions ?? null,
+    p_lignes: params.lignes ?? null,
+  })
+  if (error) throw error
+}
+
+export const emitOrdonnance = async (id: string) => {
+  const { error } = await supabase.rpc('mm_emit_ordonnance', { p_id: id })
+  if (error) throw error
+}
+
+export const cancelOrdonnance = async (id: string) => {
+  const { error } = await supabase.rpc('mm_cancel_ordonnance', { p_id: id })
+  if (error) throw error
+}
+
+export const duplicateOrdonnance = async (id: string) => {
+  const { data, error } = await supabase.rpc('mm_duplicate_ordonnance', { p_id: id })
+  if (error) throw error
+  return data as string
 }
 
 export const createDocument = async (

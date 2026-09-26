@@ -4,7 +4,7 @@ import { cn } from '../../lib/utils';
 
 export const statutMeta: Record<Statut, { label: string; wrapperClass: string; dotClass?: string }> = {
   payee: { label: 'Payée', wrapperClass: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200', dotClass: 'bg-emerald-500' },
-  partielle: { label: 'Partielle', wrapperClass: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' },
+  partielle: { label: 'Partielle', wrapperClass: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200', dotClass: 'bg-amber-500' },
   en_attente: { label: 'En attente', wrapperClass: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200', dotClass: 'bg-slate-400' },
   en_retard: { label: 'En retard', wrapperClass: 'bg-red-50 text-red-700 ring-1 ring-red-200', dotClass: 'bg-red-500' }
 };

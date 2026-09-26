@@ -39,6 +39,29 @@ export const getPatientMedications = async (patientId: string) => {
   return data
 }
 
+// Adds an active treatment to the patient's list (patient_medications is
+// doctor/admin-only by RLS, tenant-scoped by cabinet_id).
+export const addPatientMedication = async (
+  patientId: string,
+  cabinetId: string,
+  medication: { medication_name: string, posology?: string | null },
+) => {
+  const { data, error } = await supabase
+    .from('patient_medications')
+    .insert([{
+      patient_id: patientId,
+      cabinet_id: cabinetId,
+      medication_name: medication.medication_name.trim(),
+      posology: medication.posology?.trim() || null,
+      status: 'Actif',
+      start_date: new Date().toISOString().slice(0, 10),
+    }])
+    .select('*')
+    .single()
+  if (error) throw error
+  return data
+}
+
 export const getPatientLabResults = async (patientId: string) => {
   const { data, error } = await supabase
     .from('patient_lab_results')

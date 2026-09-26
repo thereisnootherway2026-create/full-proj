@@ -17,6 +17,7 @@ export const filterFactures = (factures: Facture[], filters: FilterState) => {
     if (filters.praticienId && f.praticienId !== filters.praticienId) return false;
     if (filters.assureurId && f.assureurId !== filters.assureurId) return false;
     if (filters.statut && f.statut !== filters.statut) return false;
+    if (filters.patientId && f.patientId !== filters.patientId) return false;
 
     if (filters.recherche) {
       const q = filters.recherche.toLowerCase();

@@ -14,6 +14,7 @@ import DashboardPage from './pages/DashboardPage' // The restored "Tableau de bo
 import SecretaryOnboardingGate from './components/common/SecretaryOnboardingGate'
 import AiScribePage from './pages/AiScribePage'
 import ProductShowcase from './pages/ProductShowcase'
+import FeaturesPage from './pages/FeaturesPage'
 
 // Shared Dashboard Components (Using the .jsx production versions)
 import AppointmentsPage from './pages/dashboard/AppointmentsPage'
@@ -42,6 +43,10 @@ function RootRedirect() {
 const router = createBrowserRouter([
   // Public Routes
   { path: '/', element: <RootRedirect /> },
+  { path: '/features', element: <FeaturesPage /> },
+  { path: '/features/:slug', element: <FeaturesPage /> },
+  { path: '/fonctionnalites', element: <FeaturesPage /> },
+  { path: '/fonctionnalites/:slug', element: <FeaturesPage /> },
   { path: '/showcase', element: <ProductShowcase /> },
   { path: '/login', element: <LoginPage /> },
   { path: '/signup', element: <SignupPage /> },

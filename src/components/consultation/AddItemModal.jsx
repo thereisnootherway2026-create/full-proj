@@ -5,7 +5,7 @@ import { FieldLabel } from './ConsultationFields'
 import SuggestionChips from './SuggestionChips'
 import Button from '../common/Button'
 import IconButton from '../common/IconButton'
-import { filterSuggestions, groupSuggestions } from '../../lib/acteSuggestions'
+import { filterSuggestions, foldKey, groupSuggestions } from '../../lib/acteSuggestions'
 
 // One modal for "add an item to the consultation". The chrome (backdrop,
 // header badge, dark primary button, dark focus ring, Framer Motion enter/exit)
@@ -118,6 +118,15 @@ export default function AddItemModal({ type, subtitle, values, onChange, onSave,
   const canSave = cfg.fields.every((f) => !f.required || String(values[f.key] ?? '').trim() !== '')
   const save = () => { if (canSave) onSave() }
 
+  // Typing the exact name of a catalogue acte (instead of tapping its chip) still brings its standard
+  // price, as long as the Montant has not been filled in yet.
+  const withCataloguePrice = (field, v) => {
+    const next = { ...values, [field.key]: v }
+    if (cfg.suggestionsField !== field.key || String(values.montant ?? '').trim() !== '') return next
+    const hit = suggestions.find((s) => s.source === 'catalogue' && s.values.montant && foldKey(s.label) === foldKey(v))
+    return hit ? { ...next, montant: hit.values.montant } : next
+  }
+
   // Bubble phase on purpose: a field's dropdown handles Escape first (React's
   // root handler runs before this) and stops it, so Escape closes the dropdown
   // before it closes the modal, and never reaches the consultation sheet.
@@ -146,7 +155,7 @@ export default function AddItemModal({ type, subtitle, values, onChange, onSave,
         </div>
         <div className="space-y-4 p-5">
           {cfg.fields.map((f, i) => (
-            <Field key={f.key} field={f} value={values[f.key] ?? ''} onChange={(v) => onChange({ ...values, [f.key]: v })} autoFocus={i === 0} onEnter={save}
+            <Field key={f.key} field={f} value={values[f.key] ?? ''} onChange={(v) => onChange(withCataloguePrice(f, v))} autoFocus={i === 0} onEnter={save}
               suggestions={cfg.suggestionsField === f.key ? suggestions : null} onPick={(it) => onChange({ ...values, ...it.values })} />
           ))}
         </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { formatDoctorLabel } from '../lib/professionalName'
 import { toast } from 'sonner'
 import { motion } from 'framer-motion'
 import { 
@@ -142,7 +143,7 @@ const VerificationPage: React.FC = () => {
                 Envoyez une photo de votre carte professionnelle via WhatsApp. Notre équipe vous répondra instantanément.
               </p>
               <a 
-                href={`https://wa.me/212600000000?text=Bonjour, je suis Dr. ${verificationData.nomComplet}, je souhaite vérifier mon compte MacroMedica.`}
+                href={`https://wa.me/212600000000?text=Bonjour, je suis ${formatDoctorLabel(verificationData.nomComplet)}, je souhaite vérifier mon compte MacroMedica.`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="bg-emerald-500 text-white text-center rounded-2xl py-5 font-black text-lg hover:bg-emerald-600 transition shadow-xl shadow-emerald-500/20 block"

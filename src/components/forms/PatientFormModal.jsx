@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, Building2, CalendarDays, Camera, Check, ChevronRight, Droplets, Loader2, Mail, MapPin, Phone, ScanLine, ShieldCheck, UserRound, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { AlertCircle, Building2, CalendarDays, Check, ChevronRight, Droplets, Loader2, Mail, MapPin, Phone, ScanLine, ShieldCheck, UserRound } from 'lucide-react'
 import Modal from '../common/Modal'
+import IdentityScanDialog from './IdentityScanDialog'
 import { useAppContext } from '../../context/AppContext'
 import { useCabinetId } from '../../hooks/useCabinetId'
 import { createPatient, updatePatient as apiUpdatePatient, getPatientClinicalFields } from '../../lib/api'
@@ -20,30 +21,6 @@ function QuickSuggestions({ options, onSelect }) {
   return <div className="mt-2 flex flex-wrap gap-1.5">{options.map((option) => <button key={option} type="button" onClick={() => onSelect(option)} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-500 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700">{option}</button>)}</div>
 }
 
-const parseScannedIdentity = (rawValue) => {
-  const raw = rawValue.replace(/\r/g, '\n')
-  const read = (...labels) => {
-    const match = raw.match(new RegExp(`(?:${labels.join('|')})\\s*[:=-]?\\s*([^\\n;|]{2,})`, 'i'))
-    return match?.[1]?.trim() || ''
-  }
-  const normalizeDate = (date) => {
-    const parts = date.match(/(\d{1,4})[\/.\-](\d{1,2})[\/.\-](\d{1,4})/)
-    if (!parts) return ''
-    const [, first, second, third] = parts
-    if (first.length === 4) return `${first}-${second.padStart(2, '0')}-${third.padStart(2, '0')}`
-    if (third.length === 4) return `${third}-${second.padStart(2, '0')}-${first.padStart(2, '0')}`
-    return ''
-  }
-  const sex = read('SEXE', 'SEX', 'GENDER').toLowerCase()
-  return {
-    cin: read('CIN', 'ID') || raw.match(/\b[A-Z]{1,2}\d{4,8}\b/i)?.[0] || '',
-    nom: read('NOM', 'SURNAME'),
-    prenom: read('PRENOM', 'PRÉNOM'),
-    date_naissance: normalizeDate(read('DATE DE NAISSANCE', 'DOB')),
-    sexe: /^(f|female|femme)/.test(sex) ? 'femme' : /^(m|male|homme)/.test(sex) ? 'homme' : '',
-  }
-}
-
 function PatientFormModal({ open, onClose, patient, onSuccess }) {
   const { notify, cabinetId: contextCabinetId, canonicalRole } = useAppContext()
   const { cabinetId: hookCabinetId, loading: cabinetLoading } = useCabinetId()
@@ -54,8 +31,7 @@ function PatientFormModal({ open, onClose, patient, onSuccess }) {
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState({})
   const [initialSnapshot, setInitialSnapshot] = useState(JSON.stringify(initialForm))
-  const [scanState, setScanState] = useState({ loading: false, message: '' })
-  const scanInputRef = useRef(null)
+  const [showScan, setShowScan] = useState(false)
 
   useEffect(() => {
     if (patient) {
@@ -107,53 +83,24 @@ function PatientFormModal({ open, onClose, patient, onSuccess }) {
     onClose()
   }
 
-  const applyScannedIdentity = (rawValue) => {
-    const detected = parseScannedIdentity(rawValue)
-    if (!Object.values(detected).some(Boolean)) return false
-    setForm((current) => ({ ...current, ...Object.fromEntries(Object.entries(detected).filter(([, entry]) => entry)) }))
-    setScanState({ loading: false, message: 'Document lu : les informations détectées ont été ajoutées au formulaire.' })
-    return true
-  }
-
-  const readDocumentWithOcr = async (file) => {
-    setScanState({ loading: true, message: 'Lecture des informations imprimées…' })
-    const { recognize } = await import('tesseract.js')
-    const result = await recognize(file, 'fra+eng', { logger: () => {} })
-    if (!applyScannedIdentity(result.data.text || '')) throw new Error('Le document a été lu, mais les champs n’ont pas pu être identifiés. Vérifiez la netteté de la photo.')
-  }
-
-  const scanIdentityDocument = async (event) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-    setScanState({ loading: true, message: 'Analyse du document en cours…' })
-    try {
-      if ('BarcodeDetector' in window) try {
-        const bitmap = await createImageBitmap(file)
-        const detector = new window.BarcodeDetector({ formats: ['qr_code', 'pdf417', 'data_matrix', 'code_128'] })
-        const codes = await detector.detect(bitmap)
-        bitmap.close?.()
-        if (codes.length && applyScannedIdentity(codes[0].rawValue || '')) return
-      } catch {
-        // Some browsers expose BarcodeDetector without supporting every format.
-        // OCR below remains the reliable fallback for a photographed card.
-      }
-      await readDocumentWithOcr(file)
-    } catch (scanError) {
-      setScanState({ loading: false, message: scanError.message || 'La lecture du document a échoué. Vérifiez la netteté de l’image.' })
-    }
+  // Fields confirmed on the review screen of the identity scan. Only what the user kept is applied.
+  const applyScan = (detected) => {
+    setForm((current) => ({ ...current, ...detected }))
+    setShowScan(false)
+    notify({ title: 'Document lu', description: 'Les informations confirmées ont été ajoutées au formulaire.' })
   }
 
   const title = patient ? 'Modifier le dossier patient' : 'Nouveau patient'
-  return <Modal open={open} onClose={dismiss} title={title} description={patient ? 'Actualisez les informations administratives et médicales du dossier.' : 'Créez un dossier fiable en quelques informations essentielles.'} width="max-w-4xl">
+  return <>
+  <Modal open={open} onClose={dismiss} title={title} description={patient ? 'Actualisez les informations administratives et médicales du dossier.' : 'Créez un dossier fiable en quelques informations essentielles.'} width="max-w-4xl">
     <form onSubmit={submit}>
       <div className="space-y-5">
         <Section icon={UserRound} tone="bg-blue-100 text-blue-700" title="Identité" subtitle="Pour retrouver le patient sans ambiguïté."><div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <label><Label required>Prénom</Label><input autoFocus autoComplete="given-name" value={form.prenom} onChange={(e) => value('prenom', e.target.value)} className={input('prenom')} placeholder="ex. Salma" />{invalid('prenom')}</label>
           <label><Label required>Nom</Label><input autoComplete="family-name" value={form.nom} onChange={(e) => value('nom', e.target.value)} className={input('nom')} placeholder="ex. El Mansouri" />{invalid('nom')}</label>
-          <label><Label hint="Optionnel">CIN <button type="button" onClick={() => scanInputRef.current?.click()} className="ml-2 inline-flex items-center gap-1 rounded-md bg-blue-50 px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 transition hover:bg-blue-100"><ScanLine className="h-3 w-3" />Scanner</button></Label><input id="patient-cin" value={form.cin} onChange={(e) => value('cin', e.target.value.toUpperCase())} className={input('cin')} placeholder="ex. AB123456" /></label>
+          <label><Label hint="Optionnel">CIN <button type="button" onClick={() => setShowScan(true)} className="ml-2 inline-flex items-center gap-1 rounded-md bg-blue-50 px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 transition hover:bg-blue-100"><ScanLine className="h-3 w-3" />Scanner</button></Label><input id="patient-cin" value={form.cin} onChange={(e) => value('cin', e.target.value.toUpperCase())} className={input('cin')} placeholder="ex. AB123456" /></label>
           <label><Label>Date de naissance</Label><div className="relative"><CalendarDays className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-400" /><input id="patient-date_naissance" type="date" value={form.date_naissance} onChange={(e) => value('date_naissance', e.target.value)} className={`${input('date_naissance')} pl-10`} /></div>{invalid('date_naissance')}</label>
-        </div><div className="mt-4"><Label>Sexe</Label><div className="flex flex-wrap gap-2">{[['homme', 'Homme'], ['femme', 'Femme']].map(([sex, label]) => <button key={sex} type="button" onClick={() => value('sexe', form.sexe === sex ? '' : sex)} className={`rounded-xl border px-3.5 py-2 text-sm font-medium transition ${form.sexe === sex ? 'border-blue-600 bg-blue-600 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-blue-300'}`}>{form.sexe === sex && <Check className="mr-1.5 inline h-3.5 w-3.5" />}{label}</button>)}</div></div><input ref={scanInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={scanIdentityDocument} />{scanState.loading || scanState.message ? <div className={`mt-4 flex items-start gap-2 rounded-xl px-3 py-2.5 text-xs ${scanState.message.startsWith('Document lu') ? 'bg-emerald-50 text-emerald-800' : scanState.loading ? 'bg-blue-50 text-blue-800' : 'bg-amber-50 text-amber-800'}`}><Camera className="mt-0.5 h-4 w-4 shrink-0" />{scanState.loading ? <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" /> : null}<span>{scanState.message}</span>{!scanState.loading && <button type="button" onClick={() => setScanState({ loading: false, message: '' })} className="ml-auto rounded p-0.5 hover:bg-black/5"><X className="h-3.5 w-3.5" /></button>}</div> : null}</Section>
+        </div><div className="mt-4"><Label>Sexe</Label><div className="flex flex-wrap gap-2">{[['homme', 'Homme'], ['femme', 'Femme']].map(([sex, label]) => <button key={sex} type="button" onClick={() => value('sexe', form.sexe === sex ? '' : sex)} className={`rounded-xl border px-3.5 py-2 text-sm font-medium transition ${form.sexe === sex ? 'border-blue-600 bg-blue-600 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-blue-300'}`}>{form.sexe === sex && <Check className="mr-1.5 inline h-3.5 w-3.5" />}{label}</button>)}</div></div></Section>
         <Section icon={Phone} tone="bg-emerald-100 text-emerald-700" title="Coordonnées" subtitle="Au moins un moyen de contact est recommandé."><div className="grid gap-4 md:grid-cols-2">
           <label><Label>Téléphone</Label><div className="relative"><Phone className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-400" /><input id="patient-telephone" type="tel" autoComplete="tel" value={form.telephone} onChange={(e) => value('telephone', e.target.value)} className={`${input('telephone')} pl-10`} placeholder="ex. 06 12 34 56 78" /></div>{invalid('telephone')}</label>
           <label><Label>Email</Label><div className="relative"><Mail className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-400" /><input type="email" autoComplete="email" value={form.email} onChange={(e) => value('email', e.target.value)} className={`${input('email')} pl-10`} placeholder="ex. salma@email.com" /></div>{invalid('email')}</label>
@@ -170,6 +117,8 @@ function PatientFormModal({ open, onClose, patient, onSuccess }) {
       <div className="sticky bottom-0 -mx-6 mt-6 flex items-center justify-between border-t border-slate-200 bg-white/95 px-6 py-4 backdrop-blur"><p className="hidden items-center gap-1.5 text-xs text-slate-500 sm:flex">{hasUnsavedChanges ? <><AlertCircle className="h-4 w-4 text-amber-500" />Modifications non enregistrées</> : <><ShieldCheck className="h-4 w-4 text-emerald-600" />Données protégées</>}</p><div className="ml-auto flex gap-3"><button type="button" onClick={dismiss} disabled={loading} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-50">Annuler</button><button type="submit" disabled={loading || cabinetLoading} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60">{loading || cabinetLoading ? <><Loader2 className="h-4 w-4 animate-spin" />{cabinetLoading ? 'Chargement…' : 'Enregistrement…'}</> : <>{patient ? 'Enregistrer les modifications' : 'Créer le dossier'}<ChevronRight className="h-4 w-4" /></>}</button></div></div>
     </form>
   </Modal>
+  {showScan && <IdentityScanDialog onApply={applyScan} onClose={() => setShowScan(false)} />}
+  </>
 }
 
 export default PatientFormModal

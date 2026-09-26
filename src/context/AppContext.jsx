@@ -134,8 +134,7 @@ export function AppProvider({ children }) {
         .from('rdv')
         .select(`*, patients(id, nom, prenom, telephone)`)
         .eq('cabinet_id', cId)
-        .gte('date_rdv', `${today}T00:00:00`)
-        .lte('date_rdv', `${today}T23:59:59`)
+        .or(`appointment_day.eq.${today},and(date_rdv.gte.${today}T00:00:00,date_rdv.lte.${today}T23:59:59)`)
         .order('start_time', { ascending: true, nullsFirst: false })
         .order('date_rdv', { ascending: true })
       if (error) {
@@ -324,7 +323,7 @@ export function AppProvider({ children }) {
     localStorage.setItem(PREFS_KEY, JSON.stringify(notificationPrefs))
   }, [notificationPrefs])
 
-  // DEV SWITCHER — persist role override
+  // DEV SWITCHER — persist role override and sync with Supabase in DEV mode
   useEffect(() => {
     if (devRoleOverride) {
       localStorage.setItem('macromedica-dev-role-override', devRoleOverride)
@@ -332,6 +331,20 @@ export function AppProvider({ children }) {
       localStorage.removeItem('macromedica-dev-role-override')
     }
   }, [devRoleOverride])
+
+  const handleSetDevRoleOverride = useCallback(async (newRole) => {
+    setDevRoleOverride(newRole)
+    if (import.meta.env.DEV && user?.id) {
+      try {
+        const target = newRole || 'doctor'
+        await supabase.rpc('mm_dev_switch_role', { p_new_role: target })
+        await refreshProfile?.()
+      } catch (e) {
+        console.warn('Could not sync mm_dev_switch_role to Supabase:', e)
+      }
+    }
+  }, [user?.id, refreshProfile])
+
 
   const rdvRealtimeTimeoutRef = useRef(null)
 
@@ -545,7 +558,7 @@ export function AppProvider({ children }) {
     role,
     canonicalRole,
     devRoleOverride,
-    setDevRoleOverride,
+    setDevRoleOverride: handleSetDevRoleOverride,
     permissions,
     permissionsLoaded,
     can,
@@ -607,7 +620,7 @@ export function AppProvider({ children }) {
         loadDoctors(clinicId)
       }
     },
-  }), [user, profile, role, canonicalRole, permissions, permissionsLoaded, can, fetchPermissions, refreshProfile, clinicId, isAuthenticated, isInitializing, toasts, globalModal, confirmDialog, notificationPrefs, dataErrors, patients, rdvList, consultations, visits, outstandingVisits, doctors, waitingList, updateVisitStatus, removeVisit, updatePatientDebt])
+  }), [user, profile, role, canonicalRole, devRoleOverride, handleSetDevRoleOverride, permissions, permissionsLoaded, can, fetchPermissions, refreshProfile, clinicId, isAuthenticated, isInitializing, toasts, globalModal, confirmDialog, notificationPrefs, dataErrors, patients, rdvList, consultations, visits, outstandingVisits, doctors, waitingList, updateVisitStatus, removeVisit, updatePatientDebt])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }

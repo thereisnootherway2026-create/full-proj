@@ -1,12 +1,20 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Phone, ExternalLink, Loader2 } from 'lucide-react'
+import { X, Phone, ExternalLink, Loader2, RotateCcw, CalendarX, AlertCircle, UserX, Clock, Stethoscope, MoreHorizontal } from 'lucide-react'
 import { format, parse } from 'date-fns'
 import { fr } from 'date-fns/locale'
-import { Appointment, AppointmentStatus } from '../../types/appointment'
+import { Appointment, AppointmentStatus, CANCELLATION_REASONS } from '../../types/appointment'
 import { cn } from '../../lib/utils'
 import { useNavigate } from 'react-router-dom'
 import { useAppContext } from '../../context/AppContext'
+import Select from '../common/Select'
+
+const CANCEL_REASON_OPTIONS = [
+  { value: 'patient_cancelled', label: CANCELLATION_REASONS.patient_cancelled, description: 'Annulé à la demande du patient', icon: UserX },
+  { value: 'no_show', label: CANCELLATION_REASONS.no_show, description: 'Absent sans prévenir', icon: Clock },
+  { value: 'doctor_unavailable', label: CANCELLATION_REASONS.doctor_unavailable, description: 'Empêchement côté cabinet', icon: Stethoscope },
+  { value: 'other', label: CANCELLATION_REASONS.other, description: 'Tout autre motif', icon: MoreHorizontal },
+]
 
 interface AppointmentDetailModalProps {
   appointment: Appointment | null
@@ -14,6 +22,7 @@ interface AppointmentDetailModalProps {
   onClose: () => void
   onUpdateStatus?: (appointment: Appointment, status: AppointmentStatus, metadata?: any) => Promise<void>
   onEditTime?: (appointment: Appointment) => void
+  onReschedule?: (appointment: Appointment) => void
 }
 
 const STATUS_BADGE_CONFIG: Record<string, string> = {
@@ -42,6 +51,7 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
   onClose,
   onUpdateStatus,
   onEditTime,
+  onReschedule,
 }) => {
   const [loadingAction, setLoadingAction] = useState<AppointmentStatus | null>(null)
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
@@ -62,11 +72,25 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
   const [confirmerAnnulationHovered, setConfirmerAnnulationHovered] = useState(false)
   const [confirmerAnnulationPressed, setConfirmerAnnulationPressed] = useState(false)
 
+  // The parent passes a fresh `onClose` on every render; keeping it in a ref stops the effect
+  // below from re-running (and resetting the cancel view) whenever the agenda re-renders.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  // Reset only when the modal opens or switches appointment, not on every parent re-render
+  // (that used to bounce the "Motif d'annulation" view back right after it was opened).
+  useEffect(() => {
+    if (!isOpen) return
+    setShowCancelConfirm(false)
+    setCancelReason('patient_cancelled')
+  }, [isOpen, appointment?.id])
+
   useEffect(() => {
     if (!isOpen) return undefined
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      // An open dropdown (the cancel-reason Select) handles its own Escape and marks it handled.
+      if (event.key === 'Escape' && !event.defaultPrevented) onCloseRef.current()
 
       // Focus Trap logic
       if (event.key === 'Tab' && modalRef.current) {
@@ -97,18 +121,12 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
     if (modalRef.current) {
       modalRef.current.focus()
     }
-    
-    // Reset state when opened
-    if (isOpen) {
-      setShowCancelConfirm(false)
-      setCancelReason('patient_cancelled')
-    }
 
     return () => {
       window.removeEventListener('keydown', onKeyDown)
       document.body.style.overflow = ''
     }
-  }, [isOpen, onClose])
+  }, [isOpen])
 
   if (!isOpen || !appointment) return null
 
@@ -124,9 +142,12 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
     if (!onUpdateStatus) return
 
     setLoadingAction(target)
+    // Close first: the parent applies the new status optimistically, so waiting for the
+    // server round-trip left this modal re-rendering in its new state (e.g. the "Annulé"
+    // view flashing after "Confirmer l'annulation"). The parent rolls back and toasts on failure.
+    onClose()
     try {
       await onUpdateStatus(appointment, target, metadata)
-      onClose()
     } catch (error: any) {
       // Full error (message, code) stays in the console for diagnostics;
       // the toast shows a concise, action-specific message so a genuine
@@ -249,8 +270,29 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
                 MOTIF
               </div>
               <p className="text-sm font-medium text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100 italic leading-relaxed">
-                "{appointment.notes}"
+                &quot;{appointment.notes}&quot;
               </p>
+            </div>
+          )}
+
+          {appointment.status === 'ANNULE' && (
+            <div className="col-span-2 mt-2 pt-4 border-t border-rose-100">
+              <div className="text-xs font-bold uppercase tracking-wider text-rose-500 mb-1.5 flex items-center gap-1.5">
+                <AlertCircle size={14} />
+                <span>MOTIF D&apos;ANNULATION</span>
+              </div>
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-3">
+                <p className="text-sm font-bold text-rose-900">
+                  {appointment.cancellationReason
+                    ? CANCELLATION_REASONS[appointment.cancellationReason] || appointment.cancellationReason
+                    : 'Rendez-vous annulé'}
+                </p>
+                {appointment.cancelledAt && (
+                  <p className="text-xs font-medium text-rose-600 mt-1">
+                    Annulé le {format(new Date(appointment.cancelledAt), 'dd MMMM yyyy à HH:mm', { locale: fr })}
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -261,17 +303,13 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
           {showCancelConfirm ? (
             <div className="animate-in slide-in-from-bottom-2 fade-in duration-200">
               <p className="text-sm font-bold text-slate-800 mb-2">Motif d&apos;annulation :</p>
-              <select
+              <Select
                 value={cancelReason}
-                onChange={(e) => setCancelReason(e.target.value)}
+                onChange={setCancelReason}
+                options={CANCEL_REASON_OPTIONS}
                 disabled={isLoadingAny}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:opacity-50"
-              >
-                <option value="patient_cancelled">Le patient a annulé</option>
-                <option value="no_show">Le patient ne s&apos;est pas présenté</option>
-                <option value="doctor_unavailable">Médecin indisponible</option>
-                <option value="other">Autre raison</option>
-              </select>
+                aria-label="Motif d'annulation"
+              />
               
               <div className="flex gap-3 mt-3">
                 <button
@@ -340,6 +378,26 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
                   Confirmer l&apos;annulation
                 </button>
               </div>
+            </div>
+          ) : appointment.status === 'ANNULE' ? (
+            <div className="flex items-center justify-between gap-3 w-full">
+              <div className="flex items-center gap-2 text-rose-700 text-xs font-bold bg-rose-50 border border-rose-200 px-3 py-2.5 rounded-xl">
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                <span>Créneau libéré dans l&apos;agenda</span>
+              </div>
+              {onReschedule && can('appointments.create') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose()
+                    onReschedule(appointment)
+                  }}
+                  className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 transition"
+                >
+                  <RotateCcw size={15} />
+                  Reprogrammer ce RDV
+                </button>
+              )}
             </div>
           ) : (
             <div className="flex gap-3">

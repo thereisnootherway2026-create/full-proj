@@ -1,9 +1,14 @@
 import { useState } from 'react'
-import { Activity, AlertTriangle, Check, ChevronDown, ChevronsLeft, ChevronsRight, ClipboardList, ExternalLink, History, Pill } from 'lucide-react'
+import { Activity, AlertCircle, AlertTriangle, Check, ChevronDown, ChevronsLeft, ChevronsRight, History, Pill } from 'lucide-react'
 import { normalizeNote } from '../../lib/encounterService'
-import Button from '../common/Button'
+import { resolveClinicalStatus, splitClinicalList } from '../../lib/clinical/clinicalStatus'
+import { computeIMC } from '../../lib/vitals/validateVital'
+import { useAppContext } from '../../context/AppContext'
 import IconButton from '../common/IconButton'
 import Avatar from '../common/Avatar'
+import ClinicalListEditor from '../clinical/ClinicalListEditor'
+import ClinicalStatusBadge from '../clinical/ClinicalStatusBadge'
+import AgeSexeLine from '../clinical/AgeSexeLine'
 
 const fmtDate = (d, withYear = false) => (d
   ? new Date(d).toLocaleDateString('fr-FR', withYear ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' })
@@ -103,27 +108,32 @@ function PriorItem({ enc }) {
   )
 }
 
-// Reference panel: nothing here edits historical data and nothing opens a modal.
-// Priority order: allergy alert, then blocks that have real data (accent stripe,
-// count, expandable in place), then a quiet "Non renseigné" group of empty rows.
+// Patient context during the consultation. Allergies, antécédents and traitements
+// are edited in place (ClinicalListEditor: three explicit states, saved through
+// mm_set_patient_clinical); age / sexe can be added inline. Historical data
+// (constantes, previous consultations) stays read-only. Nothing opens a modal.
+// Priority order: allergies, clinical lists, blocks with data, then a quiet
+// "Non renseigné" group of empty rows.
 export default function PatientContextSidebar({
-  patient, age, meds, medsState, vitalsRows = [], vitalsState, encounters = [], encountersState,
-  collapsed = false, onToggleCollapsed, onOpenDossier, progress = null, onSelectStep, className = '',
+  patient, patientId, age, meds, medsState, vitalsRows = [], vitalsState, encounters = [], encountersState,
+  collapsed = false, onToggleCollapsed, progress = null, onSelectStep, safetyItems = [], className = '',
 }) {
+  const { canonicalRole, can } = useAppContext()
+  const clinical = canonicalRole === 'doctor' || canonicalRole === 'admin'
+  const canEditIdentity = clinical || Boolean(can?.('patients.update'))
   const [open, setOpen] = useState({})
-  const allergies = patient?.allergies?.trim()
-  const allergiesKnown = Boolean(allergies) && allergies.toLowerCase() !== 'aucune'
-  const antecedents = patient?.antecedents?.trim()
+  const allergiesListed = clinical && resolveClinicalStatus(patient?.allergies_status, patient?.allergies) === 'listed'
+  const allergiesText = splitClinicalList(patient?.allergies).join(', ')
   const initials = `${patient?.prenom?.[0] || ''}${patient?.nom?.[0] || ''}`.toUpperCase()
-  const genre = patient?.sexe === 'homme' ? 'Homme' : patient?.sexe === 'femme' ? 'Femme' : null
   const name = `${patient?.prenom || ''} ${patient?.nom || ''}`.trim()
+  const pid = patientId || patient?.id
 
   const last = vitalsRows[0] || null
   const chrono = [...vitalsRows].reverse().slice(-6)
   const num = (x) => { const v = parseFloat(String(x).replace(',', '.')); return Number.isFinite(v) ? v : null }
   const series = (fn) => chrono.map(fn).filter((v) => v != null)
   const sys = (row) => num(String(row.blood_pressure || '').split('/')[0])
-  const bmi = last && num(last.weight) && num(last.height) ? (num(last.weight) / ((num(last.height) / 100) ** 2)).toFixed(1) : null
+  const bmi = last ? computeIMC(last.weight, last.height) : null
 
   // Every data-bearing block starts open; the doctor collapses what they don't need.
   const isOpen = (k) => (k in open ? open[k] : true)
@@ -134,7 +144,7 @@ export default function PatientContextSidebar({
       <aside aria-label="Contexte patient (réduit)" className={`flex flex-col items-center gap-3 bg-white py-4 ${className}`}>
         <IconButton label="Afficher le contexte patient" onClick={onToggleCollapsed}><ChevronsRight className="h-4 w-4" /></IconButton>
         <Avatar seed={patient?.id || name} initials={initials} size="sm" title={name}>
-          {allergiesKnown && <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 ring-2 ring-white" title={`Allergies : ${allergies}`}><AlertTriangle className="h-2.5 w-2.5 text-white" /></span>}
+          {allergiesListed && <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 ring-2 ring-white" title={`Allergies : ${allergiesText}`}><AlertTriangle className="h-2.5 w-2.5 text-white" /></span>}
         </Avatar>
       </aside>
     )
@@ -144,23 +154,6 @@ export default function PatientContextSidebar({
   const errored = (state) => state === 'error'
   const blocks = []
   const empties = []
-
-  // Traitements
-  if (meds.length > 0) {
-    blocks.push(
-      <Section key="traitements" icon={Pill}title="Traitements" badge={meds.length} summary={meds.map((m) => m.medication_name).join(', ')}
-        open={isOpen('traitements')} onToggle={() => toggle('traitements')}>
-        <ul className="space-y-2">
-          {meds.map((m) => (
-            <li key={m.id} className="text-[13px]">
-              <p className="font-semibold text-slate-800">{m.medication_name}</p>
-              <p className="text-[12px] text-slate-500">{[m.dosage, m.posology, m.start_date && `depuis ${fmtDate(m.start_date, true)}`].filter(Boolean).join(' · ')}</p>
-            </li>
-          ))}
-        </ul>
-      </Section>,
-    )
-  } else empties.push(<EmptyRow key="traitements" icon={Pill} title="Traitements" text={loading(medsState) ? 'chargement…' : errored(medsState) ? 'indisponible' : 'aucun traitement actif'} />)
 
   // Constantes
   if (last) {
@@ -175,24 +168,17 @@ export default function PatientContextSidebar({
           <TrendRow label="Température" value={last.temperature} unit="°C" series={series((r) => num(r.temperature))} />
           <TrendRow label="SpO₂" value={last.spo2} unit="%" series={series((r) => num(r.spo2))} />
           <TrendRow label="Poids" value={last.weight} unit="kg" series={series((r) => num(r.weight))} />
-          <div className="flex gap-4 text-[12.5px] text-slate-600">
+          <TrendRow label="Glycémie" value={last.blood_sugar} unit="g/L" series={series((r) => num(r.blood_sugar))} />
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12.5px] text-slate-600">
             {last.height != null && <span>Taille <b className="text-slate-800">{last.height}</b> cm</span>}
-            {bmi && <span>IMC <b className="text-slate-800">{bmi}</b></span>}
+            {bmi != null && <span>IMC <b className="text-slate-800">{String(bmi).replace('.', ',')}</b></span>}
+            {last.fr != null && <span>FR <b className="text-slate-800">{last.fr}</b>/min</span>}
+            {last.douleur_eva != null && <span>EVA <b className="text-slate-800">{last.douleur_eva}</b>/10</span>}
           </div>
         </div>
       </Section>,
     )
   } else empties.push(<EmptyRow key="constantes" icon={Activity} title="Constantes" text={loading(vitalsState) ? 'chargement…' : errored(vitalsState) ? 'indisponible' : 'aucune mesure enregistrée'} />)
-
-  // Antécédents
-  if (antecedents) {
-    blocks.push(
-      <Section key="antecedents" icon={ClipboardList}title="Antécédents" summary={antecedents}
-        open={isOpen('antecedents')} onToggle={() => toggle('antecedents')}>
-        <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-slate-700">{antecedents}</p>
-      </Section>,
-    )
-  } else empties.push(<EmptyRow key="antecedents" icon={ClipboardList} title="Antécédents" text="non renseignés" />)
 
   // Consultations précédentes
   if (encounters.length > 0) {
@@ -211,23 +197,32 @@ export default function PatientContextSidebar({
           <Avatar seed={patient?.id || name} initials={initials} size="md" />
           <div className="min-w-0 flex-1 pt-0.5">
             <p className="truncate text-[14.5px] font-bold text-slate-900">{name}</p>
-            <p className="text-[12.5px] text-slate-500">{[age != null ? `${age} ans` : 'Âge non renseigné', genre].filter(Boolean).join(' · ')}</p>
+            <AgeSexeLine patient={patient} patientId={pid} canEdit={canEditIdentity} className="text-[12.5px] text-slate-500" linkClassName="text-[12.5px]" />
           </div>
           {onToggleCollapsed && (
             <IconButton label="Réduire le contexte patient" onClick={onToggleCollapsed} className="!hidden lg:!inline-flex"><ChevronsLeft className="h-4 w-4" /></IconButton>
           )}
         </div>
 
-        {allergiesKnown ? (
-          <div role="alert" className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2.5 ring-1 ring-red-200">
-            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-600" />
-            <div className="min-w-0">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-red-700">Allergies</p>
-              <p className="break-words text-[13px] font-semibold text-red-900">{allergies}</p>
-            </div>
-          </div>
+        {clinical ? (
+          <>
+            <ClinicalListEditor kind="allergies" patientId={pid} cabinetId={patient?.cabinet_id}
+              status={patient?.allergies_status} text={patient?.allergies || ''} verifiedAt={patient?.clinical_verified_at} />
+            <ClinicalListEditor kind="antecedents" patientId={pid} cabinetId={patient?.cabinet_id}
+              status={patient?.antecedents_status} text={patient?.antecedents || ''} verifiedAt={patient?.clinical_verified_at} />
+            {loading(medsState) || errored(medsState) ? (
+              <EmptyRow icon={Pill} title="Traitements" text={loading(medsState) ? 'chargement…' : 'indisponible'} />
+            ) : (
+              <ClinicalListEditor kind="medications" patientId={pid} cabinetId={patient?.cabinet_id}
+                status={patient?.medications_status} meds={meds} verifiedAt={patient?.clinical_verified_at} />
+            )}
+          </>
         ) : (
-          <EmptyRow icon={AlertTriangle} title="Allergies" text="non renseignées, à vérifier" />
+          <>
+            <ClinicalStatusBadge kind="allergies" restricted variant="block" />
+            <ClinicalStatusBadge kind="antecedents" restricted variant="block" />
+            <ClinicalStatusBadge kind="medications" restricted variant="block" />
+          </>
         )}
 
         {blocks}
@@ -261,19 +256,24 @@ export default function PatientContextSidebar({
               </li>
             ))}
           </ul>
+          {safetyItems.length > 0 && (
+            <ul className="mt-1.5 space-y-0.5" aria-label="À vérifier">
+              {safetyItems.map((item) => (
+                <li key={item.id} className="flex items-start gap-2 rounded-md px-1 py-1" title={item.description}>
+                  <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
+                  <span className="min-w-0">
+                    <span className="block text-[12px] font-semibold text-amber-900">{item.title}</span>
+                    <span className="block text-[11.5px] text-slate-500">{item.description}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
           <p data-status={progress.status} className="mt-2 border-t border-slate-100 px-1 pt-2 text-[11.5px] text-slate-500">
             {progress.status === 'blocked' && <><span className="font-semibold text-slate-700">Pour terminer :</span> {progress.blockers.join(', ')}</>}
             {progress.status === 'partial' && <><span className="font-semibold text-slate-700">Peut être terminée</span> · à compléter : {progress.missing.join(', ')}</>}
             {progress.status === 'complete' && <span className="font-semibold text-green-800">Prête à être terminée</span>}
           </p>
-        </div>
-      )}
-
-      {onOpenDossier && (
-        <div className="border-t border-slate-100 p-3">
-          <Button variant="ghost" size="sm" className="w-full" onClick={onOpenDossier}>
-            <ExternalLink className="h-3.5 w-3.5" /> Dossier patient complet
-          </Button>
         </div>
       )}
     </aside>

@@ -1,12 +1,39 @@
 
-import React, { useState, useEffect, useMemo } from 'react'
-import { Loader2, Calendar, ChevronDown, User, Phone, Lock, AlertTriangle, UserPlus, FileText } from 'lucide-react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
+import {
+  Loader2,
+  Calendar,
+  ChevronDown,
+  User,
+  Phone,
+  Lock,
+  AlertTriangle,
+  UserPlus,
+  FileText,
+  Clock,
+  Sparkles,
+  Stethoscope,
+  RotateCcw,
+  Activity,
+  Shield,
+  Check
+} from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { cn } from '../../lib/utils'
 import Modal from '../common/Modal'
+import Select from '../common/Select'
+import Chip from '../common/Chip'
+import { AnimatePresence, motion } from 'framer-motion'
 import { useAppContext } from '../../context/AppContext'
 import { useCabinetId } from '../../hooks/useCabinetId'
 import { createPatient, createRdv, getPatients, updateRdv as apiUpdateRdv } from '../../lib/api'
+import {
+  useAgendaConfig,
+  bookableTimes,
+  DURATION_CHOICES,
+  findOverlappingAppointment,
+  isOverlapError,
+} from '../../lib/agendaConfig'
 
 // Helper Functions for Appointment Meta
 const META_PREFIX = '__AGENDA_META__'
@@ -47,14 +74,213 @@ const buildAppointmentMeta = (notes, overrides) => {
   })}`
 }
 
-const typesRDV = [
-  'Consultation',
-  'Suivi',
-  'Première consultation',
-  'Urgence',
-  'Contrôle post-opératoire',
-  'Bilan annuel'
+const APPOINTMENT_TYPES = [
+  {
+    value: 'Consultation',
+    label: 'Consultation',
+    description: 'Consultation standard ou bilan',
+    badge: '30 min',
+    color: '#3b82f6',
+    pillClass: 'hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700',
+    activePillClass: 'bg-blue-50 border-blue-500 text-blue-700 ring-2 ring-blue-500/20 font-semibold shadow-xs',
+    icon: Stethoscope,
+  },
+  {
+    value: 'Suivi',
+    label: 'Suivi',
+    description: 'Contrôle d’évolution & renouvellement',
+    badge: '20 min',
+    color: '#8b5cf6',
+    pillClass: 'hover:bg-purple-50 hover:border-purple-300 hover:text-purple-700',
+    activePillClass: 'bg-purple-50 border-purple-500 text-purple-700 ring-2 ring-purple-500/20 font-semibold shadow-xs',
+    icon: RotateCcw,
+  },
+  {
+    value: 'Urgence',
+    label: 'Urgence',
+    description: 'Symptômes aigus, prise en charge immédiate',
+    badge: '15 min',
+    color: '#ef4444',
+    pillClass: 'hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700',
+    activePillClass: 'bg-rose-50 border-rose-500 text-rose-700 ring-2 ring-rose-500/20 font-semibold shadow-xs',
+    icon: AlertTriangle,
+  },
+  {
+    value: 'Examen / Analyse',
+    label: 'Examen / Analyse',
+    description: 'Examen clinique ciblé ou prélèvements',
+    badge: '30 min',
+    color: '#0ea5e9',
+    pillClass: 'hover:bg-sky-50 hover:border-sky-300 hover:text-sky-700',
+    activePillClass: 'bg-sky-50 border-sky-500 text-sky-700 ring-2 ring-sky-500/20 font-semibold shadow-xs',
+    icon: FileText,
+  },
 ]
+
+const typesRDV = APPOINTMENT_TYPES.map(t => t.value)
+
+const MOTIF_SUGGESTIONS = [
+  'Contrôle de routine',
+  'Renouvellement ordonnance',
+  'Résultats d’analyses',
+  'Douleurs aiguës',
+  'Suivi traitement',
+]
+
+// Motif component: patient-specific reason input with quick shortcuts
+function MotifField({ value = '', onChange, onBlur, placeholder = 'Pourquoi vient le patient ?' }) {
+  return (
+    <div className="space-y-2">
+      <div className="rounded-[10px] border border-[#E5E7EB] bg-white transition-all hover:border-[#D1D5DB] focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+          placeholder={placeholder}
+          rows={2}
+          className="w-full resize-none bg-transparent px-3 py-2 text-[14px] font-medium text-[#111827] placeholder:text-[#9CA3AF] focus:outline-none min-h-[54px]"
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        {MOTIF_SUGGESTIONS.map((suggestion) => {
+          const isSelected = value.trim().toLowerCase() === suggestion.toLowerCase()
+          return (
+            <button
+              key={suggestion}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => onChange(suggestion)}
+              className={cn(
+                "inline-flex items-center px-2.5 py-1 rounded-full text-[12px] font-medium transition-all cursor-pointer border select-none",
+                isSelected
+                  ? "bg-blue-50 border-blue-400 text-blue-700 shadow-2xs font-semibold"
+                  : "bg-[#F9FAFB] border-[#E5E7EB] text-[#4B5563] hover:bg-slate-100 hover:text-slate-900 hover:border-slate-300"
+              )}
+            >
+              {suggestion}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// French date format helpers (DD/MM/YYYY <-> YYYY-MM-DD)
+const isoToFrDate = (iso) => {
+  if (!iso || typeof iso !== 'string') return ''
+  const parts = iso.split('-')
+  if (parts.length === 3) {
+    const [y, m, d] = parts
+    if (y && m && d) {
+      return `${d.padStart(2, '0')}/${m.padStart(2, '0')}/${y}`
+    }
+  }
+  return iso
+}
+
+const frDateToIso = (fr) => {
+  if (!fr || typeof fr !== 'string') return ''
+  const clean = fr.trim().replace(/[-.]/g, '/')
+  const parts = clean.split('/')
+  if (parts.length === 3) {
+    const [d, m, y] = parts
+    if (d && m && y && y.length === 4) {
+      const day = parseInt(d, 10)
+      const month = parseInt(m, 10)
+      const year = parseInt(y, 10)
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12 && year >= 1900 && year <= 2100) {
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      }
+    }
+  }
+  return ''
+}
+
+function FrenchDateInput({
+  value,
+  onChange,
+  onBlur,
+  className,
+}) {
+  const pickerRef = useRef(null)
+  const [displayText, setDisplayText] = useState(() => isoToFrDate(value))
+
+  useEffect(() => {
+    setDisplayText(isoToFrDate(value))
+  }, [value])
+
+  const handleTextChange = (e) => {
+    const raw = e.target.value
+    setDisplayText(raw)
+    const iso = frDateToIso(raw)
+    if (iso) {
+      onChange(iso)
+    }
+  }
+
+  const handlePickerChange = (e) => {
+    const iso = e.target.value
+    if (iso) {
+      onChange(iso)
+      setDisplayText(isoToFrDate(iso))
+    }
+  }
+
+  const handleBlur = (e) => {
+    const iso = frDateToIso(displayText)
+    if (iso) {
+      onChange(iso)
+      setDisplayText(isoToFrDate(iso))
+    } else if (value) {
+      setDisplayText(isoToFrDate(value))
+    }
+    onBlur?.(e)
+  }
+
+  const openPicker = () => {
+    try {
+      if (pickerRef.current?.showPicker) {
+        pickerRef.current.showPicker()
+      } else {
+        pickerRef.current?.focus()
+      }
+    } catch {
+      pickerRef.current?.focus()
+    }
+  }
+
+  return (
+    <div className="relative flex items-center group">
+      <input
+        type="text"
+        value={displayText}
+        onChange={handleTextChange}
+        onBlur={handleBlur}
+        placeholder="JJ/MM/AAAA"
+        className={cn(className, "pr-10")}
+      />
+      <button
+        type="button"
+        onClick={openPicker}
+        aria-label="Choisir une date"
+        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 focus:outline-none transition-colors z-20 cursor-pointer"
+      >
+        <Calendar size={18} />
+      </button>
+      <input
+        ref={pickerRef}
+        type="date"
+        value={value || ''}
+        onChange={handlePickerChange}
+        tabIndex={-1}
+        aria-label="Date du rendez-vous"
+        className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 opacity-0 pointer-events-none"
+      />
+    </div>
+  )
+}
 
 const mutuelles = [
   'Aucune',
@@ -65,17 +291,28 @@ const mutuelles = [
   'Autre'
 ]
 
-// Generate time slots every 15 minutes from 08:00 to 17:45
-const generateTimeSlots = () => {
-  const slots = []
-  for (let hour = 8; hour <= 17; hour++) {
-    for (let minute = 0; minute < 60; minute += 15) {
-      slots.push(`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`)
-    }
-  }
-  return slots
+const mutuelleOptions = mutuelles.map(m => ({
+  value: m,
+  label: m,
+}))
+
+// Two different conflicts, two different messages — the secretary has to know which one she's
+// looking at to fix it:
+//  - overlap (23P01, rdv_no_overlap_per_cabinet): the time slot is taken by ANOTHER appointment;
+//  - same-day duplicate (23505, rdv_one_active_per_patient_per_day): THIS patient already has
+//    an appointment that day.
+const hm = (iso) => {
+  const d = new Date(iso)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
-const timeSlots = generateTimeSlots()
+const overlapMessage = (conflict) => {
+  if (!conflict) {
+    return 'Ce créneau chevauche un autre rendez-vous. Choisissez une autre heure ou une durée plus courte.'
+  }
+  const who = `${conflict.patients?.prenom || ''} ${conflict.patients?.nom || ''}`.trim() || 'un autre patient'
+  const range = conflict.end_time ? `${hm(conflict.date_rdv)}–${hm(conflict.end_time)}` : hm(conflict.date_rdv)
+  return `Ce créneau chevauche le rendez-vous de ${who} (${range}). Choisissez une autre heure ou une durée plus courte.`
+}
 
 // Helper Functions
 const parseName = (fullName) => {
@@ -121,7 +358,7 @@ function AppointmentFormModal({
   initialDate,
   initialTime
 }) {
-  const { notify } = useAppContext()
+  const { notify, refreshRdv, refreshVisits } = useAppContext()
   const { cabinetId } = useCabinetId()
   const queryClient = useQueryClient()
 
@@ -131,12 +368,59 @@ function AppointmentFormModal({
     enabled: open,
   })
 
+  // Consultation types (with durations) + agenda settings for this cabinet. Before the agenda
+  // migration is applied this returns the historical defaults and schemaReady = false.
+  const agenda = useAgendaConfig(cabinetId)
+  const findType = (name) => {
+    const key = String(name || '').trim().toLowerCase()
+    return agenda.types.find((t) => t.libelle.trim().toLowerCase() === key) || null
+  }
+  // A form's duration: the one picked by hand, else the type's, else the cabinet default.
+  const effectiveDuree = (form) => form.duree || findType(form.type)?.dureeMinutes || agenda.settings.dureeDefautMinutes
+  const typeOptionsFor = (current) => {
+    const opts = agenda.types
+      .filter((t) => t.actif !== false || t.libelle === current)
+      .map((t) => ({ value: t.libelle, label: t.libelle, description: t.description, color: t.couleur, badge: `${t.dureeMinutes} min` }))
+    // An edited appointment may carry a type that no longer exists: keep it selectable as is.
+    if (current && !opts.some((o) => o.value === current)) opts.push({ value: current, label: current })
+    return opts
+  }
+  const timeOptionsFor = (current) => {
+    const times = bookableTimes(agenda.settings)
+    if (current && !times.includes(current)) times.push(current)
+    return times.sort().map((t) => ({ value: t, label: t }))
+  }
+  const durationOptionsFor = (current) => {
+    const values = [...new Set([...DURATION_CHOICES, current].filter(Boolean))].sort((a, b) => a - b)
+    return values.map((v) => ({ value: String(v), label: `${v} min` }))
+  }
+  // Columns only sent once the migration exists; before that the insert keeps its old shape.
+  const scheduleFields = (form) => (agenda.schemaReady
+    ? { duree_minutes: effectiveDuree(form), type_consultation_id: findType(form.type)?.id || null }
+    : {})
+
+  // Same-slot check before saving, so the message can name the appointment in the way.
+  // Returns true when the save must stop.
+  const blockedByOverlap = async (form) => {
+    const conflict = await findOverlappingAppointment({
+      cabinetId,
+      startIso: new Date(`${form.date}T${form.heure}:00`).toISOString(),
+      dureeMinutes: effectiveDuree(form),
+      excludeId: appointment?.id,
+      schemaReady: agenda.schemaReady,
+    })
+    if (!conflict) return false
+    notify({ title: 'Créneau déjà occupé', description: overlapMessage(conflict), variant: 'destructive' })
+    return true
+  }
+
   // State Management
   const [modalState, setModalState] = useState('existing')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedPatient, setSelectedPatient] = useState(null)
   const [showDropdown, setShowDropdown] = useState(false)
   const [loading, setLoading] = useState(false)
+  const submittingRef = useRef(false)
   const [touched, setTouched] = useState({})
   const [errors, setErrors] = useState({})
   
@@ -153,7 +437,8 @@ function AppointmentFormModal({
     motif: '',
     date: '',
     heure: '08:00',
-    type: 'Première consultation',
+    type: 'Consultation',
+    duree: null,
     notes: ''
   })
 
@@ -169,7 +454,8 @@ function AppointmentFormModal({
     motif: '',
     date: '',
     heure: '08:00',
-    type: 'Première consultation',
+    type: 'Consultation',
+    duree: null,
     notes: ''
   })
 
@@ -180,14 +466,15 @@ function AppointmentFormModal({
     date: '',
     heure: '08:00',
     type: 'Consultation',
+    duree: null,
     notes: ''
   })
 
   // Initialize Data
   useEffect(() => {
     if (open) {
-      const today = new Date()
-      const initialDateValue = initialDate || `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+      const todayCasablanca = new Date().toLocaleDateString('fr-CA', { timeZone: 'Africa/Casablanca' })
+      const initialDateValue = initialDate || todayCasablanca
       
       setModalState('existing')
       setSearchQuery('')
@@ -219,6 +506,7 @@ function AppointmentFormModal({
           date: datePart,
           heure: timePart,
           type: meta.type || 'Consultation',
+          duree: appointment.duree_minutes || null,
           notes: ''
         })
       } else if (initialPatient) {
@@ -232,6 +520,7 @@ function AppointmentFormModal({
           date: initialDateValue,
           heure: initialTime || '08:00',
           type: 'Consultation',
+          duree: null,
           notes: ''
         })
       } else {
@@ -242,6 +531,7 @@ function AppointmentFormModal({
           date: initialDateValue,
           heure: initialTime || '08:00',
           type: 'Consultation',
+          duree: null,
           notes: ''
         })
 
@@ -251,7 +541,8 @@ function AppointmentFormModal({
           motif: '',
           date: initialDateValue,
           heure: initialTime || '08:00',
-          type: 'Première consultation',
+          type: 'Consultation',
+          duree: null,
           notes: ''
         })
 
@@ -267,7 +558,8 @@ function AppointmentFormModal({
           motif: '',
           date: initialDateValue,
           heure: initialTime || '08:00',
-          type: 'Première consultation',
+          type: 'Consultation',
+          duree: null,
           notes: ''
         })
       }
@@ -292,7 +584,8 @@ function AppointmentFormModal({
       ...prev, 
       patientId: patient.id, 
       telephone: patient.telephone,
-      type: 'Consultation'
+      type: 'Consultation',
+      duree: null
     }))
     setShowDropdown(false)
   }
@@ -399,6 +692,10 @@ function AppointmentFormModal({
   // Handle Form Submission
   const handleSubmit = async (e) => {
     e.preventDefault()
+    // Synchronous guard: `loading` only disables the button after a re-render, a ref closes
+    // that gap so one save can never be sent twice.
+    if (submittingRef.current) return
+    submittingRef.current = true
     setLoading(true)
 
     try {
@@ -406,7 +703,8 @@ function AppointmentFormModal({
       
       if (modalState === 'existing') {
         if (!validateExisting()) return
-        
+        if (await blockedByOverlap(existingForm)) return
+
         if (appointment) {
           const currentNotes = appointment.notes
           const newNotes = buildAppointmentMeta(currentNotes, {
@@ -418,6 +716,7 @@ function AppointmentFormModal({
             date_rdv: new Date(`${existingForm.date}T${existingForm.heure}:00`).toISOString(),
             status: 'confirme',
             notes: newNotes,
+            ...scheduleFields(existingForm),
           })
         } else {
           const newNotes = buildAppointmentMeta(null, {
@@ -431,10 +730,13 @@ function AppointmentFormModal({
             date_rdv: new Date(`${existingForm.date}T${existingForm.heure}:00`).toISOString(),
             status: 'confirme',
             notes: newNotes,
+            ...scheduleFields(existingForm),
           })
         }
       } else if (modalState === 'rdv-rapide') {
         if (!validateRdvRapide()) return
+        // Before creating the patient, so a taken slot doesn't leave an orphan patient behind.
+        if (await blockedByOverlap(rdvRapideForm)) return
 
         const { prenom, nom } = parseName(rdvRapideForm.nomPrenom)
         
@@ -447,6 +749,7 @@ function AppointmentFormModal({
 
         const newNotes = buildAppointmentMeta(null, {
           type: rdvRapideForm.type,
+          clinicalContext: rdvRapideForm.motif,
         })
         await createRdv({
           cabinet_id: cabinetId,
@@ -455,11 +758,13 @@ function AppointmentFormModal({
           date_rdv: new Date(`${rdvRapideForm.date}T${rdvRapideForm.heure}:00`).toISOString(),
           status: 'confirme',
           notes: newNotes,
+          ...scheduleFields(rdvRapideForm),
         })
         
         successMessage = 'Rendez-vous créé — Le patient sera enregistré à l\'arrivée'
       } else if (modalState === 'dossier-complet') {
         if (!validateDossierComplet()) return
+        if (await blockedByOverlap(dossierCompletForm)) return
 
         const createdPatient = await createPatient({
           cabinet_id: cabinetId,
@@ -475,6 +780,7 @@ function AppointmentFormModal({
 
         const newNotes = buildAppointmentMeta(null, {
           type: dossierCompletForm.type,
+          clinicalContext: dossierCompletForm.motif,
         })
         await createRdv({
           cabinet_id: cabinetId,
@@ -483,6 +789,7 @@ function AppointmentFormModal({
           date_rdv: new Date(`${dossierCompletForm.date}T${dossierCompletForm.heure}:00`).toISOString(),
           status: 'confirme',
           notes: newNotes,
+          ...scheduleFields(dossierCompletForm),
         })
         
         successMessage = 'Patient et rendez-vous créés avec succès'
@@ -490,6 +797,12 @@ function AppointmentFormModal({
 
       queryClient.invalidateQueries({ queryKey: ['patients'] })
       queryClient.invalidateQueries({ queryKey: ['appointments'] })
+      queryClient.invalidateQueries({ queryKey: ['agenda-range'] })
+      
+      await Promise.all([
+        refreshRdv?.(),
+        refreshVisits?.(),
+      ])
       
       notify({
         title: 'Succès',
@@ -499,7 +812,10 @@ function AppointmentFormModal({
       onSuccess?.()
       onClose()
     } catch (error) {
-      const errorMsg = error?.message || (typeof error === 'object' ? JSON.stringify(error) : String(error))
+      // Same unwrapping as InvoiceFormModal: PostgREST errors are plain objects, never String() them.
+      const errorMsg = typeof error === 'string'
+        ? error
+        : error?.message || error?.details || error?.hint || (error?.code ? `code ${error.code}` : 'erreur inconnue')
       // PostgREST errors carry far more than .message (code/details/hint) —
       // logging the full object is the only way to tell which underlying
       // query actually failed when the message alone is ambiguous (e.g.
@@ -510,15 +826,22 @@ function AppointmentFormModal({
       // constraint to a clean French message — the database stays the real
       // authority (this is UX only), any other error still shows the raw
       // technical message so nothing genuinely wrong is hidden.
+      // 23P01 = exclusion_violation on rdv_no_overlap_per_cabinet: the slot overlaps ANOTHER
+      // appointment (reaches here when two people book the same slot at the same moment, after
+      // the pre-check). Kept apart from the same-patient case on purpose — different fix.
       const isSameDayDuplicate = error?.code === '23505' && /rdv_one_active_per_patient_per_day/.test(errorMsg || error?.details || '')
+      const isOverlap = isOverlapError(error)
       notify({
-        title: 'Erreur',
-        description: isSameDayDuplicate
-          ? 'Ce patient a déjà un rendez-vous prévu ce jour.'
+        title: isOverlap ? 'Créneau déjà occupé' : isSameDayDuplicate ? 'Rendez-vous en double' : 'Erreur',
+        description: isOverlap
+          ? overlapMessage(null)
+          : isSameDayDuplicate
+          ? 'Ce patient a déjà un rendez-vous prévu ce jour. Choisissez une autre date.'
           : `Impossible d'enregistrer le rendez-vous: ${errorMsg}`,
         variant: 'destructive',
       })
     } finally {
+      submittingRef.current = false
       setLoading(false)
     }
   }
@@ -709,29 +1032,28 @@ function AppointmentFormModal({
               )}
             </div>
 
-            {/* Shared fields for existing patient */}
+            {/* Motif */}
             <div>
               <label className={labelClass}>Motif</label>
-              <textarea
+              <MotifField
                 value={existingForm.motif}
-                onChange={(e) => setExistingForm(prev => ({ ...prev, motif: e.target.value }))}
-                placeholder="Motif du RDV..."
-                className={cn(inputClass, "h-[80px] py-3 resize-none")}
+                onChange={(text) => setExistingForm(prev => ({ ...prev, motif: text }))}
+                onBlur={() => setTouched(prev => ({ ...prev, motif: true }))}
               />
               {touched.motif && errors.motif && (
                 <p className="mt-1 text-xs font-medium text-red-600">{errors.motif}</p>
               )}
             </div>
 
-            {/* Date + Heure + Type in 3 columns */}
-            <div className="grid grid-cols-[150px_100px_1fr] gap-[10px]">
+            {/* Date + Heure + Type + Durée in 2x2 grid */}
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelClass}>Date</label>
-                <input
-                  type="date"
+                <FrenchDateInput
                   value={existingForm.date}
-                  onChange={(e) => setExistingForm(prev => ({ ...prev, date: e.target.value }))}
-                  className={inputClass}
+                  onChange={(val) => setExistingForm(prev => ({ ...prev, date: val }))}
+                  onBlur={() => setTouched(prev => ({ ...prev, date: true }))}
+                  className={cn(inputClass, touched.date && errors.date ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : '')}
                 />
                 {touched.date && errors.date && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.date}</p>
@@ -739,38 +1061,38 @@ function AppointmentFormModal({
               </div>
               <div>
                 <label className={labelClass}>Heure</label>
-                <div className="relative">
-                  <select
-                    value={existingForm.heure}
-                    onChange={(e) => setExistingForm(prev => ({ ...prev, heure: e.target.value }))}
-                    className={cn(inputClass, "appearance-none pr-10")}
-                  >
-                    {timeSlots.map(slot => (
-                      <option key={slot} value={slot}>{slot}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                </div>
+                <Select
+                  value={existingForm.heure}
+                  onChange={(val) => setExistingForm(prev => ({ ...prev, heure: val }))}
+                  options={timeOptionsFor(existingForm.heure)}
+                  icon={Clock}
+                  placement="top"
+                />
                 {touched.heure && errors.heure && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.heure}</p>
                 )}
               </div>
               <div>
                 <label className={labelClass}>Type</label>
-                <div className="relative">
-                  <select
-                    value={existingForm.type}
-                    onChange={(e) => setExistingForm(prev => ({ ...prev, type: e.target.value }))}
-                    className={cn(inputClass, "appearance-none pr-10")}
-                  >
-                    {typesRDV.map(type => (
-                      <option key={type} value={type}>{type}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                </div>
+                <Select
+                  value={existingForm.type}
+                  onChange={(val) => setExistingForm(prev => ({ ...prev, type: val, duree: null }))}
+                  options={typeOptionsFor(existingForm.type)}
+                  placement="top"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Durée</label>
+                <Select
+                  value={String(effectiveDuree(existingForm))}
+                  onChange={(val) => setExistingForm(prev => ({ ...prev, duree: Number(val) }))}
+                  options={durationOptionsFor(effectiveDuree(existingForm))}
+                  icon={Clock}
+                  placement="top"
+                />
               </div>
             </div>
+
           </div>
         )}
 
@@ -896,28 +1218,25 @@ function AppointmentFormModal({
 
             <div>
               <label className={labelClass}>Motif</label>
-              <textarea
+              <MotifField
                 value={rdvRapideForm.motif}
-                onChange={(e) => setRdvRapideForm(prev => ({ ...prev, motif: e.target.value }))}
+                onChange={(text) => setRdvRapideForm(prev => ({ ...prev, motif: text }))}
                 onBlur={() => setTouched(prev => ({ ...prev, motif: true }))}
-                placeholder="Motif du RDV..."
-                className={cn(inputClass, "h-[80px] py-3 resize-none")}
               />
               {touched.motif && errors.motif && (
                 <p className="mt-1 text-xs font-medium text-red-600">{errors.motif}</p>
               )}
             </div>
 
-            {/* Date + Heure + Type in 3 columns */}
-            <div className="grid grid-cols-[150px_100px_1fr] gap-[10px]">
+            {/* Date + Heure + Type + Durée in 2x2 grid */}
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelClass}>Date</label>
-                <input
-                  type="date"
+                <FrenchDateInput
                   value={rdvRapideForm.date}
-                  onChange={(e) => setRdvRapideForm(prev => ({ ...prev, date: e.target.value }))}
+                  onChange={(val) => setRdvRapideForm(prev => ({ ...prev, date: val }))}
                   onBlur={() => setTouched(prev => ({ ...prev, date: true }))}
-                  className={inputClass}
+                  className={cn(inputClass, touched.date && errors.date ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : '')}
                 />
                 {touched.date && errors.date && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.date}</p>
@@ -925,39 +1244,38 @@ function AppointmentFormModal({
               </div>
               <div>
                 <label className={labelClass}>Heure</label>
-                <div className="relative">
-                  <select
-                    value={rdvRapideForm.heure}
-                    onChange={(e) => setRdvRapideForm(prev => ({ ...prev, heure: e.target.value }))}
-                    onBlur={() => setTouched(prev => ({ ...prev, heure: true }))}
-                    className={cn(inputClass, "appearance-none pr-10")}
-                  >
-                    {timeSlots.map(slot => (
-                      <option key={slot} value={slot}>{slot}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                </div>
+                <Select
+                  value={rdvRapideForm.heure}
+                  onChange={(val) => setRdvRapideForm(prev => ({ ...prev, heure: val }))}
+                  options={timeOptionsFor(rdvRapideForm.heure)}
+                  icon={Clock}
+                  placement="top"
+                />
                 {touched.heure && errors.heure && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.heure}</p>
                 )}
               </div>
               <div>
                 <label className={labelClass}>Type</label>
-                <div className="relative">
-                  <select
-                    value={rdvRapideForm.type}
-                    onChange={(e) => setRdvRapideForm(prev => ({ ...prev, type: e.target.value }))}
-                    className={cn(inputClass, "appearance-none pr-10")}
-                  >
-                    {typesRDV.map(type => (
-                      <option key={type} value={type}>{type}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                </div>
+                <Select
+                  value={rdvRapideForm.type}
+                  onChange={(val) => setRdvRapideForm(prev => ({ ...prev, type: val, duree: null }))}
+                  options={typeOptionsFor(rdvRapideForm.type)}
+                  placement="top"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Durée</label>
+                <Select
+                  value={String(effectiveDuree(rdvRapideForm))}
+                  onChange={(val) => setRdvRapideForm(prev => ({ ...prev, duree: Number(val) }))}
+                  options={durationOptionsFor(effectiveDuree(rdvRapideForm))}
+                  icon={Clock}
+                  placement="top"
+                />
               </div>
             </div>
+
           </div>
         )}
 
@@ -1083,45 +1401,37 @@ function AppointmentFormModal({
             {/* Mutuelle */}
             <div>
               <label className={labelClass}>Mutuelle</label>
-              <div className="relative">
-                <select
-                  value={dossierCompletForm.mutuelle}
-                  onChange={(e) => setDossierCompletForm(prev => ({ ...prev, mutuelle: e.target.value }))}
-                  className={cn(inputClass, "appearance-none pr-10")}
-                >
-                  {mutuelles.map(m => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-                <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9CA3AF] pointer-events-none" />
-              </div>
+              <Select
+                value={dossierCompletForm.mutuelle}
+                onChange={(val) => setDossierCompletForm(prev => ({ ...prev, mutuelle: val }))}
+                options={mutuelleOptions}
+                icon={Shield}
+                placement="top"
+              />
             </div>
 
             {/* Motif du RDV */}
             <div>
               <label className={labelClass}>Motif du RDV</label>
-              <textarea
+              <MotifField
                 value={dossierCompletForm.motif}
-                onChange={(e) => setDossierCompletForm(prev => ({ ...prev, motif: e.target.value }))}
+                onChange={(text) => setDossierCompletForm(prev => ({ ...prev, motif: text }))}
                 onBlur={() => setTouched(prev => ({ ...prev, motif: true }))}
-                placeholder="Motif du RDV..."
-                className={cn(inputClass, "h-[70px] py-3 resize-none")}
               />
               {touched.motif && errors.motif && (
                 <p className="mt-1 text-xs font-medium text-red-600">{errors.motif}</p>
               )}
             </div>
 
-            {/* Date + Heure + Type */}
-            <div className="grid grid-cols-[150px_100px_1fr] gap-[10px]">
+            {/* Date + Heure + Type + Durée in 2x2 grid */}
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelClass}>Date</label>
-                <input
-                  type="date"
+                <FrenchDateInput
                   value={dossierCompletForm.date}
-                  onChange={(e) => setDossierCompletForm(prev => ({ ...prev, date: e.target.value }))}
+                  onChange={(val) => setDossierCompletForm(prev => ({ ...prev, date: val }))}
                   onBlur={() => setTouched(prev => ({ ...prev, date: true }))}
-                  className={inputClass}
+                  className={cn(inputClass, touched.date && errors.date ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : '')}
                 />
                 {touched.date && errors.date && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.date}</p>
@@ -1129,39 +1439,38 @@ function AppointmentFormModal({
               </div>
               <div>
                 <label className={labelClass}>Heure</label>
-                <div className="relative">
-                  <select
-                    value={dossierCompletForm.heure}
-                    onChange={(e) => setDossierCompletForm(prev => ({ ...prev, heure: e.target.value }))}
-                    onBlur={() => setTouched(prev => ({ ...prev, heure: true }))}
-                    className={cn(inputClass, "appearance-none pr-10")}
-                  >
-                    {timeSlots.map(slot => (
-                      <option key={slot} value={slot}>{slot}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9CA3AF] pointer-events-none" />
-                </div>
+                <Select
+                  value={dossierCompletForm.heure}
+                  onChange={(val) => setDossierCompletForm(prev => ({ ...prev, heure: val }))}
+                  options={timeOptionsFor(dossierCompletForm.heure)}
+                  icon={Clock}
+                  placement="top"
+                />
                 {touched.heure && errors.heure && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.heure}</p>
                 )}
               </div>
               <div>
                 <label className={labelClass}>Type</label>
-                <div className="relative">
-                  <select
-                    value={dossierCompletForm.type}
-                    onChange={(e) => setDossierCompletForm(prev => ({ ...prev, type: e.target.value }))}
-                    className={cn(inputClass, "appearance-none pr-10")}
-                  >
-                    {typesRDV.map(type => (
-                      <option key={type} value={type}>{type}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9CA3AF] pointer-events-none" />
-                </div>
+                <Select
+                  value={dossierCompletForm.type}
+                  onChange={(val) => setDossierCompletForm(prev => ({ ...prev, type: val, duree: null }))}
+                  options={typeOptionsFor(dossierCompletForm.type)}
+                  placement="top"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Durée</label>
+                <Select
+                  value={String(effectiveDuree(dossierCompletForm))}
+                  onChange={(val) => setDossierCompletForm(prev => ({ ...prev, duree: Number(val) }))}
+                  options={durationOptionsFor(effectiveDuree(dossierCompletForm))}
+                  icon={Clock}
+                  placement="top"
+                />
               </div>
             </div>
+
           </div>
         )}
       </div>

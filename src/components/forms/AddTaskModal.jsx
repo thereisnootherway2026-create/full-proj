@@ -1,17 +1,23 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { X, Search, ChevronDown, Check, User } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useAppContext } from '../../context/AppContext'
+import { CATEGORIES, CREATABLE_CATEGORIES } from '../../lib/taskCategories'
+import { formatDoctorLabel } from '../../lib/professionalName'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
-const TASK_TYPES = [
-  { value: 'patient_followup', label: 'Suivi patient' },
-  { value: 'clinic', label: 'Clinique' },
-  { value: 'results', label: 'Résultats' },
-  { value: 'prescription', label: 'Ordonnance' },
-  { value: 'appointment', label: 'Rendez-vous' },
-  { value: 'administrative', label: 'Administratif' },
-  { value: 'other', label: 'Autre' }
-]
+// The six categories the product actually uses (src/lib/taskCategories.js is
+// the single source of truth — the task list and the detail modal read the
+// same table). When editing an older task whose type isn't one of the six
+// (e.g. 'results', 'prescription'), that type is added as a 7th, non-removable
+// option so its real category is never silently changed to something else.
+function buildTaskTypeOptions(currentType) {
+  const options = CREATABLE_CATEGORIES.map((value) => ({ value, label: CATEGORIES[value].label }))
+  if (currentType && !CREATABLE_CATEGORIES.includes(currentType)) {
+    options.push({ value: currentType, label: CATEGORIES[currentType]?.label || currentType })
+  }
+  return options
+}
 
 const TASK_PRIORITIES = [
   { value: 'normal',    label: 'Normale',    color: '#64748B', indicator: '#94A3B8' },
@@ -23,7 +29,7 @@ const DEFAULT_ASSIGNEES = [
   { id: 'me', label: 'Moi-même' },
 ]
 
-const PATIENT_REQUIRED_TYPES = ['patient_followup', 'clinic', 'results', 'prescription']
+const PATIENT_REQUIRED_TYPES = ['patient_followup', 'clinical', 'results', 'prescription']
 
 // ─── Shared input class helpers ──────────────────────────────────────────────
 const inputBase =
@@ -189,6 +195,26 @@ export default function AddTaskModal({
   currentUser = null
 }) {
   const isEdit = mode === 'edit'
+  const { doctors, profile } = useAppContext()
+  const myUserId = currentUser?.id || profile?.id || null
+
+  const assigneeOptions = useMemo(() => {
+    const list = [
+      { id: myUserId || 'me', label: 'Moi-même' },
+      { id: 'secretary', label: 'Secrétariat du cabinet' },
+    ]
+    if (doctors && doctors.length > 0) {
+      doctors.forEach(doc => {
+        if (doc.id !== myUserId) {
+          const name = doc.nom_complet || `${doc.first_name || ''} ${doc.last_name || ''}`.trim()
+          if (name) {
+            list.push({ id: doc.id, label: formatDoctorLabel(name) })
+          }
+        }
+      })
+    }
+    return list
+  }, [doctors, myUserId])
 
   const getEmptyForm = () => {
     const today = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD, always dynamic
@@ -197,11 +223,11 @@ export default function AddTaskModal({
       description: '',
       patientId: '',
       patientName: '',
-      type: 'patient_followup',
+      type: 'other',
       priority: 'normal',
       dueDate: today,
       dueTime: '',
-      assignedTo: currentUser?.id || 'me'
+      assignedTo: myUserId || 'me'
     }
   }
 
@@ -222,11 +248,11 @@ export default function AddTaskModal({
           description: initialData.description || '',
           patientId:   initialData.patientId || '',
           patientName: initialData.patientName || '',
-          type:        initialData.type || 'patient_followup',
+          type:        initialData.type || 'other',
           priority:    initialData.priority || 'normal',
           dueDate:     initialData.dueDate || '',
           dueTime:     initialData.dueTime || '',
-          assignedTo:  initialData.assignedTo || currentUser?.id || 'me'
+          assignedTo:  initialData.assignedTo || myUserId || 'me'
         }
       } else {
         stateToSet = getEmptyForm()
@@ -442,7 +468,7 @@ export default function AddTaskModal({
                   className={`${selectBase} pl-3 pr-8`}
                   disabled={isPending}
                 >
-                  {TASK_TYPES.map(t => (
+                  {buildTaskTypeOptions(form.type).map(t => (
                     <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
                 </select>
@@ -525,7 +551,7 @@ export default function AddTaskModal({
                 className={`${selectBase} pl-9 pr-8`}
                 disabled={isPending}
               >
-                {DEFAULT_ASSIGNEES.map(a => (
+                {assigneeOptions.map(a => (
                   <option key={a.id} value={a.id}>{a.label}</option>
                 ))}
               </select>

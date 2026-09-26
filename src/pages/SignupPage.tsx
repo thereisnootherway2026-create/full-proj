@@ -3,6 +3,7 @@ import { Eye, EyeOff, Loader2, User, Mail, Phone, Lock, Building2, MapPin, Arrow
 import { Link, useNavigate } from 'react-router-dom'
 import { SPECIALITES } from '../data/specialites'
 import { supabase } from '../lib/supabase'
+import { formatDoctorLabel } from '../lib/professionalName'
 import { toast } from 'sonner'
 import { motion } from 'framer-motion'
 
@@ -61,7 +62,7 @@ const SignupPage: React.FC = () => {
     setError(null)
 
     try {
-      const nomComplet = `Dr. ${form.prenom.trim()} ${form.nom.trim()}`
+      const nomComplet = formatDoctorLabel(`${form.prenom.trim()} ${form.nom.trim()}`)
 
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: form.email.trim().toLowerCase(),

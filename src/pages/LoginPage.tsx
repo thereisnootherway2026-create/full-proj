@@ -1,14 +1,15 @@
 import React, { useState } from 'react'
 import { Lock, Mail, Loader2, ArrowRight } from 'lucide-react'
-import { Link, useNavigate, Navigate } from 'react-router-dom'
+import { Link, useNavigate, Navigate, useSearchParams } from 'react-router-dom'
 import { useAppContext } from '../context/AppContext'
 import { needsSecretaryOnboarding } from '../lib/onboarding'
 import { motion } from 'framer-motion'
 
 const LoginPage: React.FC = () => {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { login, isAuthenticated, isInitializing, profile, user } = useAppContext()
-  const [form, setForm] = useState({ email: '', password: '' })
+  const [form, setForm] = useState({ email: searchParams.get('email') || '', password: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 

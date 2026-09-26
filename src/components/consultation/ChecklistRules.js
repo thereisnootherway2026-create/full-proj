@@ -1,15 +1,39 @@
 import { PRIORITY, ACTION_TARGET } from './ChecklistTypes.js'
 
+// Allergy rules read ctx.allergiesStatus ('unknown' | 'none' | 'listed', see
+// lib/clinical/clinicalStatus). The critical, non-dismissible banners exist ONLY
+// for a verified list ('listed'): an unverified record is never presented as
+// "no allergy", it produces the "Vérifier les allergies" item instead.
+const allergiesListed = (ctx) => ctx.allergiesStatus === 'listed'
+
 /**
  * CHECKLIST_RULES — array of rule definitions.
  * Each rule: { id, test(patientContext), generate(patientContext) }
  * Rules are evaluated in order; add new rules here without touching UI.
  */
 export const CHECKLIST_RULES = [
+  // ── IMPORTANT: allergies never verified ────────────────────────────────────
+  {
+    id: 'allergies_verify',
+    test: (ctx) => ctx.allergiesStatus === 'unknown',
+    generate: () => ({
+      id: 'allergies_verify',
+      priority: PRIORITY.IMPORTANT,
+      title: 'Vérifier les allergies',
+      description: 'Allergies non renseignées : demandez-les au patient avant toute prescription.',
+      actionLabel: 'Allergies',
+      actionTarget: null,
+      isAllergy: false,
+      // Done as soon as the doctor records a status ('none' or 'listed').
+      autoCompleteWhen: (formData) => Boolean(formData?.allergiesStatus) && formData.allergiesStatus !== 'unknown',
+    }),
+  },
+
   // ── CRITICAL: Allergy alerts (non-dismissible, no checkbox) ────────────────
   {
     id: 'allergy_penicillin',
     test: (ctx) =>
+      allergiesListed(ctx) &&
       ctx.allergies?.some(
         (a) =>
           a.detail?.toLowerCase().includes('pénicilline') ||
@@ -44,6 +68,7 @@ export const CHECKLIST_RULES = [
   {
     id: 'allergy_other',
     test: (ctx) =>
+      allergiesListed(ctx) &&
       ctx.allergies?.some(
         (a) =>
           !a.detail?.toLowerCase().includes('pénicilline') &&

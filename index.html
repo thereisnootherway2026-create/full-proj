@@ -1,36 +1,6 @@
 <!DOCTYPE html>
 <html lang="fr">
   <head>
-    <script>
-      function displayError(msg) {
-        const render = function() {
-          const div = document.createElement('div');
-          div.style.padding = '20px';
-          div.style.color = 'red';
-          div.style.background = 'white';
-          div.style.position = 'relative';
-          div.style.zIndex = '9999';
-          div.style.fontSize = '20px';
-          div.textContent = 'Error: ' + msg;
-          document.body.prepend(div);
-        };
-        if (document.body) {
-          render();
-        } else {
-          document.addEventListener('DOMContentLoaded', render);
-        }
-      }
-      window.onerror = function(message, source, lineno, colno, error) {
-        displayError(message + '\n' + (error && error.stack ? error.stack : ''));
-      };
-      const originalConsoleError = console.error;
-      console.error = function() {
-        originalConsoleError.apply(console, arguments);
-        const args = Array.from(arguments).map(String).join(' ');
-        if (args.includes('Warning:')) return; // Ignore React warnings
-        displayError(args);
-      };
-    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MacroMedica - Dossier Patient</title>

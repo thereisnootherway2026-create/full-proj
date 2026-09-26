@@ -30,6 +30,8 @@ export const useEncaisser = () => {
       encaisserFacture(facture, montant, method),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['factures'] });
+      // The patient dossier's Factures tab keeps its own per-patient list.
+      queryClient.invalidateQueries({ queryKey: ['patient-factures'] });
       window.dispatchEvent(new CustomEvent('mm:payments-changed'));
     },
   });

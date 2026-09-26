@@ -37,6 +37,7 @@ import {
   FilePlus,
   Save,
   CalendarClock,
+  Clock,
   Check,
   Wind,
   Zap,
@@ -44,14 +45,18 @@ import {
   Calculator,
   Info,
   ContactRound,
-  HeartPulse,
 } from 'lucide-react'
 import { useAppContext } from '../../context/AppContext'
 
-import { getDocuments, getOrdonnances, getPatientById, getPatientClinicalFields } from '../../lib/api'
+import { getDocuments, getOrdonnances, getOrdonnancesForPatient, getPatientById, getPatientClinicalFields, getPatientAgeApprox, emitOrdonnance, cancelOrdonnance, duplicateOrdonnance } from '../../lib/api'
+import { getPatientMedications } from '../../lib/dossierApi'
+import ClinicalStatusBadge from '../../components/clinical/ClinicalStatusBadge'
+import AgeSexeLine from '../../components/clinical/AgeSexeLine'
+import { computeAge } from '../../lib/clinical/age'
 import { VISIT_STATUSES } from '../../lib/workflow'
 import { useFocusMode } from '../../hooks/useFocusMode'
 import ConsultationSheet from '../../components/consultation/ConsultationSheet'
+import { printDocument, useDocumentHeader } from '../../components/consultation/DocumentComposer'
 import AddItemModal from '../../components/consultation/AddItemModal'
 import Button from '../../components/common/Button'
 import Badge from '../../components/common/Badge'
@@ -64,7 +69,14 @@ import { useEncounterDraft } from '../../hooks/useEncounterDraft'
 import { getOpenDraft, listCompletedEncounters, normalizeNote } from '../../lib/encounterService'
 import { ordonnancesFromEncounters, examensFromEncounters } from '../../lib/patientRecords'
 import { fetchFactures } from '../../components/facturation/api'
-import { OrdonnancesList, ExamensList, ImagerieList, FacturesList } from '../../components/Patient/DossierRecords'
+import { OrdonnancesPanel, ImagerieList, FacturesList } from '../../components/Patient/DossierRecords'
+import ExamensPanel from '../../components/Patient/ExamensPanel'
+import { listPatientExams, isMissingTable } from '../../lib/examService'
+import { printOrdonnance } from '../../components/Patient/OrdonnancePrint'
+import OrdonnanceFormModal from '../../components/forms/OrdonnanceFormModal'
+import { useFacturationStore } from '../../components/facturation/store'
+import { FactureDrawer } from '../../components/facturation/FactureDrawer'
+import { RecuPaiement } from '../../components/facturation/RecuPaiement'
 import { Backdrop, FocusableCard, MedicalTextarea } from '../../components/FocusMode'
 import PreparationChecklist from '../../components/consultation/PreparationChecklist'
 
@@ -79,40 +91,12 @@ const MOCK_MEDICATIONS = [
   { id: 2, name: 'Ramipril 5mg', dosage: '1 cp le soir', compliance: 'good' },
 ]
 
-const MOCK_RESULTS = [
-  { id: 1, type: 'Glycémie', value: '1,2 g/L', date: '14 juin 2026', status: 'normal' },
-  { id: 2, type: 'Tension', value: '120/80 mmHg', date: '14 juin 2026', status: 'normal' },
-]
-
-
-const DOCUMENTS = [
-  { id: 1, type: 'prescription', name: 'Ordonnance', date: '19 juin 2026', doctor: 'Dr. Benali' },
-  { id: 2, type: 'lab', name: 'Bilan sanguin (NFS)', date: '14 juin 2026', doctor: 'Dr. Touggani' },
-  { id: 3, type: 'imaging', name: 'Échographie abdominale', date: '20 mai 2026', doctor: 'Dr. Benali' },
-]
-
 // --- Helper Functions ---
-function calcAge(dateStr) {
-  if (!dateStr) return null
-  const birth = new Date(dateStr)
-  const today = new Date()
-  let age = today.getFullYear() - birth.getFullYear()
-  const m = today.getMonth() - birth.getMonth()
-  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--
-  return Number.isFinite(age) && age >= 0 ? age : null
-}
-
 function formatTimer(seconds) {
   const hours = Math.floor(seconds / 3600)
   const mins = Math.floor((seconds % 3600) / 60)
   const secs = seconds % 60
   return [hours, mins, secs].map(v => String(v).padStart(2, '0')).join(':')
-}
-
-function getGenderLabel(sexe) {
-  if (sexe === 'homme') return 'Homme'
-  if (sexe === 'femme') return 'Femme'
-  return 'Non renseigné'
 }
 
 function formatPatientSince(dateStr) {
@@ -145,10 +129,8 @@ function PatientInfoRow({ icon: Icon, label, value }) {
   )
 }
 
-function PatientSidebar({ patient, age, chronicDisease, currentTreatment, emergencyContact }) {
+function PatientSidebar({ patient, patientId, canSeeClinical, canEditIdentity, activeMedNames = [], emergencyContact }) {
   const initials = `${patient.prenom?.[0] || ''}${patient.nom?.[0] || ''}`.toUpperCase()
-  const allergies = patient.allergies?.trim()
-  const hasAllergies = allergies && allergies.toLowerCase() !== 'aucune'
 
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -161,9 +143,8 @@ function PatientSidebar({ patient, age, chronicDisease, currentTreatment, emerge
             <h2 className="text-xl font-bold leading-tight tracking-tight">
               {patient.prenom} {patient.nom}
             </h2>
-            <p className="mt-1 text-sm text-blue-100/90 font-medium">
-              {age !== null ? `${age} ans` : 'Âge non renseigné'} • {getGenderLabel(patient.sexe)}
-            </p>
+            <AgeSexeLine patient={patient} patientId={patientId} canEdit={canEditIdentity}
+              className="mt-1 text-sm font-medium text-blue-100/90" linkClassName="!text-white" formClassName="text-slate-800" />
           </div>
         </div>
       </div>
@@ -175,21 +156,16 @@ function PatientSidebar({ patient, age, chronicDisease, currentTreatment, emerge
         <PatientInfoRow icon={Calendar} label="Patient depuis" value={formatPatientSince(patient.created_at)} />
       </div>
 
-      <div className="px-5 py-4">
-        <div className={`rounded-xl border p-4 ${hasAllergies ? 'border-red-200 bg-red-50' : 'border-red-100 bg-red-50/50'}`}>
-          <div className="mb-2 flex items-center gap-2">
-            <AlertTriangle size={15} className={hasAllergies ? 'text-red-500' : 'text-red-400'} />
-            <span className={`text-sm font-bold ${hasAllergies ? 'text-red-700' : 'text-red-600'}`}>Allergies</span>
-          </div>
-          <p className={`text-sm font-medium leading-relaxed ${hasAllergies ? 'text-red-800' : 'text-red-700/80'}`}>
-            {hasAllergies ? allergies : 'Non renseignées'}
-          </p>
-        </div>
+      <div className="space-y-2.5 px-5 py-4">
+        <ClinicalStatusBadge kind="allergies" variant="block" restricted={!canSeeClinical}
+          status={patient.allergies_status} items={patient.allergies} verifiedAt={patient.clinical_verified_at} />
+        <ClinicalStatusBadge kind="antecedents" variant="block" restricted={!canSeeClinical}
+          status={patient.antecedents_status} items={patient.antecedents} verifiedAt={patient.clinical_verified_at} />
+        <ClinicalStatusBadge kind="medications" variant="block" restricted={!canSeeClinical}
+          status={patient.medications_status} items={activeMedNames} verifiedAt={patient.clinical_verified_at} />
       </div>
 
       <div className="space-y-0 border-t border-slate-100 px-5 pb-5">
-        <PatientInfoRow icon={HeartPulse} label="Maladies chroniques" value={chronicDisease} />
-        <PatientInfoRow icon={Pill} label="Traitement actuel" value={currentTreatment} />
         <PatientInfoRow icon={ContactRound} label="Contact d'urgence" value={emergencyContact} />
       </div>
     </div>
@@ -251,6 +227,7 @@ function encounterToEvent(enc) {
       traitements: treatments.map((r) => ({ medicament: r.medicament.trim(), posologie: r.posologie?.trim() || '', duree: r.duree?.trim() || '' })),
       examens: n.examens,
       documents: n.documents,
+      documentDrafts: n.documentDrafts,
       suivi: { date: n.followUpDate || '', notes: String(n.followUpNotes || '').trim() },
       constantes: [
         v.bloodPressureSystolic && v.bloodPressureDiastolic ? { label: 'Tension', value: `${v.bloodPressureSystolic}/${v.bloodPressureDiastolic}` } : null,
@@ -259,6 +236,9 @@ function encounterToEvent(enc) {
         String(v.oxygenSaturation || '').trim() ? { label: 'SpO₂', value: `${v.oxygenSaturation} %` } : null,
         String(v.weight || '').trim() ? { label: 'Poids', value: `${v.weight} kg` } : null,
         String(v.height || '').trim() ? { label: 'Taille', value: `${v.height} cm` } : null,
+        String(v.respiratoryRate || '').trim() ? { label: 'FR', value: `${v.respiratoryRate} /min` } : null,
+        String(v.bloodSugar || '').trim() ? { label: 'Glycémie', value: `${v.bloodSugar} g/L` } : null,
+        String(v.painScore || '').trim() ? { label: 'Douleur (EVA)', value: `${v.painScore}/10` } : null,
       ].filter(Boolean),
     },
     tags: [],
@@ -452,6 +432,7 @@ function EventDetailsModal({ event, onClose }) {
   }
   const config = getEventConfig()
   const s = event.sections
+  const documentHeader = useDocumentHeader()
 
   useEffect(() => {
     const handleEsc = (e) => { if (e.key === 'Escape') onClose() }
@@ -558,7 +539,11 @@ function EventDetailsModal({ event, onClose }) {
                   )}
                   {s.documents.length > 0 && (
                     <DetailRow label="Documents">
-                      <div className="flex flex-wrap gap-1.5">{s.documents.map((x) => <Badge key={x} tone="neutral" size="md">{x}</Badge>)}</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {s.documents.map((x) => (s.documentDrafts?.[x]?.body?.trim()
+                          ? <Button key={x} variant="secondary" size="sm" onClick={() => printDocument(x, s.documentDrafts[x], documentHeader)}><Printer className="h-3.5 w-3.5" /> {x}</Button>
+                          : <Badge key={x} tone="neutral" size="md">{x}</Badge>))}
+                      </div>
                     </DetailRow>
                   )}
                 </Card>
@@ -799,15 +784,29 @@ export default function PatientWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams()
   const startConsultation = searchParams.get('startConsultation') === 'true'
   const visitId = searchParams.get('visitId')
-  const { profile, updateVisitStatus, notify } = useAppContext()
+  const { profile, cabinet, updateVisitStatus, notify, canonicalRole, can } = useAppContext()
+  // Starting/finishing a consultation is a clinical act; strictly doctor or admin only
+  const canManageConsultation = canonicalRole === 'doctor' || canonicalRole === 'admin'
+  const queryClient = useQueryClient()
+  const { setFactureOuverteId } = useFacturationStore()
+
+  useEffect(() => {
+    const refresh = () => queryClient.invalidateQueries({ queryKey: ['patient-factures'] })
+    window.addEventListener('mm:payments-changed', refresh)
+    return () => window.removeEventListener('mm:payments-changed', refresh)
+  }, [queryClient])
   
   const { activeCardId, isActive, enterFocusMode, exitFocusMode } = useFocusMode()
 
   // --- State ---
   const actionParam = searchParams.get('action')
-  const [activeTab, setActiveTab] = useState('Historique')
+  // "?tab=Examens" (from the dashboard's results-to-review banner) opens that tab directly.
+  const [activeTab, setActiveTab] = useState(() => {
+    const t = searchParams.get('tab')
+    return ['Historique', 'Ordonnances', 'Examens', 'Imagerie', 'Factures'].includes(t) ? t : 'Historique'
+  })
   const reduceMotion = useReducedMotion()
-  const [consultationStatus, setConsultationStatus] = useState(startConsultation ? 'in_progress' : 'not_started')
+  const [consultationStatus, setConsultationStatus] = useState(startConsultation && canManageConsultation ? 'in_progress' : 'not_started')
   const allowLeaveRef = useRef(false)
   const [showPatientSidebar, setShowPatientSidebar] = useState(false)
   const [timerSeconds, setTimerSeconds] = useState(0)
@@ -816,13 +815,10 @@ export default function PatientWorkspace() {
   const acteScope = usageScope(profile?.clinic_id || profile?.cabinet_id, profile?.id)
   const acteSuggestionsQ = useActeSuggestions(showModal === 'addActe', acteScope)
   const [showSuccess, setShowSuccess] = useState(null)
-  const [showConsultationModal, setShowConsultationModal] = useState(startConsultation)
+  const [busyOrdonnanceId, setBusyOrdonnanceId] = useState(null)
+  const [showConsultationModal, setShowConsultationModal] = useState(startConsultation && canManageConsultation)
 
   // --- Form States ---
-  const [prescriptionForm, setPrescriptionForm] = useState({ medications: '', notes: '' })
-  const [labForm, setLabForm] = useState({ type: '', notes: '' })
-  const [reportForm, setReportForm] = useState({ title: '', content: '' })
-  const [documentForm, setDocumentForm] = useState({ name: '', type: '' })
   const [acteForm, setActeForm] = useState({ name: '', description: '', montant: '' })
   // --- Session actes (local, sprint actuel — persistance Supabase à faire séparément) ---
   // Structure: { id: string, name: string, description: string, montant: number }
@@ -833,7 +829,6 @@ export default function PatientWorkspace() {
   // --- Consultation Notes State ---
   const [note, setNote] = useState(() => normalizeNote({}))
   const [reviewRequested, setReviewRequested] = useState(false)
-  const queryClient = useQueryClient()
   // Existing billing rule: acts total, otherwise the default consultation fee.
   const actesTotal = sessionActes.reduce((sum, a) => sum + a.montant, 0)
   const billingAmount = actesTotal > 0 ? actesTotal : 300
@@ -848,8 +843,11 @@ export default function PatientWorkspace() {
         // antecedents/allergies/groupe_sanguin are doctor/admin-only and
         // come from a separate RPC — getPatientById no longer carries them
         // (see mm_get_patient_clinical / migration 20260912070000).
-        const clinical = await getPatientClinicalFields(patientIdParam)
-        return clinical ? { ...data, ...clinical } : data
+        const [clinical, approx] = await Promise.all([
+          getPatientClinicalFields(patientIdParam),
+          getPatientAgeApprox(patientIdParam),
+        ])
+        return { ...data, date_naissance_approx: approx, ...(clinical || {}) }
       } catch (err) {
         console.error('Supabase fetch failed:', err)
         throw err
@@ -887,11 +885,19 @@ export default function PatientWorkspace() {
 
   // --- Handlers ---
   const handleStartConsultation = useCallback(() => {
+    if (!canManageConsultation) {
+      notify({
+        title: 'Action réservée au médecin',
+        description: 'Seul le médecin praticien peut démarrer ou modifier une consultation clinique.',
+        tone: 'warning'
+      })
+      return
+    }
     allowLeaveRef.current = false
     setConsultationStatus('in_progress')
     setReviewRequested(false)
     setShowConsultationModal(true)
-  }, [])
+  }, [canManageConsultation, notify])
 
   const handleEndConsultation = useCallback(() => {
     setReviewRequested(true)
@@ -912,6 +918,8 @@ export default function PatientWorkspace() {
     queryClient.setQueryData(['encounter-draft', patientIdParam], null)
     queryClient.invalidateQueries({ queryKey: ['encounters', patientIdParam] })
     queryClient.invalidateQueries({ queryKey: ['patient-factures'] })
+    // Completing the consultation creates its exam rows server-side (trigger).
+    queryClient.invalidateQueries({ queryKey: ['patient-exams', patientIdParam] })
     queryClient.invalidateQueries({ queryKey: ['encounter-draft', patientIdParam] })
     queryClient.invalidateQueries({ queryKey: ['consult-ctx-vitals', patientIdParam] })
     if (handoff === 'none') {
@@ -937,29 +945,66 @@ export default function PatientWorkspace() {
     navigate('/dashboard', { replace: true })
   }, [visitId, updateVisitStatus, notify, navigate, sessionActes, queryClient, patientIdParam, billingAmount])
 
-  const handleSavePrescription = useCallback(() => {
-    setShowModal(null)
-    setShowSuccess('Ordonnance créée avec succès !')
-    setPrescriptionForm({ medications: '', notes: '' })
-  }, [])
+  const handleOrdonnanceCreated = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['patient-real-ordonnances', profile?.cabinet_id, patientIdParam] })
+  }, [queryClient, profile?.cabinet_id, patientIdParam])
 
-  const handleSaveLab = useCallback(() => {
-    setShowModal(null)
-    setShowSuccess('Demande d\'analyses envoyée !')
-    setLabForm({ type: '', notes: '' })
-  }, [])
+  const handleEmitOrdonnance = useCallback(async (ord) => {
+    setBusyOrdonnanceId(ord.id)
+    try {
+      await emitOrdonnance(ord.id)
+      notify({ title: 'Ordonnance émise', description: 'Le document est maintenant signé.', tone: 'success' })
+      queryClient.invalidateQueries({ queryKey: ['patient-real-ordonnances', profile?.cabinet_id, patientIdParam] })
+    } catch (err) {
+      notify({ title: 'Échec de l’émission', description: err.message || 'Réessayez.', tone: 'error' })
+    } finally {
+      setBusyOrdonnanceId(null)
+    }
+  }, [notify, queryClient, profile?.cabinet_id, patientIdParam])
 
-  const handleSaveReport = useCallback(() => {
-    setShowModal(null)
-    setShowSuccess('Compte-rendu enregistré !')
-    setReportForm({ title: '', content: '' })
-  }, [])
+  const handleCancelOrdonnance = useCallback(async (ord) => {
+    if (!window.confirm('Annuler cette ordonnance ?')) return
+    setBusyOrdonnanceId(ord.id)
+    try {
+      await cancelOrdonnance(ord.id)
+      notify({ title: 'Ordonnance annulée', tone: 'success' })
+      queryClient.invalidateQueries({ queryKey: ['patient-real-ordonnances', profile?.cabinet_id, patientIdParam] })
+    } catch (err) {
+      notify({ title: 'Échec de l’annulation', description: err.message || 'Réessayez.', tone: 'error' })
+    } finally {
+      setBusyOrdonnanceId(null)
+    }
+  }, [notify, queryClient, profile?.cabinet_id, patientIdParam])
 
-  const handleSaveDocument = useCallback(() => {
-    setShowModal(null)
-    setShowSuccess('Document ajouté !')
-    setDocumentForm({ name: '', type: '' })
-  }, [])
+  const handleDuplicateOrdonnance = useCallback(async (ord) => {
+    setBusyOrdonnanceId(ord.id)
+    try {
+      await duplicateOrdonnance(ord.id)
+      notify({ title: 'Ordonnance dupliquée', description: 'Un nouveau brouillon a été créé.', tone: 'success' })
+      queryClient.invalidateQueries({ queryKey: ['patient-real-ordonnances', profile?.cabinet_id, patientIdParam] })
+    } catch (err) {
+      notify({ title: 'Échec de la duplication', description: err.message || 'Réessayez.', tone: 'error' })
+    } finally {
+      setBusyOrdonnanceId(null)
+    }
+  }, [notify, queryClient, profile?.cabinet_id, patientIdParam])
+
+  const handlePrintOrdonnance = useCallback((ord) => {
+    printOrdonnance({
+      patient: `${patient?.prenom || ''} ${patient?.nom || ''}`.trim(),
+      date: ord.date_prescription ? new Date(ord.date_prescription).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '',
+      ville: ord.entete?.ville || '',
+      medicaments: (ord.lignes || []).filter((l) => l?.medicament?.trim()).map((l) => ({ nom: l.medicament, posologie: l.posologie, duree: l.duree })),
+      instructions: ord.instructions || '',
+      medecin: ord.entete?.nomMedecin || ord.doctor?.nom_complet || '',
+      specialite: ord.entete?.specialite || '',
+      adresse: ord.entete?.adresse || '',
+      telephone: ord.entete?.telephone || '',
+      signe: ord.entete?.signe !== false,
+      // Current logo from Paramètres (not snapshotted into the ordonnance).
+      logo: cabinet?.logo_data_url || null,
+    })
+  }, [patient, cabinet?.logo_data_url])
 
   const handleSaveActe = useCallback(() => {
     const montantNum = parseFloat(acteForm.montant) || 0
@@ -998,11 +1043,31 @@ export default function PatientWorkspace() {
     queryFn: () => getOrdonnances(profile.cabinet_id, patientIdParam),
     enabled: Boolean(profile?.cabinet_id && patientIdParam),
   })
+  const realOrdonnancesQ = useQuery({
+    queryKey: ['patient-real-ordonnances', profile?.cabinet_id, patientIdParam],
+    queryFn: () => getOrdonnancesForPatient(profile.cabinet_id, patientIdParam),
+    enabled: Boolean(profile?.cabinet_id && patientIdParam),
+  })
   // Real dossier data. Ordonnances / examens come from this patient's completed consultations;
   // factures from the billing data (payments) for this patient in this clinic.
   const clinicId = profile?.clinic_id || profile?.cabinet_id
   const derivedOrdonnances = useMemo(() => ordonnancesFromEncounters(encountersQ.data || []), [encountersQ.data])
   const derivedExamens = useMemo(() => examensFromEncounters(encountersQ.data || []), [encountersQ.data])
+  // Motif (+ diagnostic) of each consultation, as "renseignements cliniques" on printed exam requests.
+  const examMotifs = useMemo(() => Object.fromEntries((encountersQ.data || []).map((enc) => {
+    const n = normalizeNote(enc.note)
+    return [enc.id, [n.motif.split('\n')[0].trim(), n.diagnostics.join(', ')].filter(Boolean).join(' — ')]
+  })), [encountersQ.data])
+  // Same query as the Examens tab (shared cache): drives the tab badge.
+  const examsQ = useQuery({
+    queryKey: ['patient-exams', patientIdParam],
+    queryFn: () => listPatientExams(patientIdParam),
+    enabled: Boolean(patientIdParam),
+    retry: (n, e) => !isMissingTable(e) && n < 2,
+  })
+  const examsBadge = examsQ.data
+    ? examsQ.data.filter((e) => e.status === 'demande' || e.status === 'resultat').length
+    : derivedExamens.reduce((n, e) => n + e.items.length, 0)
   const facturesQ = useQuery({
     queryKey: ['patient-factures', clinicId, patientIdParam],
     queryFn: () => fetchFactures(clinicId, patientIdParam),
@@ -1018,16 +1083,25 @@ export default function PatientWorkspace() {
   const draft = useEncounterDraft({
     patientId: patientIdParam,
     visitId,
-    active: showConsultationModal,
+    active: showConsultationModal && canManageConsultation,
     note,
     onHydrate: setNote,
   })
 
   // --- Derived Values ---
-  const age = patient ? calcAge(patient.date_naissance) : null
+  const age = patient ? computeAge(patient.date_naissance) : null
   const initials = patient ? `${patient.prenom?.[0] || ''}${patient.nom?.[0] || ''}`.toUpperCase() : ''
-  const chronicDisease = patient?.antecedents || '—'
-  const currentTreatment = '—'
+  // Clinical lists are doctor/admin only (mm_get_patient_clinical): other roles
+  // see nothing in the chips and "Réservé au médecin" in the info panel.
+  const canSeeClinical = canManageConsultation
+  const canEditIdentity = canSeeClinical || Boolean(can?.('patients.update'))
+  // Same cache key as the consultation sidebar, so a treatment added there shows here.
+  const activeMedsQ = useQuery({
+    queryKey: ['consult-ctx-meds', patientIdParam],
+    queryFn: () => getPatientMedications(patientIdParam),
+    enabled: Boolean(patientIdParam) && canSeeClinical,
+  })
+  const activeMedNames = useMemo(() => (Array.isArray(activeMedsQ.data) ? activeMedsQ.data.filter((m) => m.status === 'Actif').map((m) => m.medication_name) : []), [activeMedsQ.data])
   const emergencyContact = patient?.contact_urgence || '—'
   // "En consultation" (timer, + Acte, ring) only while a real consultation is live: the sheet is
   // open or an open draft exists. A leftover 'in_progress' flag alone (e.g. from the URL) is not enough.
@@ -1169,14 +1243,14 @@ export default function PatientWorkspace() {
                   Terminer la consultation
                 </Button>
               </>
-            ) : (
+            ) : canManageConsultation ? (
               <>
                 <Button variant="accent" size="sm" className="h-10" onClick={handleStartConsultation}>
                   <Plus className="w-4 h-4" />
                   Nouvelle consultation
                 </Button>
               </>
-            )}
+            ) : null}
           </div>
         </div>
       </motion.header>
@@ -1204,39 +1278,34 @@ export default function PatientWorkspace() {
             )}
           </div>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <h1 className="text-[17px] font-bold text-slate-900 tracking-tight truncate">
-                {patient.prenom} {patient.nom}
-              </h1>
-              <span className="text-[13px] text-slate-400 font-medium">
-                {age !== null ? `${age} ans` : null}
-              </span>
-              <span className="text-[12px] text-slate-400">•</span>
-              <span className="text-[13px] text-slate-500 font-medium">
-                {getGenderLabel(patient.sexe)}
-              </span>
-            </div>
-            <div className="flex items-center gap-3 flex-wrap mt-1 text-[12.5px] text-slate-500">
-              {patient.telephone && (
-                <span className="inline-flex items-center gap-1">
-                  <Phone className="w-3.5 h-3.5 text-slate-400" />
-                  {patient.telephone}
-                </span>
-              )}
-              {patient.cin && (
-                <>
-                  <span className="text-slate-300">·</span>
-                  <span className="font-medium">{patient.cin}</span>
-                </>
-              )}
-              <span className="text-slate-300">·</span>
-              <span className="inline-flex items-center gap-1">
-                <CalendarClock className="w-3.5 h-3.5 text-slate-400" />
-                Depuis {formatPatientSince(patient.created_at)}
-              </span>
-            </div>
+          <div className="min-w-0 sm:w-[230px] sm:flex-shrink-0">
+            <h1 className="truncate text-[17px] font-bold tracking-tight text-slate-900">
+              {patient.prenom} {patient.nom}
+            </h1>
+            <AgeSexeLine patient={patient} patientId={patientIdParam} canEdit={canEditIdentity}
+              className="mt-0.5 text-[13px] font-medium text-slate-500" formClassName="max-w-[320px]" />
           </div>
+
+          <dl className="grid min-w-0 flex-1 grid-cols-2 gap-x-6 gap-y-2 border-slate-100 sm:grid-cols-3 sm:border-l sm:pl-6">
+            <div className="min-w-0">
+              <dt className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400">Téléphone</dt>
+              <dd className="mt-0.5 flex items-center gap-1.5 truncate text-[13px] font-semibold text-slate-700">
+                <Phone className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+                {patient.telephone || '—'}
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400">CIN</dt>
+              <dd className="mt-0.5 truncate text-[13px] font-semibold text-slate-700">{patient.cin || '—'}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400">Patient depuis</dt>
+              <dd className="mt-0.5 flex items-center gap-1.5 truncate text-[13px] font-semibold text-slate-700">
+                <CalendarClock className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+                {formatPatientSince(patient.created_at)}
+              </dd>
+            </div>
+          </dl>
 
           <div className="flex items-center gap-2 flex-wrap sm:gap-2">
             {patient.groupe_sanguin && (
@@ -1246,24 +1315,13 @@ export default function PatientWorkspace() {
             </span>
             )}
 
-            {(patient.allergies && patient.allergies.trim() && patient.allergies.toLowerCase() !== 'aucune') ? (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-red-50 text-red-700 border border-red-200 text-[12.5px] font-semibold" title={patient.allergies}>
-              <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
-              <span className="truncate max-w-[140px]">{patient.allergies}</span>
-            </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-50 text-slate-500 border border-slate-200 text-[12.5px] font-medium opacity-75">
-              <Shield className="w-3.5 h-3.5 text-slate-400" />
-              Aucune allergie
-            </span>
-            )}
+            {/* Unknown allergies read "à vérifier", never "Aucune allergie" (three-state status). */}
+            <ClinicalStatusBadge kind="allergies" restricted={!canSeeClinical}
+              status={patient.allergies_status} items={patient.allergies} verifiedAt={patient.clinical_verified_at} />
 
-            {chronicDisease && chronicDisease !== '—' ? (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-[12.5px] font-semibold" title={chronicDisease}>
-              <HeartPulse className="w-3.5 h-3.5 text-amber-600" />
-              <span className="truncate max-w-[160px]">{chronicDisease}</span>
-            </span>
-            ) : null}
+            {canSeeClinical && patient.antecedents?.trim() && (
+              <ClinicalStatusBadge kind="antecedents" status={patient.antecedents_status} items={patient.antecedents} />
+            )}
 
             {(patient.mutuelle || patient.assurance) && (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-sky-50 text-sky-700 border border-sky-100 text-[12.5px] font-semibold" title={patient.mutuelle || patient.assurance}>
@@ -1289,8 +1347,8 @@ export default function PatientWorkspace() {
               <nav role="tablist" className="grid w-full grid-cols-2 gap-1 rounded-2xl bg-gray-100 p-1 shadow-inner sm:grid-cols-5">
                 {[
                   { label: 'Historique', icon: Activity },
-                  { label: 'Ordonnances', icon: Pill, count: derivedOrdonnances.length + (ordonnancesQ.data?.length || 0) },
-                  { label: 'Examens', icon: TestTube2, count: derivedExamens.reduce((n, e) => n + e.items.length, 0) + documentsByKind.examens.length },
+                  { label: 'Ordonnances', icon: Pill, count: realOrdonnancesQ.data?.length || 0 },
+                  { label: 'Examens', icon: TestTube2, count: examsBadge + documentsByKind.examens.length },
                   { label: 'Imagerie', icon: ImageIcon, count: documentsByKind.imagerie.length },
                   { label: 'Factures', icon: FileCheck2, count: (facturesQ.data?.length || 0) + documentsByKind.factures.length },
                 ].map(({ label: tab, icon: Icon, count }) => (
@@ -1346,10 +1404,36 @@ export default function PatientWorkspace() {
                         </div>
                       </div>
                     {openDraftQ.data && !showConsultationModal && (
-                      <div className="flex items-center justify-between gap-3 rounded-[0.625rem] border border-amber-200 bg-amber-50 px-4 py-3">
-                        <p className="text-[13.5px] text-amber-900"><span className="font-bold">Consultation en cours</span> · brouillon enregistré à {new Date(openDraftQ.data.updated_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
-                        <button onClick={handleStartConsultation} className="h-9 rounded-lg bg-black px-4 text-[13px] font-bold text-white hover:bg-slate-800">Reprendre</button>
-                      </div>
+                      <motion.div
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.25, ease: 'easeOut' }}
+                        className="flex items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50/60 px-4 py-3.5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100">
+                            <Clock className="h-4 w-4 text-amber-700" />
+                            <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-amber-50" />
+                            </span>
+                          </div>
+                          <p className="min-w-0 truncate text-[13.5px] text-amber-900">
+                            <span className="font-bold">Consultation en cours</span>
+                            <span className="text-amber-700"> · brouillon enregistré à {new Date(openDraftQ.data.updated_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                          </p>
+                        </div>
+                        {canManageConsultation ? (
+                          <Button variant="dark" size="sm" className="h-9 shrink-0" onClick={handleStartConsultation}>
+                            <ChevronRight className="h-4 w-4" />
+                            Reprendre
+                          </Button>
+                        ) : (
+                          <span className="text-[12px] font-semibold text-amber-800 bg-amber-100/90 px-3 py-1.5 rounded-xl shrink-0">
+                            En cours par le médecin
+                          </span>
+                        )}
+                      </motion.div>
                     )}
                     {/* Timeline */}
                     {timelineEvents.length > 0 ? (
@@ -1374,17 +1458,31 @@ export default function PatientWorkspace() {
                 )}
 
                 {activeTab === 'Ordonnances' && (
-                  <OrdonnancesList
-                    items={derivedOrdonnances}
-                    loading={encountersQ.isLoading}
-                    extra={(ordonnancesQ.data || []).length > 0 ? <DossierRecordList title="Ordonnances importées" subtitle="Documents du dossier" icon={Pill} items={ordonnancesQ.data} loading={false} emptyTitle="" emptyDescription="" tone="violet" /> : null}
+                  <OrdonnancesPanel
+                    ordonnances={realOrdonnancesQ.data || []}
+                    derived={derivedOrdonnances}
+                    loading={realOrdonnancesQ.isLoading || encountersQ.isLoading}
+                    canEmit={canManageConsultation}
+                    busyId={busyOrdonnanceId}
+                    onEmit={handleEmitOrdonnance}
+                    onCancel={handleCancelOrdonnance}
+                    onDuplicate={handleDuplicateOrdonnance}
+                    onPrint={handlePrintOrdonnance}
+                    onNew={() => setShowModal('prescription')}
+                    imported={(ordonnancesQ.data || []).length > 0 ? (
+                      <div className="border-t border-slate-100 pt-4">
+                        <DossierRecordList title="Documents importés" subtitle="Ordonnances scannées ou jointes au dossier" icon={Pill} items={ordonnancesQ.data} loading={false} emptyTitle="" emptyDescription="" tone="violet" />
+                      </div>
+                    ) : null}
                   />
                 )}
 
                 {activeTab === 'Examens' && (
-                  <ExamensList
-                    items={derivedExamens}
-                    loading={encountersQ.isLoading}
+                  <ExamensPanel
+                    patient={patient}
+                    patientId={patientIdParam}
+                    fallback={derivedExamens}
+                    motifs={examMotifs}
                     extra={documentsByKind.examens.length > 0 ? <DossierRecordList title="Résultats importés" subtitle="Documents du dossier" icon={TestTube2} items={documentsByKind.examens} loading={false} emptyTitle="" emptyDescription="" tone="emerald" /> : null}
                   />
                 )}
@@ -1400,7 +1498,11 @@ export default function PatientWorkspace() {
                     items={facturesQ.data || []}
                     loading={facturesQ.isLoading}
                     error={facturesQ.isError}
-                    onOpenFacturation={() => navigate('/facturation')}
+                    onSelectFacture={(f) => setFactureOuverteId(f.id)}
+                    onOpenFacturation={() => {
+                      const patientNom = patient ? `${patient.prenom || ''} ${patient.nom || ''}`.trim() : ''
+                      navigate(`/facturation?patientId=${patientIdParam}${patientNom ? `&patientNom=${encodeURIComponent(patientNom)}` : ''}`)
+                    }}
                     extra={documentsByKind.factures.length > 0 ? <DossierRecordList title="Documents de paiement" subtitle="Documents du dossier" icon={FileCheck2} items={documentsByKind.factures} loading={false} emptyTitle="" emptyDescription="" tone="blue" /> : null}
                   />
                 )}
@@ -1432,168 +1534,19 @@ export default function PatientWorkspace() {
         patientConsultations={patientConsultations}
       />
 
+      {/* Always mounted: Modal animates its own opening and closing from `open`. */}
+      <OrdonnanceFormModal
+        open={showModal === 'prescription'}
+        onClose={() => setShowModal(null)}
+        onSuccess={handleOrdonnanceCreated}
+        patient={patient}
+        patientId={patientIdParam}
+        encounterId={null}
+      />
+
       <AnimatePresence>
         {selectedEvent && (
           <EventDetailsModal event={selectedEvent} onClose={() => setSelectedEvent(null)} />
-        )}
-        {showModal === 'prescription' && (
-          <SimpleModal
-            title="Nouvelle Ordonnance"
-            description={`Pour ${patient.prenom} ${patient.nom}`}
-            icon={<Pill size={18} />}
-            onClose={() => setShowModal(null)}
-            onSave={handleSavePrescription}
-          >
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Médicaments
-                </label>
-                <textarea
-                  value={prescriptionForm.medications}
-                  onChange={(e) => setPrescriptionForm({ ...prescriptionForm, medications: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg resize-none focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
-                  rows={4}
-                  placeholder="Ex: Metformine 500mg 2x/jour"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Notes
-                </label>
-                <textarea
-                  value={prescriptionForm.notes}
-                  onChange={(e) => setPrescriptionForm({ ...prescriptionForm, notes: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg resize-none focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
-                  rows={2}
-                  placeholder="Instructions supplémentaires..."
-                />
-              </div>
-            </div>
-          </SimpleModal>
-        )}
-        {showModal === 'lab' && (
-          <SimpleModal
-            title="Demande d'Analyses"
-            description={`Pour ${patient.prenom} ${patient.nom}`}
-            icon={<Microscope size={18} />}
-            onClose={() => setShowModal(null)}
-            onSave={handleSaveLab}
-          >
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Type d'analyses
-                </label>
-                <select
-                  value={labForm.type}
-                  onChange={(e) => setLabForm({ ...labForm, type: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
-                >
-                  <option value="">Sélectionner...</option>
-                  <option value="blood">Sanguin</option>
-                  <option value="urine">Urinaire</option>
-                  <option value="imaging">Imagerie</option>
-                  <option value="other">Autre</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Notes
-                </label>
-                <textarea
-                  value={labForm.notes}
-                  onChange={(e) => setLabForm({ ...labForm, notes: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg resize-none focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
-                  rows={4}
-                  placeholder="Détails sur les analyses à effectuer..."
-                />
-              </div>
-            </div>
-          </SimpleModal>
-        )}
-        {showModal === 'report' && (
-          <SimpleModal
-            title="Nouveau Compte-Rendu"
-            description={`Pour ${patient.prenom} ${patient.nom}`}
-            icon={<FileText size={18} />}
-            onClose={() => setShowModal(null)}
-            onSave={handleSaveReport}
-          >
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Titre
-                </label>
-                <input
-                  value={reportForm.title}
-                  onChange={(e) => setReportForm({ ...reportForm, title: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
-                  placeholder="Ex: Consultation du 19/06/2026"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Contenu
-                </label>
-                <textarea
-                  value={reportForm.content}
-                  onChange={(e) => setReportForm({ ...reportForm, content: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg resize-none focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
-                  rows={6}
-                  placeholder="Rédigez votre compte-rendu ici..."
-                />
-              </div>
-            </div>
-          </SimpleModal>
-        )}
-        {showModal === 'document' && (
-          <SimpleModal
-            title="Ajouter un Document"
-            description={`Pour ${patient.prenom} ${patient.nom}`}
-            icon={<FilePlus size={18} />}
-            onClose={() => setShowModal(null)}
-            onSave={handleSaveDocument}
-          >
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Nom du document
-                </label>
-                <input
-                  value={documentForm.name}
-                  onChange={(e) => setDocumentForm({ ...documentForm, name: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
-                  placeholder="Ex: Résultats d'analyses"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Type de document
-                </label>
-                <select
-                  value={documentForm.type}
-                  onChange={(e) => setDocumentForm({ ...documentForm, type: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-[#e2e8f0] bg-slate-50 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-xs"
-                >
-                  <option value="">Sélectionner...</option>
-                  <option value="lab">Analyses</option>
-                  <option value="report">Compte-rendu</option>
-                  <option value="prescription">Ordonnance</option>
-                  <option value="other">Autre</option>
-                </select>
-              </div>
-              <div className="border-2 border-dashed border-[#e2e8f0] rounded-xl p-6 text-center bg-slate-50">
-                <FileText className="w-9 h-9 text-slate-400 mx-auto mb-2" />
-                <p className="text-xs text-slate-500">
-                  Glissez-déposez un fichier ou cliquez pour parcourir
-                </p>
-                <p className="text-[10px] text-slate-400 mt-1">
-                  PDF, PNG, JPG (max 10MB)
-                </p>
-              </div>
-            </div>
-          </SimpleModal>
         )}
         {blocker.state === 'blocked' && (
           <SimpleModal
@@ -1651,14 +1604,20 @@ export default function PatientWorkspace() {
           <div className="pt-2">
             <PatientSidebar
               patient={patient}
-              age={age}
-              chronicDisease={chronicDisease}
-              currentTreatment={currentTreatment}
+              patientId={patientIdParam}
+              canSeeClinical={canSeeClinical}
+              canEditIdentity={canEditIdentity}
+              activeMedNames={activeMedNames}
               emergencyContact={emergencyContact}
             />
           </div>
         </SimpleModal>
       )}
+
+      {/* Modales Facturation (Détail Facture & Reçu de paiement) */}
+      <FactureDrawer />
+      <RecuPaiement />
+
     </section>
   )
 }

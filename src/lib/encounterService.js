@@ -1,35 +1,40 @@
 import { supabase } from './supabase'
+import { validateVital } from './vitals/validateVital'
+import { isPregnancyStatus } from './clinical/prescribingReadiness'
+import { normalizeDocumentDrafts } from './medicalDocuments'
 
 export const VITAL_KEYS = [
   'bloodPressureSystolic', 'bloodPressureDiastolic', 'heartRate', 'temperature',
-  'respiratoryRate', 'oxygenSaturation', 'weight', 'height',
+  'respiratoryRate', 'oxygenSaturation', 'weight', 'height', 'bloodSugar', 'painScore',
 ]
 
-// Same ranges the database enforces on completion (mm_complete_encounter).
-export const VITAL_RANGES = {
-  bloodPressureSystolic: [40, 300],
-  bloodPressureDiastolic: [20, 200],
-  heartRate: [20, 300],
-  temperature: [25, 45],
-  oxygenSaturation: [0, 100],
-  weight: [0.3, 500],
-  height: [20, 260],
+// Note key -> validateVital type. The absolute bounds behind the errors are the
+// ones mm_complete_encounter enforces (migration 20260924190200).
+export const VITAL_TYPES = {
+  bloodPressureSystolic: 'systolique',
+  bloodPressureDiastolic: 'diastolique',
+  heartRate: 'fc',
+  temperature: 'temperature',
+  respiratoryRate: 'fr',
+  oxygenSaturation: 'spo2',
+  weight: 'poids',
+  height: 'taille',
+  bloodSugar: 'glycemie',
+  painScore: 'eva',
 }
 
+// The blocking problem of one value (impossible or malformed), else null.
+// Unusual-but-possible values are warnings, handled by the Constantes form.
 export function vitalProblem(key, raw) {
-  const text = String(raw ?? '').trim()
-  if (!text) return null
-  const normalized = text.replace(',', '.')
-  if (!/^\d{1,5}(\.\d{1,2})?$/.test(normalized)) return 'Valeur invalide'
-  const n = Number(normalized)
-  const range = VITAL_RANGES[key]
-  if (range && (n < range[0] || n > range[1])) return `Valeur attendue entre ${range[0]} et ${range[1]}`
-  return null
+  const type = VITAL_TYPES[key]
+  if (!type) return null
+  const r = validateVital(type, raw)
+  return r.level === 'error' ? r.message : null
 }
 
 const MAX_ROWS = 30
 const MAX_TEXT = 500
-export const DOCUMENT_OPTIONS = ['Certificat médical', 'Arrêt de travail', 'Courrier au confrère', 'Compte-rendu de consultation']
+export { DOCUMENT_OPTIONS } from './medicalDocuments'
 export const DEPUIS_OPTIONS = ['Aujourd\'hui', 'Quelques jours', '1 semaine', 'Plusieurs semaines', 'Autre']
 export const EVOLUTION_OPTIONS = ['Stable', 'En amélioration', 'En aggravation', 'Fluctuante']
 
@@ -68,7 +73,23 @@ export function normalizeNote(raw) {
     followUpDate: str(n.followUpDate),
     followUpNotes: str(n.followUpNotes) || (legacyFollowUp && legacyFollowUp !== 'Aucun' ? `Contrôle dans ${legacyFollowUp}` : ''),
     documents: strList(n.documents),
+    // Text + parameters of each document in `documents` (see lib/medicalDocuments).
+    documentDrafts: normalizeDocumentDrafts(n.documentDrafts, strList(n.documents)),
+    // Per-visit pregnancy / breastfeeding status ('' = not asked yet).
+    pregnancyStatus: isPregnancyStatus(n.pregnancyStatus) ? n.pregnancyStatus : '',
+    // Unusual vitals the doctor explicitly confirmed: { vitalKey: confirmedValue }.
+    // A confirmation only holds while the value is unchanged.
+    vitalsConfirmed: confirmedVitals(n.vitalsConfirmed),
   }
+}
+
+function confirmedVitals(x) {
+  const out = {}
+  if (!x || typeof x !== 'object') return out
+  for (const k of [...VITAL_KEYS, 'bloodPressure']) {
+    if (typeof x[k] === 'string' && x[k].trim()) out[k] = x[k].slice(0, 20)
+  }
+  return out
 }
 
 export function finalizeNote(raw) {

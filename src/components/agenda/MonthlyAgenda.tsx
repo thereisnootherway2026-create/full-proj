@@ -108,11 +108,16 @@ function MonthlyAgenda({ selectedDate, appointments, onDayClick }: MonthlyAgenda
                   {dayAppointments.slice(0, 3).map((appointment) => (
                     <div
                       key={appointment.id}
-                      className="flex items-center gap-1.5 rounded-md bg-slate-50 px-1.5 py-0.5"
+                      data-rdv-id={appointment.id}
+                      className={cn(
+                        'relative flex items-center gap-1.5 overflow-hidden rounded-md bg-slate-50 px-1.5 py-0.5',
+                        appointment.leaving && 'agenda-leaving',
+                        appointment.justConfirmed && 'agenda-confirmed'
+                      )}
                     >
                       <span className={cn(
                         "h-1.5 w-1.5 shrink-0 rounded-full",
-                        statusDot[appointment.status] || 'bg-slate-400'
+                        appointment.leaving ? 'bg-rose-500' : statusDot[appointment.status] || 'bg-slate-400'
                       )} />
                       <span className="truncate text-[10px] font-bold text-slate-700">
                         {appointment.patientName.split(' ').pop()}

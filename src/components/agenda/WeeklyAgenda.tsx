@@ -1,14 +1,17 @@
 import { memo, useMemo, useState } from 'react'
 import { addDays, format, startOfWeek } from 'date-fns'
 import { fr } from 'date-fns/locale'
+import { Check, X } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { AgendaCalendarAppointmentInput } from './useAgenda'
 import {
   DEFAULT_END_TIME,
   DEFAULT_SLOT_MINUTES,
   DEFAULT_START_TIME,
+  formatMinutes,
   generateSlots,
   parseTimeToMinutes,
+  slotSpan,
 } from './useAgenda'
 
 import { isToday as isDateToday } from 'date-fns'
@@ -16,6 +19,9 @@ import { isToday as isDateToday } from 'date-fns'
 interface WeeklyAgendaProps {
   selectedDate: Date
   appointments: AgendaCalendarAppointmentInput[]
+  startTime?: string
+  endTime?: string
+  slotMinutes?: number
   onDayClick?: (date: Date) => void
   onSelectAppointment?: (id: string) => void
 }
@@ -71,7 +77,15 @@ const fallbackStatus = {
   text: 'text-slate-800',
 }
 
-function WeeklyAgenda({ selectedDate, appointments, onDayClick, onSelectAppointment }: WeeklyAgendaProps) {
+function WeeklyAgenda({
+  selectedDate,
+  appointments,
+  startTime = DEFAULT_START_TIME,
+  endTime = DEFAULT_END_TIME,
+  slotMinutes: step = DEFAULT_SLOT_MINUTES,
+  onDayClick,
+  onSelectAppointment,
+}: WeeklyAgendaProps) {
   const [hoveredDayKey, setHoveredDayKey] = useState<string | null>(null)
 
   const weekStart = startOfWeek(selectedDate, { weekStartsOn: 1 })
@@ -80,19 +94,27 @@ function WeeklyAgenda({ selectedDate, appointments, onDayClick, onSelectAppointm
     [weekStart]
   )
 
-  const slotMinutes = useMemo(() => {
-    const startMinutes = parseTimeToMinutes(DEFAULT_START_TIME) ?? 8 * 60
-    const endMinutes = parseTimeToMinutes(DEFAULT_END_TIME) ?? 18 * 60
-    return generateSlots(startMinutes, endMinutes, DEFAULT_SLOT_MINUTES)
-  }, [])
+  const gridStart = parseTimeToMinutes(startTime) ?? 8 * 60
+  const gridEnd = parseTimeToMinutes(endTime) ?? 18 * 60
 
+  const slotMinutes = useMemo(
+    () => generateSlots(gridStart, gridEnd, step),
+    [gridStart, gridEnd, step]
+  )
+
+  // Keyed by the grid step each appointment STARTS IN (an off-grid 09:10 lands in 09:00), with
+  // the number of steps its duration covers so the cell can draw it that tall.
   const appointmentsBySlot = useMemo(() => {
-    const map = new Map<string, AgendaCalendarAppointmentInput[]>()
+    const map = new Map<string, PlacedAppointment[]>()
 
     appointments.forEach((appointment) => {
-      const key = `${appointment.date}-${appointment.time}`
+      const minutes = parseTimeToMinutes(appointment.time)
+      if (minutes === null || minutes < gridStart || minutes > gridEnd) return
+      const duration = appointment.durationMinutes ?? step
+      const { slot, span } = slotSpan(minutes, duration, gridStart, gridEnd, step)
+      const key = `${appointment.date}-${formatMinutes(slot)}`
       const bucket = map.get(key) ?? []
-      bucket.push(appointment)
+      bucket.push({ ...appointment, span, endLabel: formatMinutes(minutes + duration) })
       map.set(key, bucket)
     })
 
@@ -101,7 +123,7 @@ function WeeklyAgenda({ selectedDate, appointments, onDayClick, onSelectAppointm
     })
 
     return map
-  }, [appointments])
+  }, [appointments, gridStart, gridEnd, step])
 
   return (
     <section className="w-full overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.06)]">
@@ -166,11 +188,13 @@ function WeeklyAgenda({ selectedDate, appointments, onDayClick, onSelectAppointm
   )
 }
 
+type PlacedAppointment = AgendaCalendarAppointmentInput & { span: number; endLabel: string }
+
 interface WeekRowProps {
   timeLabel: string
   weekDays: Date[]
   hoveredDayKey: string | null
-  appointmentsBySlot: Map<string, AgendaCalendarAppointmentInput[]>
+  appointmentsBySlot: Map<string, PlacedAppointment[]>
   onDayClick?: (date: Date) => void
   onSelectAppointment?: (id: string) => void
   setHoveredDayKey: (value: string | null) => void
@@ -208,7 +232,7 @@ function WeekRow({
             onMouseEnter={() => setHoveredDayKey(dayKey)}
             onMouseLeave={() => setHoveredDayKey(null)}
             className={cn(
-              'h-10 border-r border-slate-200 px-1 py-0.5 transition-colors duration-150',
+              'relative h-10 border-r border-slate-200 px-1 py-0.5 transition-colors duration-150',
               isHour ? "border-b border-b-slate-200" : "border-b border-b-slate-200",
               hoveredDayKey === dayKey ? 'bg-blue-50/30' : 'bg-gray-50',
               isToday && 'bg-blue-50/10'
@@ -220,10 +244,12 @@ function WeekRow({
               const cleanName = appt.patientName
                 .replace(/^(Dossier\s*#?\d+\s*-\s*|#\d+\s*-\s*)/i, '')
                 .trim()
+              const isLong = appt.span > 1
 
               return (
                 <button
                   type="button"
+                  data-rdv-id={appt.id}
                   onClick={(e) => {
                     e.stopPropagation()
                     if (onSelectAppointment) {
@@ -232,19 +258,45 @@ function WeekRow({
                       onDayClick?.(day)
                     }
                   }}
+                  // Anchored in its start cell and drawn over the cells its duration covers
+                  // (40px per step, minus the cell's vertical padding).
+                  style={{ height: `${appt.span * 40 - 4}px` }}
                   className={cn(
-                    'w-full min-h-[32px] rounded border px-2 py-1.5 text-left transition-all duration-150 cursor-pointer flex items-center shadow-sm hover:shadow-md',
+                    'absolute inset-x-1 top-0.5 z-10 rounded border px-2 py-1.5 text-left transition-all duration-150 cursor-pointer flex flex-col shadow-sm hover:shadow-md overflow-hidden',
+                    isLong ? 'justify-start' : 'justify-center',
                     cfg.card,
                     cfg.cardHover,
                     cfg.border,
+                    appt.leaving && 'agenda-leaving',
+                    appt.justConfirmed && 'agenda-confirmed',
                   )}
                 >
+                  {appt.leaving && (
+                    <span className="agenda-pop absolute right-1 top-1 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-white shadow-sm">
+                      <X size={10} strokeWidth={3.5} />
+                    </span>
+                  )}
+                  {appt.justConfirmed && (
+                    <span className="agenda-check-pop absolute right-1 top-1 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-white shadow-sm">
+                      <Check size={10} strokeWidth={3.5} />
+                    </span>
+                  )}
                   <span className={cn(
                     'truncate text-[11.5px] font-bold leading-tight',
                     cfg.text
                   )}>
                     {cleanName}
                   </span>
+                  {isLong && (
+                    <span className={cn('truncate text-[10.5px] font-medium tabular-nums opacity-75', cfg.text)}>
+                      {appt.time} – {appt.endLabel}
+                    </span>
+                  )}
+                  {slotAppointments.length > 1 && (
+                    <span className={cn('text-[10px] font-semibold opacity-75', cfg.text)}>
+                      +{slotAppointments.length - 1} autre{slotAppointments.length > 2 ? 's' : ''}
+                    </span>
+                  )}
                 </button>
               )
             })()}

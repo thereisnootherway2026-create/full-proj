@@ -16,8 +16,6 @@ export interface AgendaDayViewProps {
   className?: string
 }
 
-const PIXELS_PER_MINUTE = 52 / 15 // Match AgendaRow height (52px) per slotMinutes (15)
-
 function AgendaDayView({
   date,
   appointments,
@@ -37,9 +35,15 @@ function AgendaDayView({
   })
 
   const timeIndicatorRef = useRef<HTMLDivElement | null>(null)
+  const scrolledDayRef = useRef<string | null>(null)
 
+  // Bring "Maintenant" into view once when a day is opened — not on every items change, which
+  // also fires after each confirm/cancel and on the minute tick and yanked the user back to now.
   useEffect(() => {
     if (!timeIndicatorRef.current) return
+    const dayKey = date.toDateString()
+    if (scrolledDayRef.current === dayKey) return
+    scrolledDayRef.current = dayKey
 
     requestAnimationFrame(() => {
       timeIndicatorRef.current?.scrollIntoView({
@@ -47,7 +51,7 @@ function AgendaDayView({
         block: 'center',
       })
     })
-  }, [items])
+  }, [items, date])
 
   return (
     <section

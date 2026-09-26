@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react'
+import { forwardRef, useEffect, useMemo, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Activity,
@@ -41,6 +41,7 @@ import {
   callPatient,
   openConsultation,
   createWalkInVisit,
+  undoAddToWaitingRoom,
   subscribeClinicVisits,
   processVisitPayment,
   getVisitBillingBalance,
@@ -56,8 +57,9 @@ import { createPatient } from '../lib/api'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { openPrintWindow } from '../components/common/ReceiptPrint'
 import { cancelAppointment, rescheduleAppointment } from '../lib/appointmentService'
-import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
+import { motion, AnimatePresence, useReducedMotion, useIsPresent } from 'framer-motion'
 import { isToday, isPast, parseISO } from 'date-fns'
+import ExamsToReviewBanner from '../components/dashboard/ExamsToReviewBanner'
 
 const TZ = 'Africa/Casablanca'
 const fmtMAD = (n) => (Number(n) || 0).toLocaleString('fr-FR') + ' MAD'
@@ -156,8 +158,12 @@ function FilterChips() {
   )
 }
 
-function PreviewRdvBar({ rdv, doctors, selectedDoctorId, onSelectDoctor, isBusy, onAddToQueue, onCancel, onShowDatePicker, showDatePicker, onConfirmDate, onBack, isHovered, onHover }) {
+// forwardRef for the same reason as PatientCard below: it is listed under an
+// AnimatePresence mode="popLayout" (the Aperçu du jour panel), which needs a ref on its direct
+// child to animate items leaving the list cleanly.
+const PreviewRdvBar = forwardRef(function PreviewRdvBar({ rdv, index = 0, doctors, selectedDoctorId, onSelectDoctor, isBusy, onAddToQueue, onCancel, onShowDatePicker, showDatePicker, onConfirmDate, onBack, isHovered, onHover }, ref) {
   const { can } = useAppContext()
+  const reduceMotion = useReducedMotion()
   const initials = getInitials(rdv)
   const [newDate, setNewDate] = useState(rdv.date_rdv)
   const [addIconHovered, setAddIconHovered] = useState(false)
@@ -166,7 +172,8 @@ function PreviewRdvBar({ rdv, doctors, selectedDoctorId, onSelectDoctor, isBusy,
   const [cancelIconPressed, setCancelIconPressed] = useState(false)
 
   return (
-    <motion.div 
+    <motion.div
+      ref={ref}
       className="PreviewRdvBar py-3 px-4 rounded-xl mb-3"
       data-rdv-id={rdv.id}
       style={{ 
@@ -174,9 +181,13 @@ function PreviewRdvBar({ rdv, doctors, selectedDoctorId, onSelectDoctor, isBusy,
         backgroundColor: '#ffffff',
         boxShadow: '0 1px 2px 0 rgba(0,0,0,0.05)'
       }}
-      initial={{ opacity: 1, y: 0 }}
+      // Same small local entrance as the queue's PatientCard, for a consistent feel across the
+      // dashboard. This list (Prévisualisation) has its own AnimatePresence and its own keys, never
+      // shared with the queue's — there was no travel risk here — it just used to pop in at full
+      // opacity instead of appearing calmly like everything else.
+      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1, transition: { duration: reduceMotion ? 0.12 : 0.2, ease: 'easeOut', delay: reduceMotion ? 0 : Math.min(index, 8) * 0.035 } }}
       exit={{ opacity: 0, height: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } }}
-      transition={{ duration: 0.22, ease: 'easeOut' }}
       willChange="transform, opacity, height, margin, padding"
     >
       <div className="flex items-start gap-3">
@@ -376,7 +387,7 @@ function PreviewRdvBar({ rdv, doctors, selectedDoctorId, onSelectDoctor, isBusy,
       </AnimatePresence>
     </motion.div>
   )
-}
+})
 
 function CancelledRdvBar({ rdv }) {
   const initials = getInitials(rdv)
@@ -414,7 +425,7 @@ function CancelledRdvBar({ rdv }) {
 
 function PreviewCard({ rdvList, cancelledRdvs, isBusy, onAddToQueue, onCancel, onShowDatePicker, showDatePickerMap, onConfirmDate, onBack }) {
   const scheduledAppointments = useMemo(
-    () => rdvList
+    () => (rdvList || [])
       // arrival_status must also be checked — an rdv keeps status='confirme'
       // after being added to the waiting room (only arrival_status changes),
       // so without this a patient already in the queue (added from this
@@ -422,7 +433,10 @@ function PreviewCard({ rdvList, cancelledRdvs, isBusy, onAddToQueue, onCancel, o
       // "Ajouter à la salle" button that would always fail server-side with
       // "patient has already arrived or left" — a correct guard, but a
       // confusing, always-broken-looking button.
-      .filter((rdv) => rdv.status === RDV_STATUSES.SCHEDULED && (rdv.arrival_status || 'NOT_ARRIVED') === 'NOT_ARRIVED')
+      .filter((rdv) => 
+        ['confirme', 'scheduled', 'CONFIRME', 'SCHEDULED'].includes(rdv.status) &&
+        (!rdv.arrival_status || ['NOT_ARRIVED', 'not_arrived'].includes(rdv.arrival_status))
+      )
       .sort((a, b) => new Date(a.date_rdv).getTime() - new Date(b.date_rdv).getTime()),
     [rdvList]
   )
@@ -447,10 +461,11 @@ function PreviewCard({ rdvList, cancelledRdvs, isBusy, onAddToQueue, onCancel, o
       ) : (
         <div className="space-y-0">
           <AnimatePresence mode="popLayout">
-            {scheduledAppointments.map((rdv) => (
+            {scheduledAppointments.map((rdv, index) => (
               <PreviewRdvBar
                 key={rdv.id}
                 rdv={rdv}
+                index={index}
                 isBusy={Boolean(isBusy[rdv.id])}
                 onAddToQueue={() => onAddToQueue(rdv)}
                 onCancel={(type) => type === 'permanent' ? onCancel(rdv) : onShowDatePicker(rdv.id)}
@@ -640,7 +655,17 @@ function TachesDuJourCard({ isExpanded }) {
   );
 }
 
-function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, onAcknowledgeAlert, onEncaisser, onViewReceipt, paidVisits, allPayments, onViewPaymentHistory, isHistoryCard = false, totalPaid = 0, onOpenDossier, onUndo, isUndoable, slideX = 0, balanceChips = false }) {
+// Forwards its ref to the root motion.div: AnimatePresence's mode="popLayout" (used where this card
+// is listed — the live queue and Historique) needs a ref on its direct child to measure and freeze an
+// exiting card's position while its siblings reflow. Without it React warns ("Function components
+// cannot be given refs") and that measurement silently fails — reproduced live: switching the
+// Médecin/Secrétaire POV changes which cards are in view (a card in "encaissement"/billing status
+// only shows for the secretary), and the resulting enter/exit broke instead of animating cleanly.
+// How long the ↩ "annuler l'ajout" arrow stays on a just-added patient's card. Mis-clicks are
+// noticed within seconds; the server-side limit (10 min) is a safety margin, not a target.
+const UNDO_WINDOW_MS = 3 * 60 * 1000
+
+const PatientCard = forwardRef(function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, onAcknowledgeAlert, onEncaisser, onViewReceipt, paidVisits, allPayments, onViewPaymentHistory, isHistoryCard = false, totalPaid = 0, onOpenDossier, onUndo, isUndoable, balanceChips = false }, ref) {
   const { can } = useAppContext()
   console.log('=== PatientCard Debug ===');
   console.log('rdv:', rdv);
@@ -661,7 +686,11 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
   let statusColors = VISIT_STATUS_COLORS[normalizedStatus] || VISIT_STATUS_COLORS[VISIT_STATUSES.WAITING];
   let statusLabel = (rdv.status && VISIT_STATUS_LABELS[rdv.status]) || rdv.time_status || 'En attente';
 
-  if (isHistoryCard || isPartial || rdv.status === 'PARTIEL' || rdv.status === 'TERMINÉ' || normalizedStatus === VISIT_STATUSES.COMPLETED) {
+  if (balanceChips) {
+    // A balance from an earlier visit, shown because the patient is back today.
+    statusColors = { border: '#f59e0b', badgeBg: '#fef3c7', badgeText: '#92400e' };
+    statusLabel = 'Solde à encaisser';
+  } else if (isHistoryCard || isPartial || rdv.status === 'PARTIEL' || rdv.status === 'TERMINÉ' || normalizedStatus === VISIT_STATUSES.COMPLETED) {
     if (isPartial || reste > 0) {
       statusColors = { border: '#f59e0b', badgeBg: '#fef3c7', badgeText: '#92400e' };
       statusLabel = `Payé partiellement: ${totalPaidSoFar} MAD / ${totalAmount} MAD`;
@@ -681,53 +710,70 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
   const [undoHovered, setUndoHovered] = useState(false);
   const [undoPressed, setUndoPressed] = useState(false);
 
-  // Motion variants
-  // Directional rhythm between the queue and Historique: the queue "lives" on the left and Historique
-  // on the right (slideX < 0 / > 0). A card slides in from its own side, one after another, and
-  // leaves toward the same side, so switching views always reads as a coherent left/right move.
+  // Motion variants — a small, purely local entrance/exit. No `layout`, no `layoutId`, no shared
+  // motion identity: this card only ever animates relative to itself (its own opacity/position),
+  // never relative to where it (or another card) was previously rendered. That, combined with the
+  // POV-namespaced keys above, is what stops a card from visually travelling between the Médecin and
+  // Secrétaire views — there is nothing here left that computes a delta between two renders.
   const reduceMotion = useReducedMotion();
-  const slide = reduceMotion ? 0 : slideX;
+  // A long list would otherwise queue up a very visible cascade; cap how many cards actually stagger.
+  const staggerDelay = reduceMotion ? 0 : Math.min(index, 8) * 0.035;
   const cardVariants = {
-    initial: reduceMotion ? { opacity: 0 } : slide ? { opacity: 0, x: slide } : { opacity: 0, y: 20 },
+    initial: reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.99 },
     normal: {
       opacity: 1,
-      x: 0,
       y: 0,
+      scale: 1,
       boxShadow: '0 1px 2px 0 rgba(0,0,0,0.05)',
-      transition: { duration: 0.3, ease: 'easeOut', delay: index * 0.06 }
+      transition: { duration: reduceMotion ? 0.12 : 0.2, ease: 'easeOut', delay: staggerDelay }
     },
     alert: {
       opacity: 1,
-      x: 0,
       y: -3,
+      scale: 1,
       boxShadow: '0 8px 20px rgba(0,0,0,0.18)',
-      transition: { duration: 0.25, ease: 'easeOut' }
+      transition: { duration: 0.2, ease: 'easeOut' }
     },
     leave: {
       opacity: 0,
-      x: slide,
-      transition: { duration: 0.16, ease: 'easeIn', delay: index * 0.03 }
+      y: reduceMotion ? 0 : 6,
+      scale: reduceMotion ? 1 : 0.99,
+      transition: { duration: reduceMotion ? 0.1 : 0.15, ease: 'easeIn' }
     }
   };
 
   const isPaid = paidVisits.has(rdv.id);
   // Billing entries say when the balance originated: today, or the earlier day it was billed.
   const showBilledOn = isSecretary && !isHistoryCard && normalizedStatus === VISIT_STATUSES.BILLING;
-  const carriedOver = showBilledOn && isCarriedOver(rdv);
+  // Balance cards are always from an earlier day (unpaid, or closed after a partial payment).
+  const carriedOver = (showBilledOn && isCarriedOver(rdv)) || (isSecretary && balanceChips && Boolean(billedAt(rdv)));
+  const canCollectBalance = balanceChips && reste > 0;
   const accentColor = carriedOver ? '#d97706' : statusColors.border;
+  // Doctor's Historique: the consultation is done — what matters is that, not the payment
+  // breakdown (that's the secretary's job). One quiet status, no pills, no accent bar; an
+  // outstanding balance is still mentioned, as plain text.
+  const doctorHistory = isDoctor && (isHistoryCard || balanceChips);
+  const doctorStatus = normalizedStatus === VISIT_STATUSES.BILLING
+    ? { label: 'En encaissement', dot: 'bg-amber-400', text: 'text-amber-700' }
+    : { label: 'Terminée', dot: 'bg-emerald-500', text: 'text-emerald-700' };
 
   return (
     <motion.div
+      ref={ref}
+      // Deliberately no `layout` (and no `layoutId`) prop: that's what let a card interpolate a
+      // transform between its old and new rendered position instead of just fading in fresh. A card
+      // that changes row now simply re-fades at its new spot via popLayout's normal reflow, with no
+      // animated delta computed between the two — see cardVariants above for the full reasoning.
       className={`mb-3 rounded-[16px] border bg-white shadow-sm p-4 flex items-center gap-4 relative overflow-hidden ${carriedOver ? 'border-amber-300' : 'border-slate-200'}`}
       initial="initial"
       animate={isSecretary && isAlertActive ? 'alert' : 'normal'}
-      exit={slideX ? 'leave' : undefined}
+      exit="leave"
       variants={cardVariants}
       onClick={isSecretary && isAlertActive ? () => onAcknowledgeAlert(rdv.id) : undefined}
       style={{ cursor: isSecretary && isAlertActive ? 'pointer' : 'default' }}
     >
-      {/* Left accent bar (4px, no radius) */}
-      <div className="absolute left-0 top-0 bottom-0 w-1" style={{ backgroundColor: accentColor }} />
+      {/* Left accent bar (4px, no radius) — not in the doctor's Historique */}
+      {!doctorHistory && <div className="absolute left-0 top-0 bottom-0 w-1" style={{ backgroundColor: accentColor }} />}
 
       {/* Patient avatar */}
       <div className="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden flex-shrink-0 ml-4">
@@ -744,9 +790,16 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
         {/* Row 1 - identity: who, and where they are in the flow */}
         <div className="flex items-center gap-2.5 flex-wrap">
           <span className="text-base font-bold text-slate-900">{rdv.patient_name || getPatientName(rdv)}</span>
-          <Badge size="md" className="font-bold" style={{ backgroundColor: statusColors.badgeBg, color: statusColors.badgeText }}>
-            {statusLabel}
-          </Badge>
+          {doctorHistory ? (
+            <span className={`inline-flex items-center gap-1.5 text-[13px] font-medium ${doctorStatus.text}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${doctorStatus.dot}`} />
+              {doctorStatus.label}
+            </span>
+          ) : (
+            <Badge size="md" className="font-bold" style={{ backgroundColor: statusColors.badgeBg, color: statusColors.badgeText }}>
+              {statusLabel}
+            </Badge>
+          )}
           {isSecretary && isAlertActive && <Badge tone="blue" size="md">Envoyé au docteur</Badge>}
         </div>
         {/* Row 2 - details: reason, then matching chips (when it started, paid, left to pay) */}
@@ -755,7 +808,19 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
           {carriedOver && (
             <Badge tone="amber" icon={CalendarClock} title="Solde d'une visite précédente">Depuis le {fmtBilledDay(rdv)}</Badge>
           )}
-          {isHistoryCard || balanceChips ? (
+          {isSecretary && balanceChips && rdv.returnsTodayAt !== undefined && (
+            <Badge tone="blue" title="Le patient revient aujourd'hui">
+              {rdv.returnsTodayAt ? `RDV aujourd'hui ${rdv.returnsTodayAt}` : "Présent aujourd'hui"}
+            </Badge>
+          )}
+          {doctorHistory ? (
+            reste > 0 && (
+              <>
+                <span className="text-slate-300">·</span>
+                <span className="font-semibold text-amber-700">{reste} MAD restant</span>
+              </>
+            )
+          ) : isHistoryCard || balanceChips ? (
             <>
               {(isHistoryCard || totalPaidSoFar > 0) && <Badge tone="neutral">Payé : {totalPaidSoFar} MAD</Badge>}
               {reste > 0 && <Badge tone="amber">Reste à payer : {reste} MAD</Badge>}
@@ -837,7 +902,7 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
             Envoyé
           </button>
         )}
-        {isSecretary && can('billing.collect') && normalizedStatus === VISIT_STATUSES.BILLING && !isPaid && (
+        {isSecretary && can('billing.collect') && (normalizedStatus === VISIT_STATUSES.BILLING || canCollectBalance) && !isPaid && (
           <button 
             onClick={(e) => {
               e.stopPropagation();
@@ -922,6 +987,43 @@ function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, on
       </div>
     </motion.div>
   )
+})
+
+// Reveal for the "Arrivée sans RDV" panel. Opening and closing are mirror images: height, its bottom margin,
+// opacity and position animate together and finish at the same moment, so nothing snaps at the end of the
+// close (the margin used to stay until unmount and the queue jumped up). The patient dropdown may overflow
+// only once the panel is fully open; it is clipped again the instant closing starts.
+const WALKIN_EASE_OUT = [0.16, 1, 0.3, 1]
+const WALKIN_EASE_IN_OUT = [0.4, 0, 0.2, 1]
+function WalkInReveal({ children }) {
+  const isPresent = useIsPresent()
+  const reduceMotion = useReducedMotion()
+  const [settled, setSettled] = useState(false)
+  const k = reduceMotion ? 0 : 1
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0, marginBottom: 0, scale: 0.98, y: -16 }}
+      animate={{
+        opacity: 1, height: 'auto', marginBottom: 24, scale: 1, y: 0,
+        transition: {
+          opacity: { duration: 0.26 * k, ease: 'easeOut' },
+          height: { duration: 0.36 * k, ease: WALKIN_EASE_OUT },
+          marginBottom: { duration: 0.36 * k, ease: WALKIN_EASE_OUT },
+          scale: { duration: 0.36 * k, ease: WALKIN_EASE_OUT },
+          y: { duration: 0.36 * k, ease: WALKIN_EASE_OUT },
+        },
+      }}
+      exit={{
+        opacity: 0, height: 0, marginBottom: 0, scale: 0.98, y: -12,
+        transition: { duration: 0.3 * k, ease: WALKIN_EASE_IN_OUT },
+      }}
+      onAnimationComplete={() => { if (isPresent) setSettled(true) }}
+      style={{ overflow: isPresent && settled ? 'visible' : 'hidden' }}
+      className="relative z-30"
+    >
+      {children}
+    </motion.div>
+  )
 }
 
 export default function DashboardPage() {
@@ -957,7 +1059,6 @@ export default function DashboardPage() {
   const [showDatePickerMap, setShowDatePickerMap] = useState({})
   const [newRdvs, setNewRdvs] = useState(new Set())
   const [showWalkIn, setShowWalkIn] = useState(false)
-  const [walkInAnimFinished, setWalkInAnimFinished] = useState(false)
   const [walkInPatientId, setWalkInPatientId] = useState('')
   const [walkInDoctorId, setWalkInDoctorId] = useState('')
   const [walkInSearchQuery, setWalkInSearchQuery] = useState('')
@@ -968,22 +1069,17 @@ export default function DashboardPage() {
   const [walkInCancelPressed, setWalkInCancelPressed] = useState(false)
   const [walkInCreatingPatient, setWalkInCreatingPatient] = useState(false)
   const [walkInNewPatientPhone, setWalkInNewPatientPhone] = useState('')
-  const [lastUndoableAction, setLastUndoableAction] = useState(null)
+  // Patients just added to the queue that can still be taken back out (the ↩ arrow on their
+  // card): visitId -> patient name. Each entry expires after UNDO_WINDOW_MS; the server allows
+  // a little more (undo_add_to_waiting_room: 10 min, patient still waiting).
+  const [undoableVisits, setUndoableVisits] = useState(() => new Map())
+  const undoTimersRef = useRef(new Map())
   const [localQueueVisits, setLocalQueueVisits] = useState([])
   const fileDattenteRef = useRef(null)
 
-  const toggleWalkIn = () => {
-    if (showWalkIn) {
-      setWalkInAnimFinished(false)
-      setShowWalkIn(false)
-    } else {
-      setWalkInAnimFinished(false)
-      setShowWalkIn(true)
-    }
-  }
+  const toggleWalkIn = () => setShowWalkIn((open) => !open)
 
   const closeWalkIn = () => {
-    setWalkInAnimFinished(false)
     setShowWalkIn(false)
     setWalkInPatientId('')
     setWalkInDoctorId('')
@@ -1075,6 +1171,22 @@ export default function DashboardPage() {
   const isDoctor = canonicalRole === 'doctor' || ['docteur', 'medecin', 'médecin'].includes(String(role || '').toLowerCase())
   console.log("isDoctor:", isDoctor)
   const isSecretary = !isDoctor
+
+  // The walk-in panel is a secretary-only feature (see the render gate below, which is not
+  // wrapped in AnimatePresence for exactly this reason). If it's left open while switching to
+  // the doctor POV (e.g. the dev role switcher), reset it here too, so a later switch back to
+  // secretary starts clean instead of the panel silently reappearing already open.
+  useEffect(() => {
+    if (!isDoctor) return
+    setShowWalkIn(false)
+    setWalkInPatientId('')
+    setWalkInDoctorId('')
+    setWalkInSearchQuery('')
+    setShowWalkInPatientDropdown(false)
+    setWalkInCreatingPatient(false)
+    setWalkInNewPatientPhone('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDoctor])
   const userRole = canonicalRole || role
   const currentDoctorId = profile?.id
   const showPreviewPanel = isSecretary
@@ -1352,7 +1464,7 @@ export default function DashboardPage() {
       const isPaid = paidVisits.has(visit.id)
       const hasPayments = (allPayments[visit.id] || []).length > 0
       const isDoneOrPartial = normalizedStatus === VISIT_STATUSES.COMPLETED || normalizedStatus === VISIT_STATUSES.PARTIEL || visit.status === 'PARTIEL' || visit.status === 'TERMINÉ' || visit.status === 'completed' || visit.status === 'partiel'
-      if (isDoctor) return normalizedStatus === VISIT_STATUSES.WAITING && !isPaid && !hasPayments
+      if (isDoctor) return ['waiting', 'called', VISIT_STATUSES.WAITING, VISIT_STATUSES.CALLED].includes(normalizedStatus) && !isPaid && !hasPayments
       return !isDoneOrPartial && !isPaid && !hasPayments && !isPartiallyPaid(visit)
     })
     
@@ -1396,8 +1508,8 @@ export default function DashboardPage() {
   }, [localQueueVisits, visits, isDoctor, paidVisits, allPayments])
 
   const activeConsultation = useMemo(() => {
-    return filteredQueue.find(visit => visit.status === VISIT_STATUSES.CONSULTATION)
-  }, [filteredQueue])
+    return (visits || []).find(visit => ['consultation', VISIT_STATUSES.CONSULTATION].includes(visit.status))
+  }, [visits])
 
   const filteredHistory = useMemo(() => {
     const map = new Map()
@@ -1413,19 +1525,30 @@ export default function DashboardPage() {
     })
   }, [localQueueVisits, visits, paidVisits, allPayments])
 
-  // Earlier-day visits that still owe money, oldest first. Shown in Historique (not the live
-  // queue); a visit fully paid in this session drops out immediately.
+  // Balances from an earlier visit, shown ONLY for a patient who is back today (an active
+  // appointment or a visit today) — so the secretary knows to collect it this time. Every
+  // other open balance lives in Facturation > Débiteurs, not on the dashboard. A partial
+  // payment closes its visit (migration 20260923060000), so today's partly-paid visits sit in
+  // "Terminées aujourd'hui", not here. A balance fully paid in this session drops out at once.
   const historyBalances = useMemo(() => {
-    const today = new Map()
-    localQueueVisits.forEach(visit => today.set(visit.id, visit))
-    ;(visits || []).forEach(visit => today.set(visit.id, visit))
-    const all = new Map()
-    ;(outstandingVisits || []).forEach(visit => all.set(visit.id, visit))
-    Array.from(today.values()).filter(isPartiallyPaid).forEach(visit => all.set(visit.id, visit))
-    return Array.from(all.values())
-      .filter(visit => !paidVisits.has(visit.id))
+    const returning = new Map() // patient_id -> today's time label ("10:30") or '' for a walk-in
+    ;(rdvList || []).forEach((r) => {
+      const s = String(r.status || '').toLowerCase()
+      if (!r.patient_id || ['cancelled', 'annule', 'no_show', 'absent'].includes(s)) return
+      if (!returning.has(r.patient_id)) returning.set(r.patient_id, r.date_rdv ? formatTime(r.date_rdv) : '')
+    })
+    const todayVisits = new Map()
+    localQueueVisits.forEach(visit => todayVisits.set(visit.id, visit))
+    ;(visits || []).forEach(visit => todayVisits.set(visit.id, visit))
+    todayVisits.forEach((v) => { if (v.patient_id && !returning.has(v.patient_id)) returning.set(v.patient_id, '') })
+
+    return (outstandingVisits || [])
+      .filter(visit => !paidVisits.has(visit.id) && returning.has(visit.patient_id))
+      .map(visit => ({ ...visit, returnsTodayAt: returning.get(visit.patient_id) }))
       .sort((a, b) => String(a.queue_date || '').localeCompare(String(b.queue_date || '')))
-  }, [localQueueVisits, visits, outstandingVisits, paidVisits])
+  }, [localQueueVisits, visits, outstandingVisits, paidVisits, rdvList])
+  // Collecting a previous balance is the secretary's job: the doctor's Historique doesn't list them.
+  const shownBalances = isDoctor ? [] : historyBalances
 
   // Filtered patients for walk-in search
   const filteredWalkInPatients = useMemo(() => {
@@ -1461,75 +1584,82 @@ export default function DashboardPage() {
     setLocalVisits(current => current.map(visit => visit.id === visitId ? { ...visit, status, updated_at: new Date().toISOString() } : visit))
   }
 
-  const handleUndo = () => {
-    if (!lastUndoableAction) return;
+  const forgetUndoable = (visitId) => {
+    window.clearTimeout(undoTimersRef.current.get(visitId))
+    undoTimersRef.current.delete(visitId)
+    setUndoableVisits(current => {
+      if (!current.has(visitId)) return current
+      const next = new Map(current)
+      next.delete(visitId)
+      return next
+    })
+  }
 
-    if (lastUndoableAction.type === 'ADD_TO_QUEUE') {
-      // Revert: remove from localQueueVisits AND AppContext visits, add back to localRdvList
-      setLocalQueueVisits(current => current.filter(visit => visit.id !== lastUndoableAction.rdv.id))
-      removeVisit(lastUndoableAction.rdv.id)
-      setLocalRdvList(current => {
-        const newList = [...current];
-        const originalIndex = lastUndoableAction.originalIndex;
-        if (originalIndex !== -1) {
-          newList.splice(originalIndex, 0, lastUndoableAction.rdv);
-        } else {
-          newList.push(lastUndoableAction.rdv);
-        }
-        return newList;
+  // Offer the ↩ arrow on a just-added patient's card for a short while.
+  const rememberUndoable = (visitData, name) => {
+    const visit = Array.isArray(visitData) ? visitData[0] : visitData
+    if (!visit?.id) return
+    setUndoableVisits(current => new Map(current).set(visit.id, name))
+    window.clearTimeout(undoTimersRef.current.get(visit.id))
+    undoTimersRef.current.set(visit.id, window.setTimeout(() => forgetUndoable(visit.id), UNDO_WINDOW_MS))
+  }
+
+  useEffect(() => () => undoTimersRef.current.forEach(timer => window.clearTimeout(timer)), [])
+
+  // Takes a just-added patient back out of the queue, on the server: the visit is withdrawn and
+  // the appointment (if any) returns to the RDV list as "not arrived", still booked.
+  const handleUndo = async (visit) => {
+    const name = undoableVisits.get(visit.id)
+    if (!name) return
+    forgetUndoable(visit.id)
+    setBusy(visit.id, true)
+    try {
+      await undoAddToWaitingRoom(visit.id)
+      setLocalQueueVisits(current => current.filter(item => item.id !== visit.id))
+      removeVisit(visit.id)
+      await Promise.all([refreshVisits?.(), refreshRdv?.()])
+      notify({
+        title: 'Ajout annulé',
+        description: visit.rdv_id
+          ? `${name} a été retiré de la file d'attente et remis dans les rendez-vous.`
+          : `${name} a été retiré de la file d'attente.`,
       })
-      setLastUndoableAction(null)
-      notify({ title: 'Action annulée', description: `${getPatientName(lastUndoableAction.rdv)} a été rétabli dans les rendez-vous` })
+    } catch (error) {
+      const message = String(error?.message || '')
+      notify({
+        title: 'Annulation impossible',
+        description: /no longer waiting/i.test(message)
+          ? "Le patient a déjà été appelé : l'ajout ne peut plus être annulé."
+          : /expired/i.test(message)
+            ? "Le délai pour annuler cet ajout est dépassé."
+            : error?.code === 'PGRST202' || /undo_add_to_waiting_room/.test(message)
+              ? "Cette action nécessite une mise à jour de la base de données (undo_add_to_waiting_room)."
+              : message || "Impossible d'annuler l'ajout.",
+        tone: 'error',
+      })
+    } finally {
+      setBusy(visit.id, false)
     }
   }
 
   const handleAddToQueue = async (rdv) => {
     setBusy(rdv.id, true)
     try {
-      // Call actual backend RPC
-      const { addToWaitingRoom } = await import('../lib/api')
-      await addToWaitingRoom(rdv.id)
-      
-      const originalRdvIndex = localRdvList.findIndex(item => item.id === rdv.id)
+      const doctorId = selectedDoctors[rdv.id] || (doctors && doctors.length > 0 ? doctors[0].id : null)
+      const { addAppointmentToWaitingRoom } = await import('../lib/visitService')
+      const visit = await addAppointmentToWaitingRoom(rdv.id, doctorId)
 
-      // Optimistically insert into AppContext visits so the useEffect resync keeps it alive
-      const newVisitEntry = {
-        id: rdv.id,
-        status: VISIT_STATUSES.WAITING,
-        patient_id: rdv.patients?.id || rdv.patient_id || rdv.id,
-        patients: rdv.patients || { prenom: rdv.prenom || '', nom: rdv.nom || '' },
-        motif: rdv.motif || 'Consultation',
-        date_rdv: rdv.date_rdv,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        patient_name: getPatientName(rdv),
-        time_label: formatTime(rdv.date_rdv),
-        time_status: 'En attente',
-        status_label: 'NOUVEAU',
-        wait_time: '0 min',
-      }
+      // Authoritatively reload visits and rdv from Supabase (the single source of truth!)
+      await Promise.all([
+        refreshVisits?.(),
+        refreshRdv?.(),
+      ])
 
-      updateVisitStatus(rdv.id, VISIT_STATUSES.WAITING, newVisitEntry)
-      setLocalQueueVisits(current => [newVisitEntry, ...current.filter(v => v.id !== rdv.id)])
-      setNewRdvs(prev => new Set([...prev, rdv.id]))
       setLocalRdvList(current => current.filter(item => item.id !== rdv.id))
-      
-      setLastUndoableAction(null) // Disable undo since we persisted it
+      rememberUndoable(visit, getPatientName(rdv))
       notify({ title: 'Patient ajouté', description: `${getPatientName(rdv)} a été ajouté à la file d'attente`, variant: 'success' })
-      setTimeout(() => {
-        setNewRdvs(prev => {
-          const newSet = new Set(prev)
-          newSet.delete(rdv.id)
-          return newSet
-        })
-      }, 1000)
     } catch (error) {
-      console.error(error)
-      // Surface the real server message (permission/tenant/state errors are
-      // all raised with specific, actionable text by add_to_waiting_room) —
-      // a hardcoded generic string here previously hid exactly why an
-      // otherwise-legitimate click failed (e.g. the patient was already
-      // added to the queue).
+      console.error('Error adding patient to queue:', error)
       notify({ title: 'Erreur', description: error?.message || 'Impossible d\'ajouter le patient à la salle d\'attente', tone: 'error' })
     } finally {
       setBusy(rdv.id, false)
@@ -1599,8 +1729,9 @@ export default function DashboardPage() {
     }
     setBusy('walk-in', true)
     try {
-      await createWalkInVisit(walkInPatientId, walkInDoctorId)
+      const visit = await createWalkInVisit(walkInPatientId, walkInDoctorId)
       await refreshVisits?.()
+      rememberUndoable(visit, selectedWalkInPatientName || 'Le patient')
       closeWalkIn()
       notify({ title: 'Patient ajouté', description: 'Le patient a été ajouté à la file d\'attente.' })
     } catch (error) {
@@ -1692,8 +1823,9 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Active Consultation Bar */}
-      {activeConsultation && (
+      {/* Active Consultation Bar — the doctor's shortcut back into the running consultation.
+          Not for the secretary: she can't resume it, and the queue card already shows who is in. */}
+      {isDoctor && activeConsultation && (
         <motion.div
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1729,6 +1861,7 @@ export default function DashboardPage() {
           </div>
         </motion.div>
       )}
+      {isDoctor && <ExamsToReviewBanner />}
       <div className="mx-auto flex w-full flex-col gap-5">
         {/* Unified grid layout to align everything */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 auto-rows-min">
@@ -1757,7 +1890,7 @@ export default function DashboardPage() {
                     <h2 className="text-xl font-bold text-slate-900">Historique</h2>
                     <p className="text-sm font-medium text-slate-600 mt-1">
                       {filteredHistory.length} consultation{filteredHistory.length > 1 ? 's' : ''} terminée{filteredHistory.length > 1 ? 's' : ''} aujourd'hui
-                      {historyBalances.length > 0 && ` · ${historyBalances.length} solde${historyBalances.length > 1 ? 's' : ''} en attente`}
+                      {shownBalances.length > 0 && ` · ${shownBalances.length} solde${shownBalances.length > 1 ? 's' : ''} en attente`}
                     </p>
                   </>
                 ) : (
@@ -1807,51 +1940,25 @@ export default function DashboardPage() {
                 {!showingHistory ? (
                   <motion.div
                     key="queue"
-                    // The view itself only fades; its patient bars carry the left/right motion.
+                    // The view itself only fades; each card handles its own entrance below. The card
+                    // list itself is POV-isolated further down (see the AnimatePresence around
+                    // filteredQueue.map), not here — nesting a key change inside this mode="wait"
+                    // AnimatePresence alongside its own nested AnimatePresence children risked getting
+                    // stuck mid-exit, confirmed in an isolated repro; a plain key on the card list
+                    // itself is the same guarantee via React's own (unconditional) remount, no
+                    // animation-completion timing involved.
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.18, ease: 'easeOut' }}
                   >
+                    {/* Gated outside AnimatePresence: when the POV flips to doctor, this whole
+                        branch must unmount at once, not play WalkInReveal's exit animation —
+                        that animation is only for the secretary explicitly closing the panel. */}
+                    {!isDoctor && can('waiting_room.add_patient') && (
                     <AnimatePresence>
-                      {!isDoctor && can('waiting_room.add_patient') && showWalkIn && (
-                        <motion.div
-                          key="walk-in-panel"
-                          initial={{ opacity: 0, height: 0, scale: 0.98, y: -16, filter: 'blur(4px)' }}
-                          animate={{ 
-                            opacity: 1, 
-                            height: 'auto', 
-                            scale: 1, 
-                            y: 0, 
-                            filter: 'blur(0px)',
-                            transition: {
-                              height: { duration: 0.36, ease: [0.16, 1, 0.3, 1] },
-                              opacity: { duration: 0.26, ease: 'easeOut' },
-                              scale: { duration: 0.36, ease: [0.16, 1, 0.3, 1] },
-                              y: { duration: 0.36, ease: [0.16, 1, 0.3, 1] },
-                              filter: { duration: 0.22 }
-                            }
-                          }}
-                          exit={{ 
-                            opacity: 0, 
-                            height: 0, 
-                            scale: 0.98, 
-                            y: -12, 
-                            filter: 'blur(4px)',
-                            transition: {
-                              height: { duration: 0.26, ease: [0.4, 0, 0.2, 1] },
-                              opacity: { duration: 0.18 },
-                              scale: { duration: 0.22 },
-                              y: { duration: 0.22 },
-                              filter: { duration: 0.18 }
-                            }
-                          }}
-                          onAnimationComplete={() => {
-                            if (showWalkIn) setWalkInAnimFinished(true)
-                          }}
-                          style={{ overflow: walkInAnimFinished ? 'visible' : 'hidden' }}
-                          className="mb-6 relative z-30"
-                        >
+                      {showWalkIn && (
+                        <WalkInReveal key="walk-in-panel">
                           <div className="rounded-2xl border border-blue-200/90 bg-gradient-to-b from-blue-50/40 via-white to-white p-5 shadow-[0_12px_32px_-8px_rgba(37,99,235,0.12),0_2px_8px_rgba(15,23,42,0.04)] space-y-4 relative z-30">
                             {/* Header */}
                             <motion.div 
@@ -2093,9 +2200,10 @@ export default function DashboardPage() {
                           </Button>
                         </motion.div>
                       </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                    </WalkInReveal>
+                      )}
+                    </AnimatePresence>
+                    )}
 
                     {filteredQueue.length === 0 ? (
                       <motion.div className="flex min-h-[440px] flex-col items-center justify-center text-center relative z-0" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -2105,11 +2213,15 @@ export default function DashboardPage() {
                       </motion.div>
                     ) : (
                       <div className="space-y-1 relative z-0">
-                        <AnimatePresence mode="popLayout">
+                        {/* Keyed by POV: React fully unmounts/remounts this whole list when the
+                            Médecin/Secrétaire switch happens (plain React remount, not an animated
+                            exit — see the note above), so a patient who qualifies for both POVs'
+                            queues never keeps the same card instance across the boundary. */}
+                        <AnimatePresence mode="popLayout" key={isDoctor ? 'pov-doctor' : 'pov-secretary'}>
                           {filteredQueue.map((rdv, index) => (
-                            <PatientCard 
-                              key={rdv.id} 
-                              rdv={rdv} 
+                            <PatientCard
+                              key={rdv.id}
+                              rdv={rdv}
                               index={index} 
                               isBusy={Boolean(busyMap[rdv.id])} 
                               onAction={handlePatientAction} 
@@ -2121,9 +2233,8 @@ export default function DashboardPage() {
                               paidVisits={paidVisits}
                               allPayments={allPayments}
                               onViewPaymentHistory={handleViewPaymentHistory}
-                              isUndoable={!isDoctor && lastUndoableAction?.rdv?.id === rdv.id}
-                              slideX={-28}
-                              onUndo={handleUndo}
+                              isUndoable={!isDoctor && undoableVisits.has(rdv.id) && (rdv.status || VISIT_STATUSES.WAITING) === VISIT_STATUSES.WAITING}
+                              onUndo={() => handleUndo(rdv)}
                             />
                           ))}
                         </AnimatePresence>
@@ -2138,13 +2249,13 @@ export default function DashboardPage() {
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.18, ease: 'easeOut' }}
                   >
-                    {historyBalances.length > 0 && (
-                      <div className="mb-5">
+                    {shownBalances.length > 0 && (
+                      <div className="mb-5" key={isDoctor ? 'pov-doctor' : 'pov-secretary'}>
                         <div className="mb-2 flex items-center gap-2">
                           <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">Soldes en attente</h3>
-                          <Badge tone="amber">{historyBalances.length}</Badge>
+                          <Badge tone="amber">{shownBalances.length}</Badge>
                         </div>
-                        {historyBalances.map((visit, index) => (
+                        {shownBalances.map((visit, index) => (
                           <PatientCard
                             key={visit.id}
                             rdv={visit}
@@ -2160,26 +2271,27 @@ export default function DashboardPage() {
                             allPayments={allPayments}
                             onViewPaymentHistory={handleViewPaymentHistory}
                             onOpenDossier={(patientId) => navigate(`/patient-workspace/${patientId}`)}
-                          slideX={28}
                           balanceChips
                           />
                         ))}
                       </div>
                     )}
-                    {historyBalances.length > 0 && filteredHistory.length > 0 && (
+                    {shownBalances.length > 0 && filteredHistory.length > 0 && (
                       <div className="mb-2 flex items-center gap-2">
                         <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">Terminées aujourd'hui</h3>
-                        <Badge tone="neutral">{filteredHistory.length}</Badge>
+                        {isDoctor
+                          ? <span className="text-xs font-semibold text-slate-400">{filteredHistory.length}</span>
+                          : <Badge tone="neutral">{filteredHistory.length}</Badge>}
                       </div>
                     )}
-                    {filteredHistory.length === 0 ? (historyBalances.length > 0 ? null : (
+                    {filteredHistory.length === 0 ? (shownBalances.length > 0 ? null : (
                       <motion.div className="flex min-h-[440px] flex-col items-center justify-center text-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                         <Users className="h-[66px] w-[66px] text-slate-200" strokeWidth={1.6} />
                         <p className="mt-5 text-lg font-semibold text-slate-900">Aucune consultation terminée aujourd'hui</p>
                         <p className="mt-2 text-sm font-medium text-slate-600 max-w-[360px]">Les consultations terminées apparaîtront ici automatiquement.</p>
                       </motion.div>
                     )) : (
-                      <div className="space-y-1">
+                      <div className="space-y-1" key={isDoctor ? 'pov-doctor' : 'pov-secretary'}>
                         {filteredHistory.map((rdv, index) => {
                           // Compute total paid for this visit
                           const visitPayments = allPayments[rdv.id] || [];
@@ -2209,7 +2321,6 @@ export default function DashboardPage() {
                               isHistoryCard={true}
                               totalPaid={totalPaid}
                               onOpenDossier={(patientId) => navigate(`/patient-workspace/${patientId}`)}
-                            slideX={28}
                             />
                           );
                         })}

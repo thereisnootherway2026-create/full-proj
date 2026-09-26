@@ -1,4 +1,5 @@
 import { CHECKLIST_RULES } from './ChecklistRules.js'
+import { resolveClinicalStatus } from '../../lib/clinical/clinicalStatus'
 
 /**
  * Build a structured patient context from the available consultation data.
@@ -25,10 +26,19 @@ export function buildPatientContext(patient, alerts, currentMedications, clinica
   const hasMedication = (name) =>
     medsArr.some((m) => m.name?.toLowerCase().includes(name.toLowerCase()))
 
+  const allergyAlerts = alertsArr.filter((a) => a.type === 'allergy')
+
   return {
     // ── Demographics
     age: patient?.age ?? null,
     gender: patient?.gender ?? null,
+
+    // ── Allergy status: 'unknown' | 'none' | 'listed'. A missing status is
+    // derived from the alerts and can never become 'none'.
+    allergiesStatus: resolveClinicalStatus(
+      patient?.allergiesStatus,
+      allergyAlerts.map((a) => a.label || a.detail || '').filter(Boolean),
+    ),
 
     // ── Conditions (derived from alert array)
     hasHypertension:
@@ -36,7 +46,7 @@ export function buildPatientContext(patient, alerts, currentMedications, clinica
       hasCondition('hypertension') ||
       hasCondition('tensio'),
     hasDiabetes: hasCondition('diab'),
-    allergies: alertsArr.filter((a) => a.type === 'allergy'),
+    allergies: allergyAlerts,
     chronicConditions: alertsArr.filter((a) => a.type === 'chronic'),
 
     // ── Medications

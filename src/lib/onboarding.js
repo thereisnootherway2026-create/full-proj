@@ -5,20 +5,38 @@ import { normalizeRole } from './rbac'
  * step. Only role='secretary' is ever routed through onboarding — other
  * roles (doctor, admin) always return false here.
  *
- * The completion signal is profiles.onboarding_completed_at, set only by
- * mm_finalize_invitation_acceptance (a SECURITY DEFINER function) at the
- * exact moment acceptance finalizes, and protected from direct client
- * writes by a database trigger — so this is a trustworthy, server-verified
- * fact, not a heuristic. Previously this checked a client-writable
- * user_metadata.onboarding_complete flag and a "does nom_complet look like
- * a real two-word name" heuristic — both were unreliable: the metadata
- * flag was never actually set server-side, and the name heuristic broke
- * for every secretary because of a since-fixed bug where the accepted
- * profile's nom_complet was left equal to the invited email address.
+ * Safety rails (each one independently prevents the trap):
+ *
+ * 1. If profile hasn't loaded yet (null/undefined), return false.
+ *    Never block a user based on stale user_metadata alone — wait for
+ *    the real profile from the database.
+ *
+ * 2. Role is resolved from profile.role only (not user_metadata).
+ *    user_metadata.role can be stale — e.g. a doctor account that was
+ *    originally invited as a secretary still carries role='secretaire'
+ *    in auth.users even after mm_dev_switch_role or a profile update.
+ *
+ * 3. If the profile already has a cabinet_id or clinic_id, the user
+ *    is an active member of a clinic and must never be blocked by
+ *    onboarding — even if onboarding_completed_at is still null
+ *    (common for accounts created before the migration that added
+ *    this column).
+ *
+ * 4. Only return true when all of the above pass AND
+ *    onboarding_completed_at is null — i.e. a genuine brand-new
+ *    secretary who hasn't finished the welcome form yet.
  */
 export function needsSecretaryOnboarding(user, profile) {
-  const role = normalizeRole(profile?.role || user?.user_metadata?.role)
+  // Rail 1: no profile loaded yet → never block
+  if (!profile) return false
+
+  // Rail 2: role from the authoritative database profile only
+  const role = normalizeRole(profile.role)
   if (role !== 'secretary') return false
 
-  return !profile?.onboarding_completed_at
+  // Rail 3: already a member of a clinic → already onboarded
+  if (profile.cabinet_id || profile.clinic_id) return false
+
+  // Rail 4: genuine un-onboarded secretary
+  return !profile.onboarding_completed_at
 }

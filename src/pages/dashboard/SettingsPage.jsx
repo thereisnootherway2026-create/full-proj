@@ -14,15 +14,22 @@ import {
   Stethoscope,
   ShieldAlert,
   Info,
-  FolderOpen
+  FolderOpen,
+  ClipboardList,
+  ImagePlus,
+  Trash2
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { cn } from '../../lib/utils'
 import SecretaryManagementSection from '../../components/dashboard/SecretaryManagementSection'
+import ActesCatalogueSection from '../../components/dashboard/ActesCatalogueSection'
 import { useAppContext } from '../../context/AppContext'
 import PinLock from '../../components/common/PinLock'
 import { supabase } from '../../lib/supabase'
+import { logoFileToDataUrl, LOGO_ACCEPT } from '../../lib/cabinetLogo'
+import { SPECIALITES } from '../../data/specialites'
+import { doctorSpecialite } from '../../lib/letterhead'
 
 function SettingsPage() {
   const reduceMotion = useReducedMotion()
@@ -44,15 +51,22 @@ function SettingsPage() {
   } = useAppContext()
 
   const isDoctor = (canonicalRole || role) === 'doctor' || (canonicalRole || role) === 'docteur' || devRoleOverride === 'doctor'
+  // The acte catalogue is managed by the doctor or an admin (also enforced server-side by upsert_acte).
+  const canManageActes = isDoctor || (canonicalRole || role) === 'admin'
   const [activeTab, setActiveTab] = useState('profil')
   const [loggingOut, setLoggingOut] = useState(false)
 
   // ── 1. Profil & Cabinet state ──
   const [doctorName, setDoctorName] = useState('')
+  const [specialite, setSpecialite] = useState('')
   const [cabinetNom, setCabinetNom] = useState('')
   const [cabinetTel, setCabinetTel] = useState('')
   const [cabinetVille, setCabinetVille] = useState('')
   const [cabinetAdresse, setCabinetAdresse] = useState('')
+  const [cabinetLogo, setCabinetLogo] = useState(null)
+  const [logoDirty, setLogoDirty] = useState(false)
+  const [logoBusy, setLogoBusy] = useState(false)
+  const [logoError, setLogoError] = useState(null)
 
   const [savingProfile, setSavingProfile] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
@@ -62,14 +76,39 @@ function SettingsPage() {
   useEffect(() => {
     if (profile) {
       setDoctorName(profile.nom_complet || '')
+      setSpecialite(doctorSpecialite(profile, user) || '')
     }
     if (cabinet) {
       setCabinetNom(cabinet.nom || '')
       setCabinetTel(cabinet.telephone || '')
       setCabinetVille(cabinet.ville || '')
       setCabinetAdresse(cabinet.adresse || '')
+      setCabinetLogo(cabinet.logo_data_url || null)
+      setLogoDirty(false)
     }
-  }, [profile, cabinet])
+  }, [profile, cabinet, user])
+
+  const handleLogoFile = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-picking the same file
+    if (!file) return
+    setLogoError(null)
+    setLogoBusy(true)
+    try {
+      setCabinetLogo(await logoFileToDataUrl(file))
+      setLogoDirty(true)
+    } catch (err) {
+      setLogoError(err.message)
+    } finally {
+      setLogoBusy(false)
+    }
+  }
+
+  const removeLogo = () => {
+    setCabinetLogo(null)
+    setLogoDirty(true)
+    setLogoError(null)
+  }
 
   const handleSaveProfile = async (e) => {
     e.preventDefault()
@@ -87,7 +126,9 @@ function SettingsPage() {
             nom: cabinetNom.trim(),
             telephone: cabinetTel.trim() || null,
             ville: cabinetVille.trim() || null,
-            adresse: cabinetAdresse.trim() || null
+            adresse: cabinetAdresse.trim() || null,
+            // Only sent when changed, so saving the other fields never depends on the logo column.
+            ...(logoDirty ? { logo_data_url: cabinetLogo || null } : {})
           })
           .eq('id', targetCabinetId)
 
@@ -99,7 +140,9 @@ function SettingsPage() {
         const { error: profErr } = await supabase
           .from('profiles')
           .update({
-            nom_complet: doctorName.trim()
+            nom_complet: doctorName.trim(),
+            // Only sent when changed, so saving the rest never depends on this column.
+            ...(specialite.trim() !== (profile?.specialite || '') ? { specialite: specialite.trim() || null } : {})
           })
           .eq('id', user.id)
 
@@ -195,6 +238,7 @@ function SettingsPage() {
   const TABS = [
     { id: 'profil', label: 'Profil & Cabinet', desc: 'Vos informations professionnelles', icon: Building2 },
     ...(isDoctor ? [{ id: 'equipe', label: 'Équipe & Accès', desc: 'Gestion des utilisateurs', icon: Users }] : []),
+    ...(canManageActes ? [{ id: 'actes', label: 'Actes', desc: 'Catalogue et tarifs', icon: ClipboardList }] : []),
     { id: 'securite', label: 'Sécurité & PIN', desc: 'Authentification et sécurité', icon: ShieldCheck },
     { id: 'preferences', label: 'Préférences locales', desc: 'Langue, fuseau horaire, etc.', icon: SlidersHorizontal },
     { id: 'documents', label: 'Documents', desc: 'Ordonnances et documents', icon: FileText },
@@ -339,6 +383,22 @@ function SettingsPage() {
                       </div>
                     </div>
 
+                    {/* Specialty: printed under the doctor's name on ordonnances and documents */}
+                    <div>
+                      <label htmlFor="settings-specialite" className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5 block">
+                        Spécialité
+                      </label>
+                      <select
+                        id="settings-specialite"
+                        value={specialite}
+                        onChange={(e) => setSpecialite(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm font-medium outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 transition-all"
+                      >
+                        <option value="">— Non renseignée (Médecin généraliste) —</option>
+                        {[...new Set([specialite, ...SPECIALITES].filter(Boolean))].map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+
                     {/* Row 2: Phone & City */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
@@ -385,6 +445,52 @@ function SettingsPage() {
                       />
                     </div>
 
+                    {/* Row 4: Logo (Optional) — printed at the top of ordonnances */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                          Logo du cabinet
+                        </label>
+                        <span className="text-[11px] font-medium text-slate-400">Facultatif</span>
+                      </div>
+                      <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50/50 p-3">
+                        <div className="flex h-16 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-white">
+                          {cabinetLogo ? (
+                            <img src={cabinetLogo} alt="Logo du cabinet" className="max-h-full max-w-full object-contain" />
+                          ) : (
+                            <ImagePlus className="h-5 w-5 text-slate-300" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs text-slate-500">
+                            Imprimé en haut des ordonnances. PNG, JPG, WebP ou SVG — un fond transparent rend mieux.
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label className={cn(
+                              'inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50',
+                              logoBusy && 'pointer-events-none opacity-60'
+                            )}>
+                              {logoBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
+                              {cabinetLogo ? 'Changer' : 'Choisir un logo'}
+                              <input type="file" accept={LOGO_ACCEPT} className="sr-only" onChange={handleLogoFile} disabled={logoBusy} />
+                            </label>
+                            {cabinetLogo && (
+                              <button
+                                type="button"
+                                onClick={removeLogo}
+                                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                Retirer
+                              </button>
+                            )}
+                            {logoDirty && <span className="text-[11px] font-medium text-amber-600">Non enregistré</span>}
+                          </div>
+                          {logoError && <p className="mt-1.5 text-xs font-medium text-rose-600">{logoError}</p>}
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Clean Save Footer */}
                     <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-4">
                       <div>
@@ -428,6 +534,11 @@ function SettingsPage() {
                     userRole={canonicalRole || role}
                   />
                 </div>
+              )}
+
+              {/* TAB: ACTES (catalogue & tarifs) */}
+              {activeTab === 'actes' && canManageActes && (
+                <ActesCatalogueSection clinicId={cabinetId} canEdit={canManageActes} notify={notify} />
               )}
 
               {/* TAB 3: SÉCURITÉ */}
@@ -698,6 +809,9 @@ function SettingsPage() {
 
                   {/* Realistic Miniature Document Header */}
                   <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-sm text-center">
+                    {cabinetLogo && (
+                      <img src={cabinetLogo} alt="" className="mx-auto mb-3 max-h-12 max-w-[140px] object-contain" />
+                    )}
                     <p className="text-base font-black text-slate-900 tracking-tight">
                       {doctorName.trim() || 'Dr. Praticien'}
                     </p>
@@ -738,6 +852,24 @@ function SettingsPage() {
                   <p className="text-xs text-slate-500 leading-relaxed">
                     Cet en-tête est généré automatiquement sur vos ordonnances, comptes-rendus et reçus patients.
                   </p>
+                </div>
+              )}
+
+              {/* CONTEXT FOR ACTES */}
+              {activeTab === 'actes' && canManageActes && (
+                <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm space-y-3 text-xs text-slate-600">
+                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <ClipboardList className="w-3.5 h-3.5 text-blue-600" />
+                    Comment ça marche
+                  </span>
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+                    <p className="font-bold text-slate-900 mb-0.5">Prix automatique</p>
+                    <p className="text-slate-500 text-[11px]">Choisir un acte dans « Ajouter un acte » remplit son montant avec le prix standard.</p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+                    <p className="font-bold text-slate-900 mb-0.5">Historique préservé</p>
+                    <p className="text-slate-500 text-[11px]">Modifier un prix ou archiver un acte ne change jamais les factures déjà émises.</p>
+                  </div>
                 </div>
               )}
 

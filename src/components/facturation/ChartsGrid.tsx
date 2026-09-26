@@ -5,6 +5,7 @@ import { Skeleton, ErrorState } from './ui';
 import { filterFactures, getMonthlySeries, getBreakdowns, getAgeingBuckets } from './selectors';
 import { Card, SectionTitle } from './ui';
 import { dh, num } from './format';
+import { stripDoctorTitle } from '../../lib/professionalName';
 import { CHART, STATUT_CHART_COLORS, Reveal, useChartMotion } from './chartTheme';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -82,7 +83,7 @@ export function ChartsGrid() {
   const praticienData = Array.from(breakdowns.byPraticien.entries())
     .map(([id, amount]) => {
       const p = praticiens.find(x => x.id === id);
-      return { name: p ? p.nom.replace('Dr. ', '') : 'Non renseigné', value: amount };
+      return { name: p ? stripDoctorTitle(p.nom) : 'Non renseigné', value: amount };
     })
     .sort((a, b) => b.value - a.value);
 

@@ -1,4 +1,25 @@
-import { VITAL_KEYS, vitalProblem } from './encounterService'
+import { VITAL_KEYS, VITAL_TYPES, vitalProblem } from './encounterService'
+import { validateBloodPressure, validateVital } from './vitals/validateVital'
+
+// Every Constantes value checked with validateVital, plus whether an unusual
+// ('warn') value has been confirmed by the doctor. Blood pressure is one pair.
+// Returns { [key]: { level, message, suggestion?, confirmed } } with key
+// 'bloodPressure' for the pair and the note keys for the others.
+export function reviewVitals(vitals, confirmedMap = {}, ageYears = null) {
+  const ctx = { ageYears }
+  const out = {}
+  const sys = String(vitals.bloodPressureSystolic ?? '').trim()
+  const dia = String(vitals.bloodPressureDiastolic ?? '').trim()
+  const bp = validateBloodPressure(sys, dia, ctx)
+  out.bloodPressure = { ...bp, confirmed: bp.level === 'warn' && confirmedMap.bloodPressure === `${sys}/${dia}` }
+  for (const key of VITAL_KEYS) {
+    if (key === 'bloodPressureSystolic' || key === 'bloodPressureDiastolic') continue
+    const value = String(vitals[key] ?? '').trim()
+    const r = validateVital(VITAL_TYPES[key], value, ctx)
+    out[key] = { ...r, confirmed: r.level === 'warn' && confirmedMap[key] === value }
+  }
+  return out
+}
 
 // The single source of truth for "how far along is this consultation".
 // The stepper badges, stage cards, sidebar circles, the X/N counter, the
@@ -26,7 +47,7 @@ const SECTION_LABELS = { subjectif: 'Motif & symptômes', objectif: 'Examen clin
 const namedTreatments = (note) => note.traitements.filter((r) => filled(r.medicament))
 const halfFilledTreatment = (note) => note.traitements.some((r) => !filled(r.medicament) && (filled(r.posologie) || filled(r.duree)))
 
-export function computeProgress(note, { ready = true } = {}) {
+export function computeProgress(note, { ready = true, ageYears = null } = {}) {
   const v = note.vitals
   const treatments = namedTreatments(note)
   const has = {
@@ -35,7 +56,8 @@ export function computeProgress(note, { ready = true } = {}) {
     plan: Boolean(note.diagnostics.length || filled(note.conduite) || treatments.length || note.examens.length || note.followUpDate || filled(note.followUpNotes) || note.documents.length),
   }
 
-  const measures = [filled(v.bloodPressureSystolic) || filled(v.bloodPressureDiastolic), ...['heartRate', 'temperature', 'oxygenSaturation', 'weight', 'height'].map((k) => filled(v[k]))].filter(Boolean).length
+  const otherVitals = VITAL_KEYS.filter((k) => k !== 'bloodPressureSystolic' && k !== 'bloodPressureDiastolic')
+  const measures = [filled(v.bloodPressureSystolic) || filled(v.bloodPressureDiastolic), ...otherVitals.map((k) => filled(v[k]))].filter(Boolean).length
   const subjCount = [note.motif, note.histoire, note.depuis, note.evolution].filter(filled).length
   const planParts = [
     note.diagnostics.length && plural(note.diagnostics.length, 'diagnostic', 'diagnostics'),
@@ -44,22 +66,27 @@ export function computeProgress(note, { ready = true } = {}) {
   ].filter(Boolean)
   const details = {
     subjectif: has.subjectif ? `${subjCount}/4 champs` : '',
-    objectif: [measures && `${measures}/6 constantes`, filled(note.examen) && 'examen'].filter(Boolean).join(' · '),
+    objectif: [measures && `${measures}/${otherVitals.length + 1} constantes`, filled(note.examen) && 'examen'].filter(Boolean).join(' · '),
     plan: planParts.join(' · '),
   }
   const sections = ['subjectif', 'objectif', 'plan'].map((id) => ({ id, label: SECTION_LABELS[id], filled: has[id], detail: details[id] }))
 
   const blockers = []
   if (!filled(note.motif)) blockers.push('motif de consultation')
-  const bpIncomplete = filled(v.bloodPressureSystolic) !== filled(v.bloodPressureDiastolic)
-  if (VITAL_KEYS.some((k) => vitalProblem(k, v[k])) || bpIncomplete) blockers.push('constantes vitales valides')
+  // Impossible values (incl. an incomplete pair or systolique <= diastolique)
+  // block finishing; unusual values block it until the doctor confirms them.
+  const review = reviewVitals(v, note.vitalsConfirmed || {}, ageYears)
+  const vitalErrors = VITAL_KEYS.some((k) => vitalProblem(k, v[k])) || review.bloodPressure.level === 'error'
+  const unconfirmed = Object.values(review).some((r) => r.level === 'warn' && !r.confirmed)
+  if (vitalErrors) blockers.push('constantes vitales valides')
+  else if (unconfirmed) blockers.push('confirmation des constantes inhabituelles')
   if (halfFilledTreatment(note)) blockers.push('médicament d\'une ligne de traitement')
   if (!ready) blockers.push('chargement du brouillon')
 
   const filledCount = sections.filter((s) => s.filled).length
   const missing = sections.filter((s) => !s.filled).map((s) => s.label)
   const status = blockers.length ? 'blocked' : filledCount < sections.length ? 'partial' : 'complete'
-  return { has, sections, filledCount, total: sections.length, blockers, missing, canFinish: blockers.length === 0, status }
+  return { has, sections, filledCount, total: sections.length, blockers, missing, canFinish: blockers.length === 0, status, vitalsReview: review }
 }
 
 // Whether the dossier page should show the live-consultation UI (timer, "+ Acte",

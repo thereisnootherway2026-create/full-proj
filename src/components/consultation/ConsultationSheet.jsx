@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { animate, useReducedMotion } from 'framer-motion'
-import { AlertTriangle, ArrowLeft, Check, Loader2, PanelLeft, X } from 'lucide-react'
+import { AnimatePresence, animate, motion, useReducedMotion } from 'framer-motion'
+import { AlertTriangle, ArrowLeft, Check, Loader2, PanelLeft, Receipt, X } from 'lucide-react'
 import { getPatientMedications, getPatientVitals } from '../../lib/dossierApi'
 import { DEPUIS_OPTIONS, EVOLUTION_OPTIONS, listCompletedEncounters } from '../../lib/encounterService'
 import { computeProgress } from '../../lib/consultationProgress'
@@ -13,9 +13,13 @@ import Button from '../common/Button'
 import Chip from '../common/Chip'
 import IconButton from '../common/IconButton'
 import { isAtBottom, pickActiveStep, scrollTargetFor } from './sectionScroll'
-import { AddButton, DiagnosisPicker, DocumentToggles, ExamOrders, FollowUpBlock, Panel, TreatmentEditor, allergyMatch, allergyTokens } from './PlanBlocks'
+import { AddButton, BlockHeader, DiagnosisPicker, DocumentsBlock, ExamOrders, FollowUpBlock, Panel, PlanList, TreatmentEditor, allergyMatch, allergyTokens } from './PlanBlocks'
 import PatientContextSidebar from './PatientContextSidebar'
 import { DiscardDialog, DoneScreen, FinalizeDialog } from './ConsultationDialogs'
+import { buildPatientContext, generateChecklist } from './ChecklistEngine'
+import { resolveClinicalStatus, splitClinicalList } from '../../lib/clinical/clinicalStatus'
+import { prescribingReadiness } from '../../lib/clinical/prescribingReadiness'
+import PrescribingGate from '../clinical/PrescribingGate'
 
 const STEPS = [
   { id: 'subjectif', label: 'Motif & symptômes' },
@@ -30,11 +34,6 @@ const fmtDate = (d) => {
   if (days === 0) return 'aujourd\'hui'
   if (days === 1) return 'hier'
   return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
-}
-const calcBMI = (w, h) => {
-  const wn = parseFloat(String(w).replace(',', '.'))
-  const hn = parseFloat(String(h).replace(',', '.'))
-  return wn && hn ? (wn / ((hn / 100) ** 2)).toFixed(1) : null
 }
 
 // Only a boolean UI preference is stored locally; no patient data.
@@ -71,13 +70,31 @@ function SaveStatus({ draft }) {
 }
 
 // Quick optional helpers: small, quiet by default, tied to their field.
+// One row of a ChipChoiceGroup: the label in the group's fixed first column, the options wrapping
+// in the second — so every row's chips start at the same x and a wrap never slides under the label.
 function ChipChoice({ label, options, value, onChange }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label={label}>
-      <span className="mr-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
-      {options.map((o) => (
-        <Chip key={o} role="radio" selected={value === o} onClick={() => onChange(value === o ? '' : o)}>{o}</Chip>
-      ))}
+    <>
+      <span className="pt-[3px] text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={label}>
+        {options.map((o) => (
+          <Chip key={o} role="radio" selected={value === o} onClick={() => onChange(value === o ? '' : o)}>{o}</Chip>
+        ))}
+      </div>
+    </>
+  )
+}
+
+// Small overline naming what a column of a section holds.
+function ColumnTitle({ children }) {
+  return <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">{children}</p>
+}
+
+function ChipChoiceGroup({ children }) {
+  return (
+    // Sits straight on the card under its field — no extra box around it.
+    <div className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-5 gap-y-3 px-1">
+      {children}
     </div>
   )
 }
@@ -95,6 +112,7 @@ export default function ConsultationSheet({
   const [result, setResult] = useState(null)
   const [contextOpen, setContextOpen] = useState(false)
   const [ctxCollapsed, setCtxCollapsed] = useState(readCollapsed)
+  const [gateMissing, setGateMissing] = useState(null)
   const scrollRef = useRef(null)
   const scrollAnim = useRef(null)
   const spyPausedUntil = useRef(0)
@@ -121,17 +139,43 @@ export default function ConsultationSheet({
   const setField = (key) => (value) => setNote((n) => ({ ...n, [key]: value }))
   const setVital = (key) => (e) => setNote((n) => ({ ...n, vitals: { ...n.vitals, [key]: e.target.value } }))
   const applyLastVital = (key, value) => setNote((n) => ({ ...n, vitals: { ...n.vitals, [key]: String(value) } }))
-  const bmi = calcBMI(v.weight, v.height)
+  // "Confirmer" on an unusual value: remembered with the value it applies to.
+  const confirmVital = (key) => setNote((n) => {
+    const value = key === 'bloodPressure'
+      ? `${String(n.vitals.bloodPressureSystolic).trim()}/${String(n.vitals.bloodPressureDiastolic).trim()}`
+      : String(n.vitals[key]).trim()
+    return { ...n, vitalsConfirmed: { ...n.vitalsConfirmed, [key]: value } }
+  })
 
   const when = lastVitals ? fmtDate(lastVitals.date_mesure) : ''
 
   // One derivation feeds the stepper, stage cards, sidebar (X/N + readiness line)
   // and the finalize dialog's blockers (see lib/consultationProgress).
-  const progress = computeProgress(note, { ready: draft.ready })
+  const progress = computeProgress(note, { ready: draft.ready, ageYears: age })
   const { has, blockers } = progress
   const tokens = allergyTokens(patient?.allergies)
   const allergyHits = note.traitements.map((r) => allergyMatch(r.medicament, tokens)).filter(Boolean)
   const patientName = `${patient?.prenom || ''} ${patient?.nom || ''}`.trim()
+
+  // Safety checklist (ChecklistRules): today only the allergy rules can fire from
+  // real data; an item disappears once its autoCompleteWhen is satisfied.
+  const allergiesStatus = resolveClinicalStatus(patient?.allergies_status, patient?.allergies)
+  const safetyItems = useMemo(() => {
+    if (!patient) return []
+    const alerts = allergiesStatus === 'listed' ? splitClinicalList(patient.allergies).map((a) => ({ type: 'allergy', label: a, detail: a })) : []
+    const ctx = buildPatientContext({ age, gender: patient.sexe, allergiesStatus }, alerts, [])
+    return generateChecklist(ctx).filter((item) => !item.isAllergy && !item.autoCompleteWhen({ allergiesStatus }, []))
+  }, [patient, age, allergiesStatus])
+
+  // Traitement > "Ajouter": prescribing needs age, sexe (and pregnancy status for
+  // women of childbearing age). Missing items open a small inline prompt; the rest
+  // of the consultation is never gated.
+  const addTreatmentRow = () => setNote((n) => (n.traitements.length >= 30 ? n : { ...n, traitements: [...n.traitements, { medicament: '', posologie: '', duree: '' }] }))
+  const requestAddTreatment = () => {
+    const r = prescribingReadiness(patient, note)
+    if (r.ready) { setGateMissing(null); addTreatmentRow(); return }
+    setGateMissing(r.missing)
+  }
 
   const goBack = async () => {
     if (mode === 'done') { onCompleted?.(result); return }
@@ -212,23 +256,36 @@ export default function ConsultationSheet({
     try { await draft.discard(); setShowDiscard(false); onDiscarded?.() } catch (e) { setActionError(e?.message || 'Impossible d\'abandonner le brouillon.') } finally { setBusy(false); inFlight.current = false }
   }
 
-  if (!open) return null
-
   const loading = draft.status === 'loading' || draft.status === 'idle'
   const openError = draft.status === 'open_error'
   const toggleCtx = () => setCtxCollapsed((c) => { writeCollapsed(!c); return !c })
   const sidebar = (cls, { collapsible }) => (
-    <PatientContextSidebar className={cls} patient={patient} age={age} meds={activeMeds}
+    <PatientContextSidebar className={cls} patient={patient} patientId={patientId} age={age} meds={activeMeds} safetyItems={safetyItems}
       medsState={medsQ.isLoading ? 'loading' : medsQ.isError ? 'error' : 'ok'}
       vitalsRows={vitalsRows} vitalsState={vitalsQ.isLoading ? 'loading' : vitalsQ.isError ? 'error' : 'ok'}
       encounters={encountersQ.data || []} encountersState={encountersQ.isLoading ? 'loading' : encountersQ.isError ? 'error' : 'ok'}
       progress={progress} onSelectStep={goTo}
-      collapsed={collapsible && ctxCollapsed} onToggleCollapsed={collapsible ? toggleCtx : undefined} onOpenDossier={onOpenContext} />
+      collapsed={collapsible && ctxCollapsed} onToggleCollapsed={collapsible ? toggleCtx : undefined} />
   )
   const actesTotal = acts.reduce((s, a) => s + (Number(a.montant) || 0), 0)
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Nouvelle consultation" className="fixed inset-0 z-[100] flex flex-col bg-slate-50">
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          key="consultation-sheet"
+          role="dialog" aria-modal="true" aria-label="Nouvelle consultation"
+          // A plain fade + a single short upward slide — no scale. Scaling a fixed, full-viewport
+          // element this heavy (header + live sidebar queries + the whole form) forces the browser
+          // to composite a huge layer every frame, which is what made the previous version (opacity
+          // + y + scale together) feel choppy. This is lighter to paint and reads as crisp instead.
+          initial={reduceMotion ? false : { opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10 }}
+          transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+          style={{ willChange: 'opacity, transform' }}
+          className="fixed inset-0 z-[100] flex flex-col bg-slate-50"
+        >
       <header className="flex h-14 flex-shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3 sm:px-5">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <Button variant="ghost" size="sm" onClick={goBack} aria-label="Retour au dossier">
@@ -255,11 +312,19 @@ export default function ConsultationSheet({
           {openError ? (
             <div className="mx-auto mt-16 max-w-md rounded-2xl border border-red-200 bg-white p-6 text-center shadow-sm">
               <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-red-500" />
-              <p className="text-[14px] font-semibold text-slate-900">Consultation indisponible</p>
-              <p className="mt-1 text-[13px] text-slate-500">{draft.error?.message}</p>
-              <div className="mt-4 flex justify-center gap-2">
-                <Button variant="secondary" size="sm" onClick={onClose}>Retour au dossier</Button>
-                <Button variant="primary" size="sm" onClick={draft.retryOpen}>Réessayer</Button>
+              <p className="text-[15px] font-bold text-slate-900">
+                {draft.error?.code === 'forbidden' ? 'Accès réservé au médecin praticien' : 'Consultation indisponible'}
+              </p>
+              <p className="mt-1.5 text-[13px] text-slate-600 leading-relaxed">
+                {draft.error?.code === 'forbidden'
+                  ? 'La conduite et la saisie de la consultation clinique sont strictement réservées au médecin. En tant que secrétariat, vous pouvez consulter le dossier administratif et les documents depuis le dossier patient.'
+                  : (draft.error?.message || 'Impossible d\'ouvrir la consultation.')}
+              </p>
+              <div className="mt-5 flex justify-center gap-2.5">
+                <Button variant="primary" size="sm" onClick={onClose}>Retour au dossier</Button>
+                {draft.error?.code !== 'forbidden' && (
+                  <Button variant="secondary" size="sm" onClick={draft.retryOpen}>Réessayer</Button>
+                )}
               </div>
             </div>
           ) : mode === 'done' ? (
@@ -273,25 +338,25 @@ export default function ConsultationSheet({
               <div className="space-y-6">
                 <StageSection id="subjectif" index={1} title="Motif & symptômes" hint="Pourquoi le patient consulte aujourd'hui"
                   filled={has.subjectif} active={activeStep === 'subjectif'} refEl={refs.subjectif}>
-                  <div className="grid items-start gap-x-6 gap-y-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-                    <NarrativeField emphasis size="lg" required label="Motif de consultation" value={note.motif} onChange={setField('motif')} autoFocus suggestKind="motif"
-                      patientConsultations={patientConsultations} placeholder="Décrivez brièvement le motif principal de consultation..." />
-                    <div>
-                      <NarrativeField size="lg" label="Symptômes / histoire actuelle" value={note.histoire} onChange={setField('histoire')} suggestKind="histoire"
-                        patientConsultations={patientConsultations} placeholder="Début, évolution, intensité, facteurs aggravants ou soulageants, traitements déjà essayés..." />
-                      <div className="mt-2 space-y-1.5">
-                        <ChipChoice label="Depuis" options={DEPUIS_OPTIONS} value={note.depuis} onChange={setField('depuis')} />
-                        <ChipChoice label="Évolution" options={EVOLUTION_OPTIONS} value={note.evolution} onChange={setField('evolution')} />
-                      </div>
-                    </div>
+                  {/* Read top to bottom, the way the doctor asks: why → what/since when → how it evolves */}
+                  <NarrativeField emphasis size="line" required label="Motif de consultation" value={note.motif} onChange={setField('motif')} autoFocus suggestKind="motif" quickPicks={6}
+                    patientConsultations={patientConsultations} placeholder="Motif principal de la consultation…" />
+                  <div>
+                    <NarrativeField size="lg" label="Symptômes / histoire actuelle" value={note.histoire} onChange={setField('histoire')} suggestKind="histoire"
+                      patientConsultations={patientConsultations} placeholder="Début, évolution, intensité, facteurs aggravants ou soulageants, traitements déjà essayés..." />
+                    <ChipChoiceGroup>
+                      <ChipChoice label="Depuis" options={DEPUIS_OPTIONS} value={note.depuis} onChange={setField('depuis')} />
+                      <ChipChoice label="Évolution" options={EVOLUTION_OPTIONS} value={note.evolution} onChange={setField('evolution')} />
+                    </ChipChoiceGroup>
                   </div>
                 </StageSection>
 
                 <StageSection id="objectif" index={2} title="Examen clinique" hint="Constantes et observations"
                   filled={has.objectif} active={activeStep === 'objectif'} refEl={refs.objectif}>
                   <div>
-                    <FieldLabel hint={bmi ? `IMC ${bmi}` : 'Mesures d\'aujourd\'hui'}>Constantes</FieldLabel>
-                    <VitalsGrid vitals={v} setVital={setVital} applyLast={applyLastVital} lastVitals={lastVitals} when={when} age={age} />
+                    <FieldLabel hint="Mesures d'aujourd'hui">Constantes</FieldLabel>
+                    <VitalsGrid vitals={v} setVital={setVital} applyLast={applyLastVital} lastVitals={lastVitals} when={when} age={age}
+                      review={progress.vitalsReview} onConfirm={confirmVital} />
                   </div>
                   <NarrativeField size="sm" label="Examen clinique" value={note.examen} onChange={setField('examen')} suggestKind="examen"
                     patientConsultations={patientConsultations} placeholder="Observations et éléments pertinents de l'examen clinique..." />
@@ -299,29 +364,42 @@ export default function ConsultationSheet({
 
                 <StageSection id="plan" index={3} title="Évaluation & conduite" hint="Diagnostic, traitement et suite"
                   filled={has.plan} active={activeStep === 'plan'} refEl={refs.plan}>
-                  <div className="grid items-start gap-x-6 gap-y-5 xl:grid-cols-2">
+                  {/* Left: the clinical decision. Right: what it produces for the patient, as one list. */}
+                  <div className="grid items-start gap-x-8 gap-y-6 xl:grid-cols-2">
                     <div className="space-y-5">
+                      <ColumnTitle>Décision</ColumnTitle>
                       <DiagnosisPicker items={note.diagnostics} onChange={setField('diagnostics')} />
-                      <NarrativeField size="sm" label="Conduite à tenir" hint="Facultatif" value={note.conduite} onChange={setField('conduite')} suggestKind="plan"
+                      <NarrativeField size="sm" label="Conduite à tenir" value={note.conduite} onChange={setField('conduite')} suggestKind="plan"
                         patientConsultations={patientConsultations} placeholder="Décision clinique, recommandations, surveillance..." />
                       <FollowUpBlock date={note.followUpDate} notes={note.followUpNotes} onDate={setField('followUpDate')} onNotes={setField('followUpNotes')} />
                     </div>
                     <div className="space-y-5">
-                      <TreatmentEditor rows={note.traitements} onChange={setField('traitements')} allergies={patient?.allergies} ordonnance={note.ordonnance} onOrdonnance={setField('ordonnance')} />
-                      {(acts.length > 0 || onAddActe) && (
-                        <Panel>
-                          <FieldLabel emphasis action={<BillingPill />}>Actes de la séance</FieldLabel>
-                          {acts.length > 0 && (
-                            <ul className="mb-3 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
-                              {acts.map((a) => <li key={a.id} className="flex justify-between px-3 py-2 text-[13.5px]"><span>{a.name}</span><span className="font-semibold">{Number(a.montant || 0).toLocaleString('fr-FR')} MAD</span></li>)}
-                              <li className="flex justify-between bg-slate-50 px-3 py-2 text-[13px] font-bold"><span>Total</span><span>{actesTotal.toLocaleString('fr-FR')} MAD</span></li>
-                            </ul>
-                          )}
-                          {onAddActe && <AddButton variant="primary" onClick={onAddActe}>Ajouter un acte</AddButton>}
-                        </Panel>
-                      )}
-                      <ExamOrders items={note.examens} onChange={setField('examens')} />
-                      <DocumentToggles items={note.documents} onChange={setField('documents')} />
+                      <ColumnTitle>Prescriptions & actes</ColumnTitle>
+                      <PlanList>
+                        <TreatmentEditor rows={note.traitements} onChange={setField('traitements')} allergies={patient?.allergies} ordonnance={note.ordonnance} onOrdonnance={setField('ordonnance')}
+                          onAdd={requestAddTreatment}
+                          gate={gateMissing && (
+                            <PrescribingGate patient={patient} patientId={patientId} missing={gateMissing}
+                              pregnancyStatus={note.pregnancyStatus} onPregnancy={setField('pregnancyStatus')}
+                              onContinue={() => { setGateMissing(null); addTreatmentRow() }} onCancel={() => setGateMissing(null)} />
+                          )} />
+                        <ExamOrders items={note.examens} onChange={setField('examens')} patient={patient}
+                          renseignements={[note.motif.trim(), note.diagnostics.join(', ')].filter(Boolean).join(' — ')} />
+                        <DocumentsBlock note={note} patient={patient}
+                          onChange={(documents, documentDrafts) => setNote((n) => ({ ...n, documents, documentDrafts }))} />
+                        {(acts.length > 0 || onAddActe) && (
+                          <Panel>
+                            <BlockHeader icon={Receipt} title="Actes de la séance" count={acts.length}
+                              action={<span className="flex items-center gap-2"><BillingPill />{onAddActe && <AddButton onClick={onAddActe}>Ajouter</AddButton>}</span>} />
+                            {acts.length > 0 && (
+                              <ul className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
+                                {acts.map((a) => <li key={a.id} className="flex justify-between px-3 py-2 text-[13.5px]"><span>{a.name}</span><span className="font-semibold">{Number(a.montant || 0).toLocaleString('fr-FR')} MAD</span></li>)}
+                                <li className="flex justify-between bg-slate-50 px-3 py-2 text-[13px] font-bold"><span>Total</span><span>{actesTotal.toLocaleString('fr-FR')} MAD</span></li>
+                              </ul>
+                            )}
+                          </Panel>
+                        )}
+                      </PlanList>
                     </div>
                   </div>
                 </StageSection>
@@ -347,6 +425,8 @@ export default function ConsultationSheet({
           onCancel={() => setShowFinalize(false)} onConfirm={finalize} />
       )}
       {showDiscard && <DiscardDialog busy={busy} error={actionError} onCancel={() => setShowDiscard(false)} onConfirm={discard} />}
-    </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }

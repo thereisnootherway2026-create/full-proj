@@ -389,6 +389,14 @@ export default function SecretaryWelcomePage() {
     )
   }
 
+  // Defense in depth: any authenticated user who already belongs to a clinic
+  // must never be trapped on this page — redirect to dashboard immediately.
+  // This covers edge cases where needsSecretaryOnboarding's logic might have
+  // a gap (e.g. profile loaded late, stale metadata, etc.).
+  if (isAuthenticated && profile && (profile.cabinet_id || profile.clinic_id) && lookupState !== 'ready') {
+    return <Navigate to="/dashboard" replace />
+  }
+
   if (isAuthenticated && user && profile && !needsSecretaryOnboarding(user, profile) && lookupState !== 'ready') {
     return <Navigate to="/dashboard" replace />
   }

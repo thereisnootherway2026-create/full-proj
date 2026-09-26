@@ -5,7 +5,26 @@ import { filterFactures } from './selectors';
 import { factureNet, facturePaye, factureReste } from './data';
 import { dh, fmtDate } from './format';
 import { StatutBadge, Card, Skeleton, ErrorState } from './ui';
-import { Eye, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
+import { Eye, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, FileText, CreditCard } from 'lucide-react';
+import { cn } from '../../lib/utils';
+
+const formatPatientName = (name?: string) => {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .split(' ')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+};
+
+const initialsOf = (label?: string) =>
+  String(label || '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase() || '?';
 
 type SortKey = 'date' | 'total' | 'paye' | 'reste';
 
@@ -104,44 +123,79 @@ export function FacturesView() {
             </tr>
           </thead>
           <tbody className="text-sm divide-y divide-slate-100">
-            {currentFactures.map(f => (
-              <tr
-                key={f.id}
-                onClick={() => setFactureOuverteId(f.id)}
-                className="hover:bg-slate-50 cursor-pointer transition-colors group"
-              >
-                <td className="py-3 px-4 font-medium text-blue-600 group-hover:text-blue-700 whitespace-nowrap">
-                  {f.numero}
-                </td>
-                <td className="py-3 px-4 text-slate-500 whitespace-nowrap">
-                  {fmtDate(f.dateEmission)}
-                </td>
-                <td className="py-3 px-4 whitespace-nowrap font-medium text-slate-900">
-                  {f.patientNom}
-                </td>
-                <td className="py-3 px-4 font-bold text-slate-900 text-right whitespace-nowrap">
-                  {dh(factureNet(f))}
-                </td>
-                <td className="py-3 px-4 text-slate-600 text-right whitespace-nowrap">
-                  {dh(facturePaye(f))}
-                </td>
-                <td className="py-3 px-4 font-medium text-slate-900 text-right whitespace-nowrap">
-                  {dh(factureReste(f))}
-                </td>
-                <td className="py-3 px-4 text-center whitespace-nowrap">
-                  <StatutBadge statut={f.statut} />
-                </td>
-                <td className="py-3 px-4 text-right whitespace-nowrap">
-                  <button
-                    className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                    title="Voir les détails"
-                    onClick={(e) => { e.stopPropagation(); setFactureOuverteId(f.id); }}
-                  >
-                    <Eye className="w-4 h-4" />
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {currentFactures.map(f => {
+              const reste = factureReste(f);
+              const net = factureNet(f);
+              const paye = facturePaye(f);
+              const isSoldee = reste <= 0;
+
+              return (
+                <tr
+                  key={f.id}
+                  onClick={() => setFactureOuverteId(f.id)}
+                  className="hover:bg-blue-50/40 cursor-pointer transition-colors group"
+                >
+                  <td className="py-3 px-4 whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-mono text-xs font-semibold bg-slate-100 text-slate-700 group-hover:bg-blue-50 group-hover:text-blue-700 transition-colors border border-slate-200/80 group-hover:border-blue-200">
+                      <FileText className="w-3 h-3 text-slate-400 group-hover:text-blue-500" />
+                      {f.numero}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 text-slate-500 whitespace-nowrap text-xs">
+                    {fmtDate(f.dateEmission)}
+                  </td>
+                  <td className="py-3 px-4 whitespace-nowrap">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 font-bold text-[10px] flex items-center justify-center border border-slate-200 shrink-0">
+                        {initialsOf(f.patientNom)}
+                      </div>
+                      <span className="font-semibold text-slate-800 group-hover:text-blue-600 transition-colors">
+                        {formatPatientName(f.patientNom)}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="py-3 px-4 font-bold text-slate-900 text-right whitespace-nowrap">
+                    {dh(net)}
+                  </td>
+                  <td className="py-3 px-4 text-emerald-600 font-semibold text-right whitespace-nowrap">
+                    {dh(paye)}
+                  </td>
+                  <td className="py-3 px-4 text-right whitespace-nowrap">
+                    {isSoldee ? (
+                      <span className="text-slate-400 font-medium text-xs">0 DH</span>
+                    ) : (
+                      <span className="inline-block font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded text-xs border border-amber-200/70">
+                        {dh(reste)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-3 px-4 text-center whitespace-nowrap">
+                    <StatutBadge statut={f.statut} />
+                  </td>
+                  <td className="py-3 px-4 text-right whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1.5" onClick={e => e.stopPropagation()}>
+                      {!isSoldee && (
+                        <button
+                          onClick={() => setFactureOuverteId(f.id, 'pay')}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-600 hover:text-white border border-emerald-200 hover:border-transparent transition-all shadow-xs"
+                          title="Encaisser un paiement"
+                        >
+                          <CreditCard className="w-3.5 h-3.5" />
+                          <span>Encaisser</span>
+                        </button>
+                      )}
+                      <button
+                        className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="Consulter la facture"
+                        onClick={() => setFactureOuverteId(f.id, 'detail')}
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
 
             {currentFactures.length === 0 && (
               <tr>

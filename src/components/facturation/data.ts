@@ -12,12 +12,20 @@ export type Mode = 'Especes' | 'Carte' | 'Virement' | 'Tiers payant' | 'Autre';
 
 export interface Paiement { id: string; date: string; montant: number; mode: Mode; }
 
+export interface FactureLigne {
+  id: string;
+  libelle: string;
+  prixUnitaire: number;
+  quantite: number;
+}
+
 export interface Facture {
   id: string;
   numero: string;
   dateEmission: string;
   dateEcheance: string;
   visitId: string | null;
+  consultationId?: string | null;
   praticienId: string;
   patientId: string;
   patientNom: string;
@@ -26,6 +34,7 @@ export interface Facture {
   paye: number;
   statut: Statut;
   paiements: Paiement[];
+  lignes?: FactureLigne[];
 }
 
 // A pending balance becomes "en retard" this many days after the billing date
