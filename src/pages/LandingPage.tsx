@@ -1,17 +1,10 @@
 import React, { useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import FeatureCard3D from '../components/common/FeatureCard3D';
-import { features } from '../data/features';
 
 const LandingPage = () => {
     const navigate = useNavigate();
-    const location = useLocation();
 
-    // Returning from a feature page: land back on the features grid
-    useEffect(() => {
-        const target = (location.state as { scrollTo?: string } | null)?.scrollTo;
-        if (target) requestAnimationFrame(() => document.getElementById(target)?.scrollIntoView());
-    }, [location.state]);
     
     useEffect(() => {
         // Scroll Progress
@@ -732,15 +725,23 @@ const LandingPage = () => {
                         <p className="text-[#3d4947] text-lg max-w-2xl mx-auto">Chaque module est optimisé pour réduire la charge mentale et maximiser le temps passé avec vos patients.</p>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                        {features.map((feature) => (
-                            <FeatureCard3D
-                                key={feature.slug}
-                                icon={feature.icon}
-                                title={feature.title}
-                                description={feature.description}
-                                onClick={() => navigate(`/fonctionnalites/${feature.slug}`)}
-                            />
-                        ))}
+                        {
+                            [
+                                { icon: "folder_shared", title: "Dossiers Patients", description: "Historique complet, imagerie médicale et antécédents accessibles en un clic. Sécurisé et centralisé." },
+                                { icon: "calendar_month", title: "Gestion des RDV", description: "Agenda intelligent avec rappels SMS automatiques pour réduire les rendez-vous non honorés de 40%." },
+                                { icon: "prescriptions", title: "Ordonnances", description: "Générateur intelligent d'ordonnances avec base de données médicamenteuse marocaine mise à jour." },
+                                { icon: "account_balance_wallet", title: "Facturation", description: "Télétransmission facilitée et facturation conforme aux normes fiscales marocaines en vigueur." },
+                                { icon: "query_stats", title: "Statistiques", description: "Analysez la performance de votre cabinet en temps réel : revenus, fréquentation et analyses prédictives." },
+                                { icon: "verified_user", title: "Sécurité Totale", description: "Chiffrement de bout en bout et hébergement conforme à la protection des données de santé au Maroc." }
+                            ].map((feature, idx) => (
+                                <FeatureCard3D 
+                                    key={idx}
+                                    icon={feature.icon}
+                                    title={feature.title}
+                                    description={feature.description}
+                                />
+                            ))
+                        }
                     </div>
                 </div>
             </section>

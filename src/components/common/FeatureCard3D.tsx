@@ -4,10 +4,9 @@ interface FeatureCard3DProps {
   icon: string;
   title: string;
   description: string;
-  onClick?: () => void;
 }
 
-const FeatureCard3D: React.FC<FeatureCard3DProps> = ({ icon, title, description, onClick }) => {
+const FeatureCard3D: React.FC<FeatureCard3DProps> = ({ icon, title, description }) => {
   const innerRef = useRef<HTMLDivElement>(null);
   const [isHovered, setIsHovered] = useState(false);
 
@@ -51,12 +50,8 @@ const FeatureCard3D: React.FC<FeatureCard3DProps> = ({ icon, title, description,
 
   return (
     <div
-      className={`feature-card h-full w-full relative group ${onClick ? 'cursor-pointer' : ''}`}
+      className="feature-card h-full w-full relative group"
       style={{ perspective: '1000px' }}
-      onClick={onClick}
-      role={onClick ? 'link' : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
     >
       <div
         ref={innerRef}
@@ -93,12 +88,6 @@ const FeatureCard3D: React.FC<FeatureCard3DProps> = ({ icon, title, description,
           <p className={`leading-relaxed font-medium transition-colors duration-300 ${isHovered ? 'text-slate-700' : 'text-[#3d4947]'}`}>
             {description}
           </p>
-          {onClick && (
-            <span className={`mt-auto pt-6 inline-flex items-center gap-1 text-sm font-bold transition-all duration-300 ${isHovered ? 'text-[#3B82F6] gap-2' : 'text-slate-400'}`}>
-              Découvrir
-              <span className="material-symbols-outlined text-base">arrow_forward</span>
-            </span>
-          )}
         </div>
       </div>
     </div>
