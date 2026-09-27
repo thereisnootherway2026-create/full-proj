@@ -13,6 +13,7 @@ import SecretaryWelcomePage from './pages/SecretaryWelcomePage'
 import DashboardPage from './pages/DashboardPage' // The restored "Tableau de bord"
 import SecretaryOnboardingGate from './components/common/SecretaryOnboardingGate'
 import AiScribePage from './pages/AiScribePage'
+import FeaturePage from './pages/features/FeaturePage'
 
 // Shared Dashboard Components (Using the .jsx production versions)
 import AppointmentsPage from './pages/dashboard/AppointmentsPage'
@@ -49,6 +50,7 @@ export default function App() {
         <Route path="/signup" element={<SignupPage />} />
         <Route path="/verification" element={<VerificationPage />} />
         <Route path="/bienvenue-secretaire" element={<SecretaryWelcomePage />} />
+        <Route path="/fonctionnalites/:slug" element={<FeaturePage />} />
 
         {/* Protected Dashboard Routes */}
         <Route element={<ProtectedRoute />}>
