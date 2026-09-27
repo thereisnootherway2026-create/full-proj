@@ -12,6 +12,8 @@ import { EncaisserModal } from './EncaisserModal';
 export function DebiteursView() {
   const { filters, setFactureOuverteId } = useFacturationStore();
   const { data: factures = [], isLoading, isError, error, refetch } = useFacturesQuery();
+  // Patient debt only: factureReste excludes the share an organism owes in tiers payant, which is
+  // followed in the Tiers payant tab.
   const debiteurs = getDebiteurs(filterFactures(factures, filters));
 
   const [expandedPatient, setExpandedPatient] = useState<string | null>(null);
@@ -42,8 +44,9 @@ export function DebiteursView() {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="bg-red-50/50 border-red-100">
-          <p className="text-xs font-semibold uppercase tracking-wide text-red-600">Total créances</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-red-600">Créances patients</p>
           <p className="text-2xl font-bold tracking-tight text-red-700 mt-1">{dh(totalCreances)}</p>
+          <p className="mt-1 text-xs text-red-600/80">Hors montants attendus des organismes (Tiers payant)</p>
         </Card>
         <Card>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Débiteurs</p>

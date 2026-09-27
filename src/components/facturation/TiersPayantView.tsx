@@ -1,9 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Building2, Download, FileStack, Landmark, Plus } from 'lucide-react';
 import { useAppContext } from '../../context/AppContext';
 import Button from '../common/Button';
 import Chip from '../common/Chip';
-import Modal from '../common/Modal';
 import { useFacturationStore } from './store';
 import { periodeStartMs } from './selectors';
 import { numeroFacture } from './data';
@@ -12,177 +11,15 @@ import { dh, fmtDate, num } from './format';
 import { CreateClaimModal } from './CreateClaimModal';
 import { OrganizationsModal } from './OrganizationsModal';
 import {
-  AWAITING_SETTLEMENT_STATUSES, CLAIM_STATUS, OPEN_CLAIM_STATUSES, ORGANIZATION_TYPE_LABEL,
-  claimOutstanding, useClaimSettlement, useClaimStatus, useClaimsQuery, useOrganizationsQuery, useRejectClaim,
+  AWAITING_SETTLEMENT_STATUSES, CLAIM_STATUS, OPEN_CLAIM_STATUSES, ORGANIZATION_TYPE_LABEL, RESOLUTION_LABEL,
+  canReceiveSettlement, claimOutstanding, unresolvedRejected, useClaimsQuery, useOrganizationsQuery, useSettlementsQuery,
 } from './tiersPayant';
 import type { Claim, ClaimStatus } from './tiersPayant';
+import { ClaimActionDialogs, ClaimBadge, ClaimDetailModal, ResolutionBadge } from './ClaimDialogs';
+import type { ClaimAction } from './ClaimDialogs';
 import { cn } from '../../lib/utils';
 
-const inputCls = 'h-[44px] w-full rounded-[10px] border border-[#E5E7EB] bg-white px-3 text-[14px] font-medium text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
-const labelCls = 'mb-1.5 block text-[12px] font-semibold uppercase tracking-wide text-slate-500';
-
-const parseAmount = (s: string) => (String(s).trim() === '' ? 0 : Number(String(s).replace(/\s/g, '').replace(',', '.')));
-const round2 = (n: number) => Math.round(n * 100) / 100;
 const plural = (n: number, word: string) => `${num(n)} ${word}${n > 1 ? 's' : ''}`;
-
-function ClaimBadge({ status }: { status: ClaimStatus }) {
-  const meta = CLAIM_STATUS[status];
-  return (
-    <span className={cn('inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium', meta.cls)}>
-      <span className={cn('h-1.5 w-1.5 rounded-full', meta.dot)} />
-      {meta.label}
-    </span>
-  );
-}
-
-// ------------------------------------------------------------------ claim actions
-
-type ActionKind = 'ready' | 'draft' | 'submit' | 'processing' | 'settle' | 'reject' | 'refile' | 'cancel';
-type Action = { kind: ActionKind; claim: Claim } | null;
-
-const ACTION_TITLE: Record<ActionKind, string> = {
-  ready: 'Marquer prêt à déposer',
-  draft: 'Repasser en brouillon',
-  submit: 'Marquer comme déposé',
-  processing: "Marquer en cours de traitement",
-  settle: "Enregistrer un règlement de l'organisme",
-  reject: 'Enregistrer un rejet',
-  refile: 'Corriger et redéposer',
-  cancel: 'Annuler le dossier',
-};
-
-function ClaimActionModal({ action, onClose }: { action: Action; onClose: () => void }) {
-  const status = useClaimStatus();
-  const settle = useClaimSettlement();
-  const reject = useRejectClaim();
-  const { showToast } = useFacturationStore();
-  const [reference, setReference] = useState('');
-  const [received, setReceived] = useState('');
-  const [rejected, setRejected] = useState('');
-  const [reason, setReason] = useState('');
-  const [note, setNote] = useState('');
-  const [error, setError] = useState('');
-
-  React.useEffect(() => {
-    if (!action) return;
-    setReference(action.claim.externalReference);
-    setReceived(String(claimOutstanding(action.claim)));
-    setRejected('');
-    setReason('');
-    setNote('');
-    setError('');
-  }, [action]);
-
-  if (!action) return null;
-  const { kind, claim } = action;
-  const outstanding = claimOutstanding(claim);
-  const pending = status.isPending || settle.isPending || reject.isPending;
-
-  const run = async () => {
-    try {
-      if (kind === 'settle') {
-        const r = parseAmount(received);
-        const x = parseAmount(rejected);
-        if (!Number.isFinite(r) || !Number.isFinite(x) || r < 0 || x < 0 || r + x <= 0) return setError('Montant invalide.');
-        if (round2(r + x) > outstanding) return setError(`Le total dépasse ce que l'organisme doit encore (${dh(outstanding, true)}).`);
-        if (x > 0 && !reason.trim()) return setError('Indiquez le motif de la part refusée.');
-        await settle.mutateAsync({ id: claim.id, received: r, rejected: x, reason, reference });
-        showToast(r > 0 ? `Règlement de ${dh(r)} enregistré.` : 'Refus partiel enregistré.');
-      } else if (kind === 'reject') {
-        if (!reason.trim()) return setError('Indiquez le motif du rejet.');
-        await reject.mutateAsync({ id: claim.id, reason });
-        showToast('Rejet enregistré.');
-      } else {
-        const next: Record<string, ClaimStatus> = {
-          ready: 'READY', draft: 'DRAFT', submit: 'SUBMITTED', processing: 'PROCESSING', refile: 'READY', cancel: 'CANCELLED',
-        };
-        await status.mutateAsync({ id: claim.id, status: next[kind], reference, notes: note });
-        showToast({
-          ready: 'Dossier prêt à déposer.', draft: 'Dossier repassé en brouillon.', submit: 'Dossier marqué comme déposé.',
-          processing: 'Dossier marqué en cours.', refile: 'Dossier à redéposer.', cancel: 'Dossier annulé.',
-        }[kind] as string);
-      }
-      onClose();
-    } catch (e: any) { setError(e.message); }
-  };
-
-  return (
-    <Modal open onClose={onClose} title={ACTION_TITLE[kind]}
-      description={`${claim.patientNom} · ${claim.organizationName} · part organisme ${dh(claim.claimed, true)}`} width="max-w-md">
-      <div className="space-y-3">
-        {kind === 'cancel' && (
-          <p className="text-sm text-slate-600">
-            La part de l'organisme ({dh(claim.claimed, true)}) redevient due par le patient sur la facture. Cette action ne peut pas être annulée.
-          </p>
-        )}
-        {kind === 'refile' && claim.rejectionReason && (
-          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">Motif du rejet : {claim.rejectionReason}</p>
-        )}
-        {kind === 'settle' && (
-          <>
-            <p className="text-sm text-slate-600">Reste attendu de l'organisme : <b>{dh(outstanding, true)}</b></p>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={labelCls}>Montant reçu (DH)</label>
-                <input className={inputCls} inputMode="decimal" value={received} onChange={e => setReceived(e.target.value)} />
-              </div>
-              <div>
-                <label className={labelCls}>Montant refusé (DH)</label>
-                <input className={inputCls} inputMode="decimal" value={rejected} onChange={e => setRejected(e.target.value)} placeholder="0" />
-              </div>
-            </div>
-            {parseAmount(rejected) > 0 && (
-              <div>
-                <label className={labelCls}>Motif du refus</label>
-                <input className={inputCls} value={reason} onChange={e => setReason(e.target.value)} />
-              </div>
-            )}
-          </>
-        )}
-        {kind === 'reject' && (
-          <>
-            <p className="text-sm text-slate-600">L'organisme refuse les {dh(outstanding, true)} encore attendus. Aucun paiement n'est enregistré.</p>
-            <div>
-              <label className={labelCls}>Motif du rejet</label>
-              <input className={inputCls} value={reason} onChange={e => setReason(e.target.value)} />
-            </div>
-          </>
-        )}
-        {(kind === 'submit' || kind === 'settle') && (
-          <div>
-            <label className={labelCls}>{kind === 'submit' ? 'N° de dossier / bordereau (optionnel)' : 'Référence du règlement (optionnel)'}</label>
-            <input className={inputCls} value={reference} onChange={e => setReference(e.target.value)} />
-          </div>
-        )}
-        {kind === 'cancel' && (
-          <div>
-            <label className={labelCls}>Note (optionnel)</label>
-            <input className={inputCls} value={note} onChange={e => setNote(e.target.value)} />
-          </div>
-        )}
-        {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-[13px] font-medium text-red-700">{error}</p>}
-      </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <Button variant="secondary" size="sm" onClick={onClose}>Retour</Button>
-        <Button variant={kind === 'settle' ? 'success' : kind === 'reject' || kind === 'cancel' ? 'danger' : 'primary'} size="sm" onClick={run} disabled={pending}>
-          {kind === 'cancel' ? 'Annuler le dossier' : 'Confirmer'}
-        </Button>
-      </div>
-    </Modal>
-  );
-}
-
-// Actions offered for each status (the server enforces the same lifecycle).
-const ACTIONS: Record<ClaimStatus, Array<{ kind: ActionKind; label: string; variant: string }>> = {
-  DRAFT: [{ kind: 'ready', label: 'Prêt à déposer', variant: 'accentOutline' }, { kind: 'cancel', label: 'Annuler', variant: 'ghost' }],
-  READY: [{ kind: 'submit', label: 'Déposer', variant: 'accentOutline' }, { kind: 'draft', label: 'Brouillon', variant: 'ghost' }, { kind: 'cancel', label: 'Annuler', variant: 'ghost' }],
-  SUBMITTED: [{ kind: 'settle', label: 'Règlement', variant: 'success' }, { kind: 'processing', label: 'En cours', variant: 'secondary' }, { kind: 'reject', label: 'Rejet', variant: 'secondary' }, { kind: 'cancel', label: 'Annuler', variant: 'ghost' }],
-  PROCESSING: [{ kind: 'settle', label: 'Règlement', variant: 'success' }, { kind: 'reject', label: 'Rejet', variant: 'secondary' }, { kind: 'cancel', label: 'Annuler', variant: 'ghost' }],
-  PARTIALLY_SETTLED: [{ kind: 'settle', label: 'Règlement', variant: 'success' }, { kind: 'reject', label: 'Rejeter le reste', variant: 'secondary' }],
-  SETTLED: [],
-  REJECTED: [{ kind: 'refile', label: 'Redéposer', variant: 'accentOutline' }, { kind: 'cancel', label: 'Annuler', variant: 'ghost' }],
-  CANCELLED: [],
-};
 
 // ------------------------------------------------------------------ export
 
@@ -190,11 +27,12 @@ const csvCell = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
 const money = (n: number) => n.toFixed(2).replace('.', ',');
 
 function exportClaims(claims: Claim[]) {
-  const headers = ['Organisme', 'Date', 'Patient', 'N° adhérent', 'Facture', 'Total facture', 'Part organisme', 'Part patient', 'Reçu', 'Refusé', 'Reste attendu', 'Statut', 'Référence', 'Motif du rejet'];
+  const headers = ['Organisme', 'Date', 'Patient', 'N° adhérent', 'Facture', 'Total facture', 'Montant demandé', 'Part patient', 'Reçu', 'Rejeté', 'Reste à recevoir', 'Statut', 'Référence', 'Motif du rejet', 'Traitement du rejet'];
   const rows = claims.map(c => [
     csvCell(c.organizationName), c.createdAt.split('T')[0], csvCell(c.patientNom), csvCell(c.membershipNumber), numeroFacture(c.invoiceId),
     money(c.invoiceAmount), money(c.claimed), money(c.patientShare), money(c.received), money(c.rejected), money(claimOutstanding(c)),
     CLAIM_STATUS[c.status].label, csvCell(c.externalReference), csvCell(c.rejectionReason),
+    c.resolution ? RESOLUTION_LABEL[c.resolution] : (unresolvedRejected(c) > 0 ? 'À traiter' : ''),
   ].join(';'));
   const blob = new Blob(['﻿' + [headers.join(';'), ...rows].join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -217,19 +55,26 @@ const TABS: Array<{ id: string; label: string; statuses: ClaimStatus[] | null }>
   { id: 'settled', label: 'Réglés', statuses: ['SETTLED'] },
   { id: 'rejected', label: 'Rejetés', statuses: ['REJECTED'] },
 ];
+// "Rejetés" also lists a settled claim whose refused remainder still needs a decision.
+const inTab = (tab: (typeof TABS)[number], c: Claim) =>
+  tab.statuses ? tab.statuses.includes(c.status) || (tab.id === 'rejected' && unresolvedRejected(c) > 0) : c.status !== 'CANCELLED';
 
 export function TiersPayantView() {
   const { can } = useAppContext();
   const { filters, showToast } = useFacturationStore();
   const organizationsQ = useOrganizationsQuery();
   const claimsQ = useClaimsQuery();
+  const settlementsQ = useSettlementsQuery();
   const organizations = organizationsQ.data || [];
   const claims = claimsQ.data || [];
+  const settlements = settlementsQ.data || [];
 
   const [tab, setTab] = useState('all');
   const [showOrganizations, setShowOrganizations] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
-  const [action, setAction] = useState<Action>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [action, setAction] = useState<{ claim: Claim; action: ClaimAction } | null>(null);
+  const runAction = (claim: Claim, a: ClaimAction) => { setDetailId(null); setAction({ claim, action: a }); };
   const canEdit = can('billing.collect');
 
   // Top filters (patient / numéro, période, praticien, organisme, statut) apply to everything below.
@@ -253,12 +98,13 @@ export function TiersPayantView() {
     const ready = filtered.filter(c => c.status === 'READY');
     const awaiting = filtered.filter(c => AWAITING_SETTLEMENT_STATUSES.includes(c.status) && claimOutstanding(c) > 0);
     const paid = filtered.filter(c => c.received > 0 && c.status !== 'CANCELLED');
-    const rejected = filtered.filter(c => c.status === 'REJECTED');
+    // refused amounts still waiting for an explicit decision
+    const rejected = filtered.filter(c => unresolvedRejected(c) > 0);
     return {
       ready: { n: ready.length, amount: sum(ready, c => c.claimed) },
       awaiting: { n: awaiting.length, amount: sum(awaiting, claimOutstanding) },
       received: { n: paid.length, amount: sum(paid, c => c.received) },
-      rejected: { n: rejected.length, amount: sum(rejected, c => c.rejected) },
+      rejected: { n: rejected.length, amount: sum(rejected, unresolvedRejected) },
     };
   }, [filtered]);
 
@@ -276,7 +122,8 @@ export function TiersPayantView() {
   }, [filtered, organizations]);
 
   const activeTab = TABS.find(t => t.id === tab) || TABS[0];
-  const shown = filtered.filter(c => (activeTab.statuses ? activeTab.statuses.includes(c.status) : c.status !== 'CANCELLED'));
+  const shown = filtered.filter(c => inTab(activeTab, c));
+  const detail = claims.find(c => c.id === detailId) || null;
 
   if (claimsQ.isLoading || organizationsQ.isLoading) {
     return <div className="space-y-4"><Skeleton className="h-24 w-full" /><Skeleton className="h-40 w-full" /></div>;
@@ -310,7 +157,7 @@ export function TiersPayantView() {
           <p className="mt-0.5 text-xs text-slate-500">{plural(kpis.received.n, 'dossier')}</p>
         </Card>
         <Card>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Rejetés</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Rejetés à traiter</p>
           <p className={cn('mt-1 text-2xl font-bold tracking-tight', kpis.rejected.n ? 'text-red-600' : 'text-slate-900')}>{dh(kpis.rejected.amount)}</p>
           <p className="mt-0.5 text-xs text-slate-500">{plural(kpis.rejected.n, 'dossier')}</p>
         </Card>
@@ -330,7 +177,7 @@ export function TiersPayantView() {
               <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
                 <th className="px-6 py-3 font-semibold">Organisme</th>
                 <th className="px-3 py-3 font-semibold">Dossiers ouverts</th>
-                <th className="px-6 py-3 text-right font-semibold">Montant attendu</th>
+                <th className="px-6 py-3 text-right font-semibold">Montant à recevoir</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -381,16 +228,16 @@ export function TiersPayantView() {
                   <th className="px-6 py-3 font-semibold">Patient</th>
                   <th className="px-3 py-3 font-semibold">Organisme</th>
                   <th className="px-3 py-3 font-semibold">Date</th>
-                  <th className="px-3 py-3 text-right font-semibold">Facture</th>
-                  <th className="px-3 py-3 text-right font-semibold">Part organisme</th>
-                  <th className="px-3 py-3 text-right font-semibold">Reste attendu</th>
+                  <th className="px-3 py-3 text-right font-semibold">Demandé</th>
+                  <th className="px-3 py-3 text-right font-semibold">Reçu</th>
+                  <th className="px-3 py-3 text-right font-semibold">Reste</th>
                   <th className="px-3 py-3 font-semibold">Statut</th>
                   <th className="px-6 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {shown.map(c => (
-                  <tr key={c.id} className="align-top hover:bg-slate-50/60">
+                  <tr key={c.id} onClick={() => setDetailId(c.id)} className="cursor-pointer align-top transition-colors hover:bg-slate-50/60">
                     <td className="px-6 py-3">
                       <p className="font-semibold text-slate-900">{c.patientNom}</p>
                       <p className="text-xs text-slate-400">{numeroFacture(c.invoiceId)}{c.externalReference ? ` · Réf. ${c.externalReference}` : ''}</p>
@@ -400,28 +247,29 @@ export function TiersPayantView() {
                       {c.membershipNumber && <span className="block text-xs text-slate-400">N° {c.membershipNumber}</span>}
                     </td>
                     <td className="px-3 py-3 text-slate-600">{fmtDate(c.createdAt)}</td>
-                    <td className="px-3 py-3 text-right text-slate-600">
-                      {dh(c.invoiceAmount)}
-                      <span className="block text-xs text-slate-400">patient {dh(c.patientShare)}</span>
-                    </td>
-                    <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                      {dh(c.claimed)}
-                      {c.received > 0 && <span className="block text-xs font-medium text-emerald-600">{dh(c.received)} reçu</span>}
-                      {c.rejected > 0 && <span className="block text-xs font-medium text-red-600">{dh(c.rejected)} refusé</span>}
+                    <td className="px-3 py-3 text-right font-semibold text-slate-900">{dh(c.claimed)}</td>
+                    <td className="px-3 py-3 text-right">
+                      <span className={c.received > 0 ? 'font-semibold text-emerald-600' : 'text-slate-400'}>{dh(c.received)}</span>
+                      {c.rejected > 0 && <span className="block text-xs font-medium text-red-600">{dh(c.rejected)} rejeté</span>}
                     </td>
                     <td className="px-3 py-3 text-right font-bold text-slate-900">{dh(claimOutstanding(c))}</td>
                     <td className="px-3 py-3">
-                      <ClaimBadge status={c.status} />
-                      {c.rejectionReason && <p className="mt-1 max-w-[180px] text-xs text-red-600">{c.rejectionReason}</p>}
+                      <div className="flex flex-col items-start gap-1">
+                        <ClaimBadge status={c.status} />
+                        <ResolutionBadge claim={c} />
+                      </div>
+                      {unresolvedRejected(c) > 0 && c.rejectionReason && <p className="mt-1 max-w-[180px] text-xs text-red-600">{c.rejectionReason}</p>}
                     </td>
-                    <td className="px-6 py-3">
-                      {canEdit && ACTIONS[c.status].length > 0 && (
-                        <div className="flex flex-wrap justify-end gap-1.5">
-                          {ACTIONS[c.status].map(a => (
-                            <Button key={a.kind} variant={a.variant} size="xs" onClick={() => setAction({ kind: a.kind, claim: c })}>{a.label}</Button>
-                          ))}
-                        </div>
-                      )}
+                    <td className="px-6 py-3" onClick={e => e.stopPropagation()}>
+                      <div className="flex justify-end">
+                        {canEdit && canReceiveSettlement(c) ? (
+                          <Button variant="success" size="xs" onClick={() => runAction(c, { type: 'settle' })}>Enregistrer un règlement</Button>
+                        ) : canEdit && unresolvedRejected(c) > 0 ? (
+                          <Button variant="accentOutline" size="xs" onClick={() => setDetailId(c.id)}>Traiter le rejet</Button>
+                        ) : (
+                          <Button variant="ghost" size="xs" onClick={() => setDetailId(c.id)}>Détails</Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -433,7 +281,9 @@ export function TiersPayantView() {
 
       <OrganizationsModal open={showOrganizations} onClose={() => setShowOrganizations(false)} />
       <CreateClaimModal open={showCreate} onClose={() => setShowCreate(false)} />
-      <ClaimActionModal action={action} onClose={() => setAction(null)} />
+      <ClaimDetailModal claim={detail} claims={claims} settlements={settlements} canEdit={canEdit}
+        onAction={runAction} onOpenClaim={setDetailId} onClose={() => setDetailId(null)} />
+      <ClaimActionDialogs current={action} onClose={() => setAction(null)} />
     </div>
   );
 }

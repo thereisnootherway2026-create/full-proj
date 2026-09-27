@@ -10,6 +10,11 @@ import { useAppContext } from '../../context/AppContext';
 //   payments (the invoice)   payment_mode PATIENT | TIERS_PAYANT; third_party_amount = the share the
 //                            organism pays the cabinet. amount_paid is what the PATIENT paid.
 //   insurance_claims         the cabinet's receivable on the organism for a tiers-payant invoice.
+//   insurance_settlements    immutable ledger of the money each organism actually paid (never patient
+//                            money). claim.amount_received is a cached sum of it.
+//
+// An amount the organism refuses is never dropped silently: it waits for an explicit resolution
+// (re-file, put on the patient's balance, or waive).
 //
 // A patient who pays everything and gets reimbursed later is not a claim: nothing is owed to the
 // cabinet. No reimbursement rate is computed anywhere: the organism's share is entered by the user.
@@ -20,6 +25,8 @@ export type CoverageType = 'AMO' | 'COMPLEMENTARY' | 'PRIVATE_INSURANCE' | 'NONE
 export type BeneficiaryType = 'ASSURE' | 'AYANT_DROIT' | 'UNKNOWN';
 export type ClaimStatus =
   | 'DRAFT' | 'READY' | 'SUBMITTED' | 'PROCESSING' | 'PARTIALLY_SETTLED' | 'SETTLED' | 'REJECTED' | 'CANCELLED';
+export type RejectionResolution = 'REFILED' | 'TRANSFERRED_TO_PATIENT' | 'WAIVED';
+export type SettlementMethod = 'BANK_TRANSFER' | 'CHECK' | 'CASH' | 'OTHER';
 
 export interface Organization {
   id: string;
@@ -69,10 +76,40 @@ export interface Claim {
   externalReference: string;
   notes: string;
   rejectionReason: string;
+  previousClaimId: string | null;
+  resolution: RejectionResolution | null;
+  resolutionNote: string;
+  resolvedAt: string | null;
   createdAt: string;
   submittedAt: string | null;
   receivedAt: string | null;
 }
+
+export interface Settlement {
+  id: string;
+  claimId: string;
+  organizationId: string;
+  patientId: string;
+  amount: number;
+  receivedAt: string;
+  method: SettlementMethod;
+  reference: string;
+  notes: string;
+}
+
+export const SETTLEMENT_METHODS: SettlementMethod[] = ['BANK_TRANSFER', 'CHECK', 'CASH', 'OTHER'];
+export const SETTLEMENT_METHOD_LABEL: Record<SettlementMethod, string> = {
+  BANK_TRANSFER: 'Virement',
+  CHECK: 'Chèque',
+  CASH: 'Espèces',
+  OTHER: 'Autre',
+};
+
+export const RESOLUTION_LABEL: Record<RejectionResolution, string> = {
+  REFILED: 'Redéposé',
+  TRANSFERRED_TO_PATIENT: 'Mis à la charge du patient',
+  WAIVED: 'Abandonné / exonéré',
+};
 
 export const ORGANIZATION_TYPES: OrganizationType[] = ['AMO_MANAGER', 'MUTUELLE', 'PRIVATE_INSURER', 'OTHER'];
 export const ORGANIZATION_TYPE_LABEL: Record<OrganizationType, string> = {
@@ -117,6 +154,13 @@ export const AWAITING_SETTLEMENT_STATUSES: ClaimStatus[] = ['SUBMITTED', 'PROCES
 export const claimOutstanding = (c: Pick<Claim, 'claimed' | 'received' | 'rejected'>) =>
   Math.max(0, c.claimed - c.received - c.rejected);
 
+// A refused amount that still needs an explicit decision (re-file, patient, waive).
+export const unresolvedRejected = (c: Pick<Claim, 'rejected' | 'resolution' | 'status'>) =>
+  (c.status === 'REJECTED' || c.status === 'SETTLED') && c.rejected > 0 && !c.resolution ? c.rejected : 0;
+
+// Claims that can receive money from the organism.
+export const canReceiveSettlement = (c: Pick<Claim, 'status'>) => AWAITING_SETTLEMENT_STATUSES.includes(c.status);
+
 // A coverage that can back a new claim today.
 export const isCoverageUsable = (c: Coverage, today = new Date().toISOString().slice(0, 10)) =>
   c.isActive && c.type !== 'NONE' && !!c.organizationId
@@ -133,9 +177,16 @@ const ERRORS: Array<[RegExp, string]> = [
   [/organization is inactive/i, "L'organisme de cette couverture est désactivé."],
   [/exceeds what is still unpaid/i, 'La part organisme dépasse le reste à payer de la facture.'],
   [/amount claimed must be positive/i, 'Saisissez la part prise en charge par l’organisme.'],
-  [/must be submitted before a settlement/i, "Le dossier doit d'abord être déposé."],
+  [/must be submitted before a (settlement|rejection)/i, "Le dossier doit d'abord être déposé."],
+  [/rejection .* exceeds the outstanding amount/i, "Le montant refusé dépasse ce que l'organisme doit encore."],
+  [/idempotency key already used/i, 'Ce règlement a déjà été enregistré.'],
+  [/settlement date is in the future/i, 'La date du règlement ne peut pas être dans le futur.'],
+  [/rejection already resolved/i, 'Ce rejet a déjà été traité.'],
+  [/no rejected amount to resolve/i, "Ce dossier n'a pas de montant rejeté à traiter."],
+  [/waiver reason is required/i, "Indiquez le motif de l'abandon."],
+  [/exceeds the invoice third-party share/i, "Le montant rejeté dépasse la part organisme de la facture."],
   [/exceeds the outstanding amount/i, "Le montant dépasse ce que l'organisme doit encore."],
-  [/rejection reason is required/i, 'Indiquez le motif du rejet.'],
+  [/a rejection reason is required/i, 'Indiquez le motif du rejet.'],
   [/invalid settlement amounts/i, 'Montant invalide.'],
   [/already received a settlement/i, "Ce dossier a déjà reçu un règlement de l'organisme."],
   [/invalid claim transition/i, "Cette action n'est pas possible pour ce dossier."],
@@ -223,9 +274,34 @@ const fetchClaims = async (clinicId: string): Promise<Claim[]> => {
     externalReference: r.external_reference || '',
     notes: r.notes || '',
     rejectionReason: r.rejection_reason || '',
+    previousClaimId: r.previous_claim_id || null,
+    resolution: r.rejection_resolution || null,
+    resolutionNote: r.resolution_note || '',
+    resolvedAt: r.resolved_at || null,
     createdAt: r.created_at,
     submittedAt: r.submitted_at,
     receivedAt: r.received_at,
+  }));
+};
+
+const fetchSettlements = async (clinicId: string): Promise<Settlement[]> => {
+  const { data, error } = await supabase
+    .from('insurance_settlements')
+    .select('id, claim_id, organization_id, patient_id, amount, received_at, payment_method, reference, notes')
+    .eq('clinic_id', clinicId)
+    .order('received_at', { ascending: false })
+    .limit(5000);
+  if (error) throw error;
+  return (data || []).map((r: any): Settlement => ({
+    id: r.id,
+    claimId: r.claim_id,
+    organizationId: r.organization_id,
+    patientId: r.patient_id,
+    amount: Number(r.amount),
+    receivedAt: r.received_at,
+    method: r.payment_method,
+    reference: r.reference || '',
+    notes: r.notes || '',
   }));
 };
 
@@ -251,6 +327,11 @@ export const useClaimsQuery = () => {
   return useQuery({ queryKey: ['claims', clinicId], queryFn: () => fetchClaims(clinicId as string), enabled: Boolean(clinicId) });
 };
 
+export const useSettlementsQuery = () => {
+  const { clinicId } = useAppContext();
+  return useQuery({ queryKey: ['insurance-settlements', clinicId], queryFn: () => fetchSettlements(clinicId as string), enabled: Boolean(clinicId) });
+};
+
 export const usePatientCoveragesQuery = (patientId: string | null | undefined) => {
   const { clinicId } = useAppContext();
   return useQuery({
@@ -263,6 +344,7 @@ export const usePatientCoveragesQuery = (patientId: string | null | undefined) =
 // Claims move invoice balances (third-party share, invoice status), so factures refresh with them.
 const refreshAll = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['claims'] });
+  qc.invalidateQueries({ queryKey: ['insurance-settlements'] });
   qc.invalidateQueries({ queryKey: ['insurance-organizations'] });
   qc.invalidateQueries({ queryKey: ['patient-coverages'] });
   qc.invalidateQueries({ queryKey: ['factures'] });
@@ -342,13 +424,15 @@ export const useClaimStatus = () => {
   });
 };
 
-export const useClaimSettlement = () => {
+// Money received from the organism. `key` is generated once per form so a double submit records
+// a single settlement (the server returns the first one).
+export const useRecordSettlement = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string; received: number; rejected: number; reason?: string; reference?: string }) =>
-      rpc('record_claim_settlement', {
-        p_claim_id: v.id, p_amount_received: v.received, p_amount_rejected: v.rejected,
-        p_rejection_reason: v.reason ?? null, p_external_reference: v.reference ?? null, p_received_at: null,
+    mutationFn: (v: { id: string; amount: number; method: SettlementMethod; receivedAt: string; reference?: string; notes?: string; key: string }) =>
+      rpc('record_insurance_settlement', {
+        p_claim_id: v.id, p_amount: v.amount, p_payment_method: v.method, p_received_at: v.receivedAt,
+        p_reference: v.reference ?? null, p_notes: v.notes ?? null, p_idempotency_key: v.key,
       }),
     onSuccess: () => refreshAll(qc),
   });
@@ -357,7 +441,21 @@ export const useClaimSettlement = () => {
 export const useRejectClaim = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string; reason: string }) => rpc('reject_insurance_claim', { p_claim_id: v.id, p_reason: v.reason }),
+    mutationFn: (v: { id: string; reason: string; amount?: number }) =>
+      rpc('reject_insurance_claim', { p_claim_id: v.id, p_reason: v.reason, p_amount: v.amount ?? null }),
+    onSuccess: () => refreshAll(qc),
+  });
+};
+
+// The three explicit resolutions of a refused amount.
+export const useResolveRejection = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; resolution: RejectionResolution; note?: string; coverageId?: string | null }) => {
+      if (v.resolution === 'REFILED') return rpc('refile_insurance_claim', { p_claim_id: v.id, p_coverage_id: v.coverageId ?? null, p_notes: v.note ?? null });
+      if (v.resolution === 'TRANSFERRED_TO_PATIENT') return rpc('transfer_rejection_to_patient', { p_claim_id: v.id, p_note: v.note ?? null });
+      return rpc('waive_rejected_amount', { p_claim_id: v.id, p_reason: v.note ?? '' });
+    },
     onSuccess: () => refreshAll(qc),
   });
 };

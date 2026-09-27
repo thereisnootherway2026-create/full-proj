@@ -17,7 +17,9 @@ export function RecuPaiement() {
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setRecuPaiementId(null);
+      // Only when a receipt is open: an unconditional store update re-rendered the page mid-keydown
+      // and kept every other modal on the page from seeing Escape.
+      if (e.key === 'Escape' && useFacturationStore.getState().ui.recuPaiementId) setRecuPaiementId(null);
     };
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
