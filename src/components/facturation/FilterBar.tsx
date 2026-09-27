@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useFacturationStore } from './store';
 import { useFilterOptions } from './queries';
+import { CLAIM_STATUS, CLAIM_STATUSES, useOrganizationsQuery } from './tiersPayant';
 import { Search, Calendar, ChevronDown, Check, User, Shield, Tag } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -80,8 +81,11 @@ const PERIODE_OPTIONS: Option[] = [
 ];
 
 export function FilterBar({ className }: { className?: string }) {
-  const { filters, setFilter } = useFacturationStore();
+  const { filters, setFilter, ui } = useFacturationStore();
   const { praticiens, assureurs } = useFilterOptions();
+  const { data: organisations = [] } = useOrganizationsQuery();
+  // On the Tiers payant tab the list shows claims: filter by the clinic's organisms and claim status.
+  const tiers = ui.tab === 'tiers';
 
   return (
     <div className={cn("flex flex-wrap items-center gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-sm", className)}>
@@ -114,30 +118,58 @@ export function FilterBar({ className }: { className?: string }) {
         icon={User}
       />
 
-      <CustomSelect
-        value={filters.assureurId}
-        onChange={(v) => setFilter('assureurId', v)}
-        options={[
-          { value: '', label: 'Toutes les mutuelles' },
-          ...assureurs.map(a => ({ value: a, label: a }))
-        ]}
-        placeholder="Toutes les mutuelles"
-        icon={Shield}
-      />
+      {tiers ? (
+        <>
+          <CustomSelect
+            value={filters.organisationId}
+            onChange={(v) => setFilter('organisationId', v)}
+            options={[
+              { value: '', label: 'Tous les organismes' },
+              ...organisations.map(o => ({ value: o.id, label: o.name }))
+            ]}
+            placeholder="Tous les organismes"
+            icon={Shield}
+          />
 
-      <CustomSelect
-        value={filters.statut}
-        onChange={(v) => setFilter('statut', v)}
-        options={[
-          { value: '', label: 'Tous les statuts' },
-          { value: 'payee', label: 'Payée' },
-          { value: 'partielle', label: 'Partielle' },
-          { value: 'en_attente', label: 'En attente' },
-          { value: 'en_retard', label: 'En retard' }
-        ]}
-        placeholder="Tous les statuts"
-        icon={Tag}
-      />
+          <CustomSelect
+            value={filters.claimStatut}
+            onChange={(v) => setFilter('claimStatut', v)}
+            options={[
+              { value: '', label: 'Tous les statuts' },
+              ...CLAIM_STATUSES.map(s => ({ value: s, label: CLAIM_STATUS[s].label }))
+            ]}
+            placeholder="Tous les statuts"
+            icon={Tag}
+          />
+        </>
+      ) : (
+        <>
+          <CustomSelect
+            value={filters.assureurId}
+            onChange={(v) => setFilter('assureurId', v)}
+            options={[
+              { value: '', label: 'Toutes les mutuelles' },
+              ...assureurs.map(a => ({ value: a, label: a }))
+            ]}
+            placeholder="Toutes les mutuelles"
+            icon={Shield}
+          />
+
+          <CustomSelect
+            value={filters.statut}
+            onChange={(v) => setFilter('statut', v)}
+            options={[
+              { value: '', label: 'Tous les statuts' },
+              { value: 'payee', label: 'Payée' },
+              { value: 'partielle', label: 'Partielle' },
+              { value: 'en_attente', label: 'En attente' },
+              { value: 'en_retard', label: 'En retard' }
+            ]}
+            placeholder="Tous les statuts"
+            icon={Tag}
+          />
+        </>
+      )}
     </div>
   );
 }

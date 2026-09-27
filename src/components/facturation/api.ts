@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { processVisitPayment } from '@/lib/visitService';
-import { DELAI_PAIEMENT_JOURS, Facture, FactureLigne, Mode, Paiement, Statut } from './data';
+import { DELAI_PAIEMENT_JOURS, Facture, FactureLigne, Mode, Paiement, Statut, factureReste, numeroFacture } from './data';
 
 const PAGE_SIZE = 1000;
 const MS_DAY = 86400000;
@@ -10,7 +10,7 @@ const modeFromDB = (method: string | null): Mode => {
     case 'cash': return 'Especes';
     case 'card': return 'Carte';
     case 'transfer': return 'Virement';
-    case 'insurance': return 'Tiers payant';
+    case 'insurance': return 'Tiers payant'; // historical organism collections (before claims)
     default: return 'Autre';
   }
 };
@@ -30,7 +30,7 @@ export const fetchFactures = async (clinicId: string, patientId?: string): Promi
   for (let from = 0; ; from += PAGE_SIZE) {
     let query = supabase
       .from('payments')
-      .select('id, visit_id, consultation_id, patient_id, amount, amount_paid, status, method, paid_at, created_at, visits:visit_id(doctor_id), patients:patient_id(nom, prenom, mutuelle)')
+      .select('id, visit_id, consultation_id, patient_id, amount, amount_paid, third_party_amount, payment_mode, status, method, paid_at, created_at, visits:visit_id(doctor_id), patients:patient_id(nom, prenom, mutuelle)')
       .eq('clinic_id', clinicId)
       .in('status', ['pending', 'paid']);
     if (patientId) query = query.eq('patient_id', patientId);
@@ -88,7 +88,7 @@ export const fetchFactures = async (clinicId: string, patientId?: string): Promi
 
     return {
       id: p.id,
-      numero: `FAC-${String(p.id).slice(0, 6).toUpperCase()}`,
+      numero: numeroFacture(p.id),
       dateEmission: p.created_at,
       dateEcheance: new Date(new Date(p.created_at).getTime() + DELAI_PAIEMENT_JOURS * MS_DAY).toISOString(),
       visitId: p.visit_id || null,
@@ -98,6 +98,8 @@ export const fetchFactures = async (clinicId: string, patientId?: string): Promi
       patientNom: patient ? `${patient.prenom || ''} ${patient.nom || ''}`.trim() || 'Patient inconnu' : 'Patient inconnu',
       assureurId: patient?.mutuelle ? String(patient.mutuelle) : '',
       montant,
+      modePaiement: p.payment_mode === 'TIERS_PAYANT' ? 'TIERS_PAYANT' : 'PATIENT',
+      partOrganisme: Number(p.third_party_amount) || 0,
       paye,
       statut: computeStatut(p.status, montant, paye, p.created_at),
       paiements,
@@ -108,9 +110,10 @@ export const fetchFactures = async (clinicId: string, patientId?: string): Promi
 
 // Collect through the same RPC the cashier queue uses. A collection below the remaining balance
 // is sent as an explicit partial payment; the RPC rejects any other short payment.
-// method is the database value accepted by process_visit_payment: cash | card | transfer | insurance.
+// method is the database value accepted by process_visit_payment: cash | card | transfer. Only the
+// patient's share is collected here; an organism pays through its tiers-payant claim.
 export const encaisserFacture = async (facture: Facture, montant: number, method: string) => {
   if (!facture.visitId) throw new Error('Cette facture n\'est liée à aucune visite : encaissement impossible.');
-  const reste = Math.max(0, facture.montant - facture.paye);
+  const reste = factureReste(facture);
   return processVisitPayment(facture.visitId, method, montant, { partial: montant < reste });
 };

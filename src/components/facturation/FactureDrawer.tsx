@@ -7,13 +7,14 @@ import type { Facture } from './data';
 import { dh, fmtDateLong, joursRetard } from './format';
 import { StatutBadge } from './ui';
 import Button from '../common/Button';
-import { X, Printer, CreditCard, AlertCircle, ArrowLeft, CheckCircle2, Receipt } from 'lucide-react';
+import { X, Printer, CreditCard, AlertCircle, ArrowLeft, CheckCircle2, Receipt, ShieldCheck } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useFacturePayment } from './EncaisserModal';
 import { PaymentBody, PaymentFooter, PaymentDone } from '../common/PaymentModal';
 import { useAppContext } from '../../context/AppContext';
 import { buildLetterhead } from '../../lib/letterhead';
 import { printFacture } from './FacturePrint';
+import { CreateClaimModal } from './CreateClaimModal';
 
 const LABEL = 'text-[11px] font-semibold uppercase tracking-wide text-slate-400';
 const MODE_LABEL: Record<string, string> = { Especes: 'Espèces', Carte: 'Carte', Virement: 'Virement', 'Tiers payant': 'Tiers payant', Autre: 'Autre' };
@@ -30,13 +31,16 @@ interface FactureDetailProps {
   onPrint: () => void;
   onEncaisser: () => void;
   onReceipt?: (paiementId: string) => void;
+  onTiersPayant?: () => void;
 }
 
 // The facture, read top to bottom: where the balance stands, who/when, what was billed, how it was paid.
-export function FactureDetail({ facture, praticienNom, onClose, onPrint, onEncaisser, onReceipt }: FactureDetailProps) {
+export function FactureDetail({ facture, praticienNom, onClose, onPrint, onEncaisser, onReceipt, onTiersPayant }: FactureDetailProps) {
   const paye = facturePaye(facture);
   const reste = factureReste(facture);
-  const ratio = facture.montant > 0 ? Math.min(1, paye / facture.montant) : 1;
+  // In tiers payant the patient owes only their share; the organism's share is on its dossier.
+  const partPatient = facture.montant - (facture.partOrganisme || 0);
+  const ratio = partPatient > 0 ? Math.min(1, paye / partPatient) : 1;
   const retard = joursRetard(facture.dateEcheance);
   const isLate = facture.statut === 'en_retard' && reste > 0;
   const paiements = [...facture.paiements].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -70,7 +74,7 @@ export function FactureDetail({ facture, praticienNom, onClose, onPrint, onEncai
                 {reste > 0 ? dh(reste) : <span className="inline-flex items-center gap-2"><CheckCircle2 className="h-7 w-7" />{dh(paye)}</span>}
               </p>
             </div>
-            <p className="pb-0.5 text-right text-[12.5px] tabular-nums text-slate-500">{dh(paye)} / {dh(facture.montant)}</p>
+            <p className="pb-0.5 text-right text-[12.5px] tabular-nums text-slate-500">{dh(paye)} / {dh(partPatient)}</p>
           </div>
           <div className="mt-3 h-1 overflow-hidden rounded-full bg-slate-100">
             <motion.div
@@ -80,6 +84,12 @@ export function FactureDetail({ facture, praticienNom, onClose, onPrint, onEncai
           </div>
           {isLate && <p className="mt-2 flex items-center gap-1 text-[12px] font-medium text-red-600"><AlertCircle className="h-3.5 w-3.5" /> En retard de {retard} jour{retard > 1 ? 's' : ''}</p>}
           {reste > 0 && !isLate && <p className="mt-2 text-[12px] text-slate-400">Échéance le {fmtDateLong(facture.dateEcheance)}</p>}
+          {facture.modePaiement === 'TIERS_PAYANT' && (
+            <p className="mt-3 flex items-start gap-2 rounded-lg bg-blue-50 px-3 py-2 text-[12.5px] text-blue-800">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>Tiers payant : {dh(facture.partOrganisme)} réglés directement par l'organisme (suivi dans Tiers payant). Part patient : {dh(partPatient)}.</span>
+            </p>
+          )}
         </div>
 
         {/* Actes */}
@@ -133,11 +143,18 @@ export function FactureDetail({ facture, praticienNom, onClose, onPrint, onEncai
         <Button variant="ghost" onClick={onPrint}>
           <Printer className="h-4 w-4" /> Imprimer
         </Button>
-        {reste > 0 && (
-          <Button variant="primary" onClick={onEncaisser}>
-            <CreditCard className="h-4 w-4" /> Encaisser
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {onTiersPayant && reste > 0 && facture.modePaiement === 'PATIENT' && facture.visitId && (
+            <Button variant="secondary" onClick={onTiersPayant}>
+              <ShieldCheck className="h-4 w-4" /> Passer en tiers payant
+            </Button>
+          )}
+          {reste > 0 && (
+            <Button variant="primary" onClick={onEncaisser}>
+              <CreditCard className="h-4 w-4" /> Encaisser
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -195,9 +212,10 @@ export function FactureDrawer() {
   const { ui, setFactureOuverteId, setRecuPaiementId } = useFacturationStore();
   const { data: factures = [] } = useFacturesQuery();
   const { praticiens } = useFilterOptions();
-  const { profile, user, cabinet } = useAppContext() as any;
+  const { profile, user, cabinet, can } = useAppContext() as any;
   const reduceMotion = useReducedMotion();
   const [view, setView] = useState<'detail' | 'pay'>('detail');
+  const [claimOpen, setClaimOpen] = useState(false);
 
   const current = factures.find(f => f.id === ui.factureOuverteId);
   // Keep the last facture while the modal animates out.
@@ -217,14 +235,14 @@ export function FactureDrawer() {
   useEffect(() => {
     if (!current) return undefined;
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || pay.processing) return;
+      if (e.key !== 'Escape' || pay.processing || claimOpen) return;
       if (view === 'pay') setView('detail');
       else setFactureOuverteId(null);
     };
     window.addEventListener('keydown', handleEsc);
     document.body.style.overflow = 'hidden';
     return () => { window.removeEventListener('keydown', handleEsc); document.body.style.overflow = ''; };
-  }, [current, view, pay.processing, setFactureOuverteId]);
+  }, [current, view, pay.processing, claimOpen, setFactureOuverteId]);
 
   const handleClose = () => { if (!pay.processing) setFactureOuverteId(null); };
   const startPay = () => { pay.start(); setView('pay'); };
@@ -243,6 +261,8 @@ export function FactureDrawer() {
   const panelTransition = reduceMotion ? { duration: 0.12 } : { duration: 0.34, ease: EASE_OUT };
 
   return (
+    <>
+    <CreateClaimModal open={claimOpen && Boolean(current)} onClose={() => setClaimOpen(false)} facture={current ?? null} />
     <AnimatePresence>
       {current && facture && (
         <motion.div
@@ -285,6 +305,7 @@ export function FactureDrawer() {
                     onPrint={print}
                     onEncaisser={startPay}
                     onReceipt={openReceipt}
+                    onTiersPayant={can?.('billing.collect') ? () => setClaimOpen(true) : undefined}
                   />
                 )}
               </motion.div>
@@ -293,5 +314,6 @@ export function FactureDrawer() {
         </motion.div>
       )}
     </AnimatePresence>
+    </>
   );
 }

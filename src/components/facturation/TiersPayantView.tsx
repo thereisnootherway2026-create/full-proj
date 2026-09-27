@@ -1,301 +1,200 @@
 import React, { useMemo, useState } from 'react';
-import { Building2, Download, FilePlus2, Landmark, Plus } from 'lucide-react';
+import { Building2, Download, FileStack, Landmark, Plus } from 'lucide-react';
 import { useAppContext } from '../../context/AppContext';
 import Button from '../common/Button';
 import Chip from '../common/Chip';
 import Modal from '../common/Modal';
-import Select from '../common/Select';
 import { useFacturationStore } from './store';
-import { useFacturesQuery } from './queries';
+import { periodeStartMs } from './selectors';
+import { numeroFacture } from './data';
 import { Card, ErrorState, SectionTitle, Skeleton } from './ui';
 import { dh, fmtDate, num } from './format';
-import { factureReste } from './data';
+import { CreateClaimModal } from './CreateClaimModal';
+import { OrganizationsModal } from './OrganizationsModal';
 import {
-  CLAIM_STATUS, Claim, ClaimStatus, INSURER_KINDS, Insurer, InsurerKind, KIND_LABEL, claimOpenAmount,
-  useClaimStatus, useClaimsQuery, useCreateClaim, useInsurersQuery, useReimbursement, useSaveInsurer,
+  AWAITING_SETTLEMENT_STATUSES, CLAIM_STATUS, OPEN_CLAIM_STATUSES, ORGANIZATION_TYPE_LABEL,
+  claimOutstanding, useClaimSettlement, useClaimStatus, useClaimsQuery, useOrganizationsQuery, useRejectClaim,
 } from './tiersPayant';
+import type { Claim, ClaimStatus } from './tiersPayant';
 import { cn } from '../../lib/utils';
 
 const inputCls = 'h-[44px] w-full rounded-[10px] border border-[#E5E7EB] bg-white px-3 text-[14px] font-medium text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
 const labelCls = 'mb-1.5 block text-[12px] font-semibold uppercase tracking-wide text-slate-500';
 
-const parseAmount = (s: string) => Number(String(s).replace(/\s/g, '').replace(',', '.'));
+const parseAmount = (s: string) => (String(s).trim() === '' ? 0 : Number(String(s).replace(/\s/g, '').replace(',', '.')));
 const round2 = (n: number) => Math.round(n * 100) / 100;
+const plural = (n: number, word: string) => `${num(n)} ${word}${n > 1 ? 's' : ''}`;
 
 function ClaimBadge({ status }: { status: ClaimStatus }) {
   const meta = CLAIM_STATUS[status];
   return (
-    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium', meta.cls)}>
+    <span className={cn('inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium', meta.cls)}>
       <span className={cn('h-1.5 w-1.5 rounded-full', meta.dot)} />
       {meta.label}
     </span>
   );
 }
 
-function FormError({ message }: { message: string }) {
-  return message ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-[13px] font-medium text-red-700">{message}</p> : null;
-}
+// ------------------------------------------------------------------ claim actions
 
-// ------------------------------------------------------------------ insurers
+type ActionKind = 'ready' | 'draft' | 'submit' | 'processing' | 'settle' | 'reject' | 'refile' | 'cancel';
+type Action = { kind: ActionKind; claim: Claim } | null;
 
-function InsurersModal({ open, onClose, insurers }: { open: boolean; onClose: () => void; insurers: Insurer[] }) {
-  const save = useSaveInsurer();
-  const { showToast } = useFacturationStore();
-  const [editing, setEditing] = useState<Insurer | null>(null);
-  const [name, setName] = useState('');
-  const [kind, setKind] = useState<InsurerKind>('mutuelle');
-  const [rate, setRate] = useState('80');
-  const [error, setError] = useState('');
-
-  const reset = () => { setEditing(null); setName(''); setKind('mutuelle'); setRate('80'); setError(''); };
-  const edit = (i: Insurer) => { setEditing(i); setName(i.name); setKind(i.kind); setRate(String(i.defaultRate)); setError(''); };
-
-  const submit = async () => {
-    const r = parseAmount(rate);
-    if (!name.trim()) return setError("Saisissez le nom de l'organisme.");
-    if (!Number.isFinite(r) || r < 0 || r > 100) return setError('Le taux doit être compris entre 0 et 100 %.');
-    try {
-      await save.mutateAsync({ id: editing?.id, name, kind, defaultRate: r });
-      showToast(editing ? 'Organisme mis à jour.' : 'Organisme ajouté.');
-      reset();
-    } catch (e: any) { setError(e.message); }
-  };
-
-  return (
-    <Modal open={open} onClose={() => { reset(); onClose(); }} title="Organismes payeurs" description="CNSS, CNOPS, mutuelles et assurances du cabinet" width="max-w-lg">
-      <div className="space-y-2">
-        {insurers.length === 0 && <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-500">Aucun organisme pour le moment.</p>}
-        {insurers.map(i => (
-          <button key={i.id} type="button" onClick={() => edit(i)}
-            className={cn('flex w-full items-center justify-between rounded-[10px] border px-3 py-2.5 text-left transition-colors hover:bg-slate-50',
-              editing?.id === i.id ? 'border-blue-500 bg-blue-50/40' : 'border-slate-200')}>
-            <span>
-              <span className="block text-sm font-semibold text-slate-900">{i.name}</span>
-              <span className="text-xs text-slate-500">{KIND_LABEL[i.kind]}</span>
-            </span>
-            <span className="text-sm font-bold text-slate-700">{i.defaultRate} %</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="mt-5 space-y-3 border-t border-slate-100 pt-4">
-        <p className="text-sm font-semibold text-slate-800">{editing ? `Modifier « ${editing.name} »` : 'Ajouter un organisme'}</p>
-        <div>
-          <label className={labelCls}>Nom</label>
-          <input className={inputCls} value={name} onChange={e => setName(e.target.value)} placeholder="Ex. CNSS, Saham, AXA…" />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={labelCls}>Type</label>
-            <Select value={kind} onChange={(v: string) => setKind(v as InsurerKind)}
-              options={INSURER_KINDS.map(k => ({ value: k, label: KIND_LABEL[k] }))} />
-          </div>
-          <div>
-            <label className={labelCls}>Prise en charge par défaut (%)</label>
-            <input className={inputCls} inputMode="decimal" value={rate} onChange={e => setRate(e.target.value)} />
-          </div>
-        </div>
-        <FormError message={error} />
-        <div className="flex justify-end gap-2 pt-1">
-          {editing && <Button variant="secondary" size="sm" onClick={reset}>Nouveau</Button>}
-          <Button variant="primary" size="sm" onClick={submit} disabled={save.isPending}>{editing ? 'Enregistrer' : 'Ajouter'}</Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-// ------------------------------------------------------------------ new claim
-
-function NewClaimModal({ open, onClose, insurers, claimedPaymentIds }: { open: boolean; onClose: () => void; insurers: Insurer[]; claimedPaymentIds: Set<string> }) {
-  const { data: factures = [] } = useFacturesQuery();
-  const create = useCreateClaim();
-  const { showToast } = useFacturationStore();
-  const [factureId, setFactureId] = useState('');
-  const [insurerId, setInsurerId] = useState('');
-  const [rate, setRate] = useState('');
-  const [save, setSave] = useState(true);
-  const [error, setError] = useState('');
-
-  const eligible = useMemo(
-    () => factures.filter(f => f.visitId && factureReste(f) > 0 && !claimedPaymentIds.has(f.id)),
-    [factures, claimedPaymentIds],
-  );
-  const facture = eligible.find(f => f.id === factureId) || null;
-  const insurer = insurers.find(i => i.id === insurerId) || null;
-
-  const close = () => { setFactureId(''); setInsurerId(''); setRate(''); setError(''); onClose(); };
-
-  const pickFacture = (id: string) => {
-    setFactureId(id);
-    const f = eligible.find(x => x.id === id);
-    const match = f ? insurers.find(i => i.name === f.assureurId) : undefined;
-    if (match) { setInsurerId(match.id); setRate(String(match.defaultRate)); }
-  };
-  const pickInsurer = (id: string) => {
-    setInsurerId(id);
-    const i = insurers.find(x => x.id === id);
-    if (i) setRate(String(i.defaultRate));
-  };
-
-  const r = parseAmount(rate);
-  const validRate = Number.isFinite(r) && r >= 0 && r <= 100;
-  const insurerShare = facture && validRate ? Math.min(round2(facture.montant * r / 100), factureReste(facture)) : 0;
-  const patientShare = facture ? facture.montant - insurerShare : 0;
-
-  const submit = async () => {
-    if (!facture) return setError('Choisissez une facture.');
-    if (!insurer) return setError('Choisissez un organisme.');
-    if (!validRate) return setError('Le taux doit être compris entre 0 et 100 %.');
-    try {
-      await create.mutateAsync({ paymentId: facture.id, patientId: facture.patientId, insurerId: insurer.id, rate: r, saveForPatient: save });
-      showToast(`Demande créée : ${dh(insurerShare)} à recevoir de ${insurer.name}.`);
-      close();
-    } catch (e: any) { setError(e.message); }
-  };
-
-  return (
-    <Modal open={open} onClose={close} title="Nouvelle demande de prise en charge" description="La part de l'organisme est suivie séparément de celle du patient" width="max-w-lg">
-      {insurers.length === 0 ? (
-        <p className="rounded-lg bg-amber-50 px-3 py-3 text-sm font-medium text-amber-800">Ajoutez d'abord un organisme payeur (bouton « Organismes »).</p>
-      ) : eligible.length === 0 ? (
-        <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-500">Aucune facture impayée sans demande.</p>
-      ) : (
-        <div className="space-y-4">
-          <div>
-            <label className={labelCls}>Facture</label>
-            <Select value={factureId} onChange={pickFacture} placeholder="Choisir une facture…"
-              options={eligible.map(f => ({ value: f.id, label: `${f.patientNom} · ${f.numero} · ${dh(factureReste(f))}` }))} />
-          </div>
-          <div className="grid grid-cols-[1fr_130px] gap-3">
-            <div>
-              <label className={labelCls}>Organisme</label>
-              <Select value={insurerId} onChange={pickInsurer} placeholder="Choisir…"
-                options={insurers.map(i => ({ value: i.id, label: i.name }))} />
-            </div>
-            <div>
-              <label className={labelCls}>Prise en charge %</label>
-              <input className={inputCls} inputMode="decimal" value={rate} onChange={e => setRate(e.target.value)} />
-            </div>
-          </div>
-
-          {facture && (
-            <div className="grid grid-cols-3 gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
-              <div><p className="text-[11px] font-semibold uppercase text-slate-400">Facture</p><p className="text-sm font-bold text-slate-900">{dh(facture.montant)}</p></div>
-              <div><p className="text-[11px] font-semibold uppercase text-slate-400">Organisme</p><p className="text-sm font-bold text-blue-700">{dh(insurerShare)}</p></div>
-              <div><p className="text-[11px] font-semibold uppercase text-slate-400">Patient</p><p className="text-sm font-bold text-slate-900">{dh(patientShare)}</p></div>
-            </div>
-          )}
-
-          <label className="flex cursor-pointer items-center gap-2 text-[13px] font-medium text-slate-600">
-            <input type="checkbox" checked={save} onChange={e => setSave(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
-            Enregistrer cet organisme et ce taux sur la fiche du patient
-          </label>
-          <FormError message={error} />
-        </div>
-      )}
-      <div className="mt-5 flex justify-end gap-2">
-        <Button variant="secondary" size="sm" onClick={close}>Annuler</Button>
-        <Button variant="primary" size="sm" onClick={submit} disabled={create.isPending || !facture || !insurer}>Créer la demande</Button>
-      </div>
-    </Modal>
-  );
-}
-
-// ------------------------------------------------------------------ claim action dialogs
-
-type Action = { kind: 'submit' | 'reimburse' | 'reject' | 'cancel'; claim: Claim } | null;
+const ACTION_TITLE: Record<ActionKind, string> = {
+  ready: 'Marquer prêt à déposer',
+  draft: 'Repasser en brouillon',
+  submit: 'Marquer comme déposé',
+  processing: "Marquer en cours de traitement",
+  settle: "Enregistrer un règlement de l'organisme",
+  reject: 'Enregistrer un rejet',
+  refile: 'Corriger et redéposer',
+  cancel: 'Annuler le dossier',
+};
 
 function ClaimActionModal({ action, onClose }: { action: Action; onClose: () => void }) {
   const status = useClaimStatus();
-  const reimburse = useReimbursement();
+  const settle = useClaimSettlement();
+  const reject = useRejectClaim();
   const { showToast } = useFacturationStore();
   const [reference, setReference] = useState('');
-  const [amount, setAmount] = useState('');
+  const [received, setReceived] = useState('');
+  const [rejected, setRejected] = useState('');
+  const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
 
   React.useEffect(() => {
     if (!action) return;
-    setReference(action.claim.reference);
-    setAmount(String(round2(action.claim.insurerShare - action.claim.reimbursed)));
-    setNote(action.claim.note);
+    setReference(action.claim.externalReference);
+    setReceived(String(claimOutstanding(action.claim)));
+    setRejected('');
+    setReason('');
+    setNote('');
     setError('');
   }, [action]);
 
   if (!action) return null;
   const { kind, claim } = action;
-  const open = round2(claim.insurerShare - claim.reimbursed);
-
-  const titles = {
-    submit: 'Marquer comme déposé', reimburse: 'Enregistrer un remboursement',
-    reject: 'Marquer comme rejeté', cancel: 'Annuler la demande',
-  };
+  const outstanding = claimOutstanding(claim);
+  const pending = status.isPending || settle.isPending || reject.isPending;
 
   const run = async () => {
     try {
-      if (kind === 'reimburse') {
-        const v = parseAmount(amount);
-        if (!Number.isFinite(v) || v <= 0) return setError('Montant invalide.');
-        if (v > open) return setError(`Le montant dépasse ce que l'organisme doit encore (${dh(open, true)}).`);
-        await reimburse.mutateAsync({ id: claim.id, amount: v, reference });
-        showToast(v < open ? `Remboursement partiel de ${dh(v)} enregistré.` : `Remboursement de ${dh(v)} enregistré.`);
+      if (kind === 'settle') {
+        const r = parseAmount(received);
+        const x = parseAmount(rejected);
+        if (!Number.isFinite(r) || !Number.isFinite(x) || r < 0 || x < 0 || r + x <= 0) return setError('Montant invalide.');
+        if (round2(r + x) > outstanding) return setError(`Le total dépasse ce que l'organisme doit encore (${dh(outstanding, true)}).`);
+        if (x > 0 && !reason.trim()) return setError('Indiquez le motif de la part refusée.');
+        await settle.mutateAsync({ id: claim.id, received: r, rejected: x, reason, reference });
+        showToast(r > 0 ? `Règlement de ${dh(r)} enregistré.` : 'Refus partiel enregistré.');
+      } else if (kind === 'reject') {
+        if (!reason.trim()) return setError('Indiquez le motif du rejet.');
+        await reject.mutateAsync({ id: claim.id, reason });
+        showToast('Rejet enregistré.');
       } else {
-        const next = { submit: 'depose', reject: 'rejete', cancel: 'annule' }[kind] as ClaimStatus;
-        await status.mutateAsync({ id: claim.id, status: next, reference, note });
-        showToast(kind === 'submit' ? 'Demande marquée comme déposée.' : kind === 'reject' ? 'Demande marquée comme rejetée.' : 'Demande annulée.');
+        const next: Record<string, ClaimStatus> = {
+          ready: 'READY', draft: 'DRAFT', submit: 'SUBMITTED', processing: 'PROCESSING', refile: 'READY', cancel: 'CANCELLED',
+        };
+        await status.mutateAsync({ id: claim.id, status: next[kind], reference, notes: note });
+        showToast({
+          ready: 'Dossier prêt à déposer.', draft: 'Dossier repassé en brouillon.', submit: 'Dossier marqué comme déposé.',
+          processing: 'Dossier marqué en cours.', refile: 'Dossier à redéposer.', cancel: 'Dossier annulé.',
+        }[kind] as string);
       }
       onClose();
     } catch (e: any) { setError(e.message); }
   };
 
   return (
-    <Modal open onClose={onClose} title={titles[kind]} description={`${claim.patientNom} · part de l'organisme ${dh(claim.insurerShare, true)}`} width="max-w-md">
+    <Modal open onClose={onClose} title={ACTION_TITLE[kind]}
+      description={`${claim.patientNom} · ${claim.organizationName} · part organisme ${dh(claim.claimed, true)}`} width="max-w-md">
       <div className="space-y-3">
-        {kind === 'cancel' && <p className="text-sm text-slate-600">La facture reste due par le patient. Cette action ne peut pas être annulée.</p>}
-        {kind === 'reimburse' && (
-          <div>
-            <label className={labelCls}>Montant reçu (DH) — reste dû : {dh(open, true)}</label>
-            <input className={inputCls} inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} />
-          </div>
+        {kind === 'cancel' && (
+          <p className="text-sm text-slate-600">
+            La part de l'organisme ({dh(claim.claimed, true)}) redevient due par le patient sur la facture. Cette action ne peut pas être annulée.
+          </p>
         )}
-        {(kind === 'submit' || kind === 'reimburse') && (
+        {kind === 'refile' && claim.rejectionReason && (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">Motif du rejet : {claim.rejectionReason}</p>
+        )}
+        {kind === 'settle' && (
+          <>
+            <p className="text-sm text-slate-600">Reste attendu de l'organisme : <b>{dh(outstanding, true)}</b></p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Montant reçu (DH)</label>
+                <input className={inputCls} inputMode="decimal" value={received} onChange={e => setReceived(e.target.value)} />
+              </div>
+              <div>
+                <label className={labelCls}>Montant refusé (DH)</label>
+                <input className={inputCls} inputMode="decimal" value={rejected} onChange={e => setRejected(e.target.value)} placeholder="0" />
+              </div>
+            </div>
+            {parseAmount(rejected) > 0 && (
+              <div>
+                <label className={labelCls}>Motif du refus</label>
+                <input className={inputCls} value={reason} onChange={e => setReason(e.target.value)} />
+              </div>
+            )}
+          </>
+        )}
+        {kind === 'reject' && (
+          <>
+            <p className="text-sm text-slate-600">L'organisme refuse les {dh(outstanding, true)} encore attendus. Aucun paiement n'est enregistré.</p>
+            <div>
+              <label className={labelCls}>Motif du rejet</label>
+              <input className={inputCls} value={reason} onChange={e => setReason(e.target.value)} />
+            </div>
+          </>
+        )}
+        {(kind === 'submit' || kind === 'settle') && (
           <div>
-            <label className={labelCls}>{kind === 'submit' ? 'N° de dossier / bordereau (optionnel)' : 'Référence du virement (optionnel)'}</label>
+            <label className={labelCls}>{kind === 'submit' ? 'N° de dossier / bordereau (optionnel)' : 'Référence du règlement (optionnel)'}</label>
             <input className={inputCls} value={reference} onChange={e => setReference(e.target.value)} />
           </div>
         )}
-        {(kind === 'reject' || kind === 'cancel') && (
+        {kind === 'cancel' && (
           <div>
-            <label className={labelCls}>{kind === 'reject' ? 'Motif du rejet' : 'Note (optionnel)'}</label>
+            <label className={labelCls}>Note (optionnel)</label>
             <input className={inputCls} value={note} onChange={e => setNote(e.target.value)} />
           </div>
         )}
-        <FormError message={error} />
+        {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-[13px] font-medium text-red-700">{error}</p>}
       </div>
       <div className="mt-5 flex justify-end gap-2">
         <Button variant="secondary" size="sm" onClick={onClose}>Retour</Button>
-        <Button variant={kind === 'reimburse' ? 'success' : kind === 'submit' ? 'primary' : 'danger'} size="sm" onClick={run}
-          disabled={status.isPending || reimburse.isPending}>
-          {kind === 'reimburse' ? 'Enregistrer' : kind === 'submit' ? 'Confirmer le dépôt' : kind === 'reject' ? 'Marquer rejeté' : "Annuler la demande"}
+        <Button variant={kind === 'settle' ? 'success' : kind === 'reject' || kind === 'cancel' ? 'danger' : 'primary'} size="sm" onClick={run} disabled={pending}>
+          {kind === 'cancel' ? 'Annuler le dossier' : 'Confirmer'}
         </Button>
       </div>
     </Modal>
   );
 }
 
+// Actions offered for each status (the server enforces the same lifecycle).
+const ACTIONS: Record<ClaimStatus, Array<{ kind: ActionKind; label: string; variant: string }>> = {
+  DRAFT: [{ kind: 'ready', label: 'Prêt à déposer', variant: 'accentOutline' }, { kind: 'cancel', label: 'Annuler', variant: 'ghost' }],
+  READY: [{ kind: 'submit', label: 'Déposer', variant: 'accentOutline' }, { kind: 'draft', label: 'Brouillon', variant: 'ghost' }, { kind: 'cancel', label: 'Annuler', variant: 'ghost' }],
+  SUBMITTED: [{ kind: 'settle', label: 'Règlement', variant: 'success' }, { kind: 'processing', label: 'En cours', variant: 'secondary' }, { kind: 'reject', label: 'Rejet', variant: 'secondary' }, { kind: 'cancel', label: 'Annuler', variant: 'ghost' }],
+  PROCESSING: [{ kind: 'settle', label: 'Règlement', variant: 'success' }, { kind: 'reject', label: 'Rejet', variant: 'secondary' }, { kind: 'cancel', label: 'Annuler', variant: 'ghost' }],
+  PARTIALLY_SETTLED: [{ kind: 'settle', label: 'Règlement', variant: 'success' }, { kind: 'reject', label: 'Rejeter le reste', variant: 'secondary' }],
+  SETTLED: [],
+  REJECTED: [{ kind: 'refile', label: 'Redéposer', variant: 'accentOutline' }, { kind: 'cancel', label: 'Annuler', variant: 'ghost' }],
+  CANCELLED: [],
+};
+
 // ------------------------------------------------------------------ export
 
 const csvCell = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
 const money = (n: number) => n.toFixed(2).replace('.', ',');
 
-function exportClaims(claims: Claim[], insurers: Insurer[]) {
-  const name = (id: string) => insurers.find(i => i.id === id)?.name || '';
-  const headers = ['Organisme', 'Date', 'Patient', 'CIN', 'N° CNSS / affilié', 'Total facture', 'Taux %', 'Part organisme', 'Part patient', 'Statut', 'Référence', 'Remboursé'];
+function exportClaims(claims: Claim[]) {
+  const headers = ['Organisme', 'Date', 'Patient', 'N° adhérent', 'Facture', 'Total facture', 'Part organisme', 'Part patient', 'Reçu', 'Refusé', 'Reste attendu', 'Statut', 'Référence', 'Motif du rejet'];
   const rows = claims.map(c => [
-    csvCell(name(c.insurerId)), c.createdAt.split('T')[0], csvCell(c.patientNom), csvCell(c.patientCin), csvCell(c.numeroCnss),
-    money(c.total), String(c.rate).replace('.', ','), money(c.insurerShare), money(c.patientShare),
-    CLAIM_STATUS[c.status].label, csvCell(c.reference), money(c.reimbursed),
+    csvCell(c.organizationName), c.createdAt.split('T')[0], csvCell(c.patientNom), csvCell(c.membershipNumber), numeroFacture(c.invoiceId),
+    money(c.invoiceAmount), money(c.claimed), money(c.patientShare), money(c.received), money(c.rejected), money(claimOutstanding(c)),
+    CLAIM_STATUS[c.status].label, csvCell(c.externalReference), csvCell(c.rejectionReason),
   ].join(';'));
   const blob = new Blob(['﻿' + [headers.join(';'), ...rows].join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -310,59 +209,76 @@ function exportClaims(claims: Claim[], insurers: Insurer[]) {
 
 // ------------------------------------------------------------------ view
 
-const FILTERS: Array<{ id: 'all' | ClaimStatus; label: string }> = [
-  { id: 'all', label: 'Toutes' },
-  { id: 'a_deposer', label: 'À déposer' },
-  { id: 'depose', label: 'Déposées' },
-  { id: 'rembourse', label: 'Remboursées' },
-  { id: 'rejete', label: 'Rejetées' },
+const TABS: Array<{ id: string; label: string; statuses: ClaimStatus[] | null }> = [
+  { id: 'all', label: 'Tous', statuses: null },
+  { id: 'ready', label: 'À déposer', statuses: ['READY'] },
+  { id: 'submitted', label: 'Déposés', statuses: ['SUBMITTED'] },
+  { id: 'processing', label: 'En cours', statuses: ['PROCESSING', 'PARTIALLY_SETTLED'] },
+  { id: 'settled', label: 'Réglés', statuses: ['SETTLED'] },
+  { id: 'rejected', label: 'Rejetés', statuses: ['REJECTED'] },
 ];
 
 export function TiersPayantView() {
   const { can } = useAppContext();
-  const { showToast } = useFacturationStore();
-  const insurersQ = useInsurersQuery();
+  const { filters, showToast } = useFacturationStore();
+  const organizationsQ = useOrganizationsQuery();
   const claimsQ = useClaimsQuery();
-  const insurers = insurersQ.data || [];
+  const organizations = organizationsQ.data || [];
   const claims = claimsQ.data || [];
 
-  const [filter, setFilter] = useState<'all' | ClaimStatus>('all');
-  const [insurerFilter, setInsurerFilter] = useState('');
-  const [showInsurers, setShowInsurers] = useState(false);
-  const [showNew, setShowNew] = useState(false);
+  const [tab, setTab] = useState('all');
+  const [showOrganizations, setShowOrganizations] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
   const [action, setAction] = useState<Action>(null);
-
   const canEdit = can('billing.collect');
-  const claimedPaymentIds = useMemo(() => new Set(claims.filter(c => c.status !== 'annule').map(c => c.paymentId)), [claims]);
-  const live = claims.filter(c => c.status !== 'annule');
 
-  const totals = useMemo(() => {
+  // Top filters (patient / numéro, période, praticien, organisme, statut) apply to everything below.
+  const filtered = useMemo(() => {
+    const start = periodeStartMs(filters.periode);
+    const q = filters.recherche.trim().toLowerCase();
+    return claims.filter(c => {
+      if (start > 0 && new Date(c.createdAt).getTime() < start) return false;
+      if (filters.praticienId && c.praticienId !== filters.praticienId) return false;
+      if (filters.organisationId && c.organizationId !== filters.organisationId) return false;
+      if (filters.claimStatut && c.status !== filters.claimStatut) return false;
+      if (filters.patientId && c.patientId !== filters.patientId) return false;
+      if (q && ![c.patientNom, numeroFacture(c.invoiceId), c.externalReference, c.membershipNumber]
+        .some(v => v.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [claims, filters]);
+
+  const kpis = useMemo(() => {
     const sum = (list: Claim[], f: (c: Claim) => number) => list.reduce((a, c) => a + f(c), 0);
-    const toFile = live.filter(c => c.status === 'a_deposer');
-    const waiting = live.filter(c => c.status === 'depose');
-    const rejected = live.filter(c => c.status === 'rejete');
+    const ready = filtered.filter(c => c.status === 'READY');
+    const awaiting = filtered.filter(c => AWAITING_SETTLEMENT_STATUSES.includes(c.status) && claimOutstanding(c) > 0);
+    const paid = filtered.filter(c => c.received > 0 && c.status !== 'CANCELLED');
+    const rejected = filtered.filter(c => c.status === 'REJECTED');
     return {
-      toFile: { n: toFile.length, amount: sum(toFile, c => c.insurerShare) },
-      waiting: { n: waiting.length, amount: sum(waiting, claimOpenAmount) },
-      reimbursed: sum(live, c => c.reimbursed),
-      rejected: { n: rejected.length, amount: sum(rejected, c => c.insurerShare - c.reimbursed) },
+      ready: { n: ready.length, amount: sum(ready, c => c.claimed) },
+      awaiting: { n: awaiting.length, amount: sum(awaiting, claimOutstanding) },
+      received: { n: paid.length, amount: sum(paid, c => c.received) },
+      rejected: { n: rejected.length, amount: sum(rejected, c => c.rejected) },
     };
-  }, [live]);
+  }, [filtered]);
 
-  const perInsurer = useMemo(() => insurers.map(i => {
-    const mine = live.filter(c => c.insurerId === i.id);
-    return {
-      insurer: i,
-      open: mine.filter(c => c.status === 'a_deposer' || c.status === 'depose').length,
-      owed: mine.reduce((a, c) => a + claimOpenAmount(c), 0),
-      reimbursed: mine.reduce((a, c) => a + c.reimbursed, 0),
-    };
-  }), [insurers, live]);
+  // Only tiers-payant receivables: what each organism still owes the cabinet.
+  const balances = useMemo(() => {
+    const byOrg = new Map<string, { id: string; name: string; open: number; owed: number }>();
+    filtered.filter(c => OPEN_CLAIM_STATUSES.includes(c.status) && claimOutstanding(c) > 0).forEach(c => {
+      const org = organizations.find(o => o.id === c.organizationId);
+      const row = byOrg.get(c.organizationId) || { id: c.organizationId, name: org?.name || c.organizationName, open: 0, owed: 0 };
+      row.open += 1;
+      row.owed += claimOutstanding(c);
+      byOrg.set(c.organizationId, row);
+    });
+    return Array.from(byOrg.values()).sort((a, b) => b.owed - a.owed);
+  }, [filtered, organizations]);
 
-  const shown = claims.filter(c => (filter === 'all' ? c.status !== 'annule' : c.status === filter) && (!insurerFilter || c.insurerId === insurerFilter));
-  const insurerName = (id: string) => insurers.find(i => i.id === id)?.name || '—';
+  const activeTab = TABS.find(t => t.id === tab) || TABS[0];
+  const shown = filtered.filter(c => (activeTab.statuses ? activeTab.statuses.includes(c.status) : c.status !== 'CANCELLED'));
 
-  if (claimsQ.isLoading || insurersQ.isLoading) {
+  if (claimsQ.isLoading || organizationsQ.isLoading) {
     return <div className="space-y-4"><Skeleton className="h-24 w-full" /><Skeleton className="h-40 w-full" /></div>;
   }
   if (claimsQ.isError) return <ErrorState error={claimsQ.error as Error} onRetry={claimsQ.refetch} />;
@@ -370,69 +286,67 @@ export function TiersPayantView() {
   return (
     <div className="space-y-6 pb-12">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-sm text-slate-500">
-          Suivez la part prise en charge par la CNSS, la CNOPS et les mutuelles. Les dossiers sont préparés ici et exportés pour dépôt auprès de l'organisme ; le remboursement est saisi à sa réception.
-        </p>
+        <p className="max-w-2xl text-sm text-slate-500">Suivez les dossiers en tiers payant et les règlements attendus des organismes.</p>
         <div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={() => setShowInsurers(true)}><Building2 className="h-4 w-4" />Organismes</Button>
-          {canEdit && <Button variant="accent" size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4" />Nouvelle demande</Button>}
+          <Button variant="secondary" size="sm" onClick={() => setShowOrganizations(true)}><Building2 className="h-4 w-4" />Organismes</Button>
+          {canEdit && <Button variant="accent" size="sm" onClick={() => setShowCreate(true)}><Plus className="h-4 w-4" />Créer un dossier</Button>}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">À déposer</p>
-          <p className="mt-1 text-2xl font-bold tracking-tight text-slate-900">{dh(totals.toFile.amount)}</p>
-          <p className="mt-0.5 text-xs text-slate-500">{num(totals.toFile.n)} dossier{totals.toFile.n > 1 ? 's' : ''}</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-slate-900">{dh(kpis.ready.amount)}</p>
+          <p className="mt-0.5 text-xs text-slate-500">{plural(kpis.ready.n, 'dossier')}</p>
         </Card>
         <Card className="border-blue-100 bg-blue-50/50">
-          <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">En attente de remboursement</p>
-          <p className="mt-1 text-2xl font-bold tracking-tight text-blue-700">{dh(totals.waiting.amount)}</p>
-          <p className="mt-0.5 text-xs text-blue-600/80">{num(totals.waiting.n)} dossier{totals.waiting.n > 1 ? 's' : ''} déposé{totals.waiting.n > 1 ? 's' : ''}</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">En attente de règlement</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-blue-700">{dh(kpis.awaiting.amount)}</p>
+          <p className="mt-0.5 text-xs text-blue-600/80">{plural(kpis.awaiting.n, 'dossier')}</p>
         </Card>
         <Card>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Remboursé</p>
-          <p className="mt-1 text-2xl font-bold tracking-tight text-emerald-600">{dh(totals.reimbursed)}</p>
-          <p className="mt-0.5 text-xs text-slate-500">Cumul reçu des organismes</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Réglé par l'organisme</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-emerald-600">{dh(kpis.received.amount)}</p>
+          <p className="mt-0.5 text-xs text-slate-500">{plural(kpis.received.n, 'dossier')}</p>
         </Card>
         <Card>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Rejetés</p>
-          <p className={cn('mt-1 text-2xl font-bold tracking-tight', totals.rejected.n ? 'text-red-600' : 'text-slate-900')}>{dh(totals.rejected.amount)}</p>
-          <p className="mt-0.5 text-xs text-slate-500">{num(totals.rejected.n)} dossier{totals.rejected.n > 1 ? 's' : ''}</p>
+          <p className={cn('mt-1 text-2xl font-bold tracking-tight', kpis.rejected.n ? 'text-red-600' : 'text-slate-900')}>{dh(kpis.rejected.amount)}</p>
+          <p className="mt-0.5 text-xs text-slate-500">{plural(kpis.rejected.n, 'dossier')}</p>
         </Card>
       </div>
 
       <Card className="overflow-hidden p-0">
-        <SectionTitle title="Soldes par organisme" subtitle="Ce que chaque organisme doit encore au cabinet" className="border-b border-slate-100 p-6 pb-4" />
-        {perInsurer.length === 0 ? (
+        <SectionTitle title="Soldes par organisme" subtitle="Montants encore attendus des organismes" className="border-b border-slate-100 p-6 pb-4" />
+        {balances.length === 0 ? (
           <div className="py-12 text-center">
             <Landmark className="mx-auto h-8 w-8 text-slate-300" />
-            <p className="mt-2 font-medium text-slate-900">Aucun organisme</p>
-            <p className="text-sm text-slate-500">Ajoutez la CNSS, la CNOPS ou une mutuelle pour commencer.</p>
-            <Button className="mt-4" variant="accent" size="sm" onClick={() => setShowInsurers(true)}>Ajouter un organisme</Button>
+            <p className="mt-2 font-medium text-slate-900">Aucun règlement en attente</p>
+            <p className="text-sm text-slate-500">Les montants apparaîtront lorsque des dossiers en tiers payant seront créés.</p>
           </div>
         ) : (
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
                 <th className="px-6 py-3 font-semibold">Organisme</th>
-                <th className="px-3 py-3 font-semibold">Taux</th>
                 <th className="px-3 py-3 font-semibold">Dossiers ouverts</th>
-                <th className="px-3 py-3 text-right font-semibold">Reçu</th>
-                <th className="px-6 py-3 text-right font-semibold">À recevoir</th>
+                <th className="px-6 py-3 text-right font-semibold">Montant attendu</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {perInsurer.map(({ insurer, open, owed, reimbursed }) => (
-                <tr key={insurer.id} onClick={() => setInsurerFilter(f => (f === insurer.id ? '' : insurer.id))}
-                  className={cn('cursor-pointer transition-colors hover:bg-slate-50', insurerFilter === insurer.id && 'bg-blue-50/50')}>
-                  <td className="px-6 py-3"><span className="font-semibold text-slate-900">{insurer.name}</span> <span className="ml-1 text-xs text-slate-400">{KIND_LABEL[insurer.kind]}</span></td>
-                  <td className="px-3 py-3 text-slate-600">{insurer.defaultRate} %</td>
-                  <td className="px-3 py-3 text-slate-600">{open}</td>
-                  <td className="px-3 py-3 text-right text-emerald-600">{dh(reimbursed)}</td>
-                  <td className="px-6 py-3 text-right font-bold text-slate-900">{dh(owed)}</td>
-                </tr>
-              ))}
+              {balances.map(b => {
+                const org = organizations.find(o => o.id === b.id);
+                return (
+                  <tr key={b.id}>
+                    <td className="px-6 py-3">
+                      <span className="font-semibold text-slate-900">{b.name}</span>
+                      {org && <span className="ml-2 text-xs text-slate-400">{ORGANIZATION_TYPE_LABEL[org.type]}</span>}
+                    </td>
+                    <td className="px-3 py-3 text-slate-600">{b.open}</td>
+                    <td className="px-6 py-3 text-right font-bold text-slate-900">{dh(b.owed)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -441,15 +355,13 @@ export function TiersPayantView() {
       <Card className="overflow-hidden p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-6 pb-4">
           <div>
-            <h3 className="text-sm font-semibold text-slate-800">Demandes de prise en charge</h3>
-            <p className="mt-0.5 text-xs text-slate-500">
-              {insurerFilter ? `Organisme : ${insurerName(insurerFilter)} · ` : ''}{shown.length} demande{shown.length > 1 ? 's' : ''}
-            </p>
+            <h3 className="text-sm font-semibold text-slate-800">Dossiers en tiers payant</h3>
+            <p className="mt-0.5 text-xs text-slate-500">{plural(shown.length, 'dossier')}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {FILTERS.map(f => <Chip key={f.id} size="md" selected={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</Chip>)}
+            {TABS.map(t => <Chip key={t.id} size="md" selected={tab === t.id} onClick={() => setTab(t.id)}>{t.label}</Chip>)}
             <Button variant="secondary" size="sm" disabled={shown.length === 0}
-              onClick={() => { exportClaims(shown, insurers); showToast(`Export de ${shown.length} demande${shown.length > 1 ? 's' : ''} réussi.`); }}>
+              onClick={() => { exportClaims(shown); showToast(`Export de ${plural(shown.length, 'dossier')} réussi.`); }}>
               <Download className="h-4 w-4" />Exporter
             </Button>
           </div>
@@ -457,9 +369,9 @@ export function TiersPayantView() {
 
         {shown.length === 0 ? (
           <div className="py-14 text-center">
-            <FilePlus2 className="mx-auto h-8 w-8 text-slate-300" />
-            <p className="mt-2 font-medium text-slate-900">Aucune demande</p>
-            <p className="text-sm text-slate-500">Créez une demande depuis une facture impayée d'un patient assuré.</p>
+            <FileStack className="mx-auto h-8 w-8 text-slate-300" />
+            <p className="mt-2 font-medium text-slate-900">Aucun dossier en tiers payant</p>
+            <p className="text-sm text-slate-500">Les dossiers apparaîtront après la création d'une facture avec le mode de paiement tiers payant.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -471,37 +383,43 @@ export function TiersPayantView() {
                   <th className="px-3 py-3 font-semibold">Date</th>
                   <th className="px-3 py-3 text-right font-semibold">Facture</th>
                   <th className="px-3 py-3 text-right font-semibold">Part organisme</th>
-                  <th className="px-3 py-3 text-right font-semibold">Part patient</th>
+                  <th className="px-3 py-3 text-right font-semibold">Reste attendu</th>
                   <th className="px-3 py-3 font-semibold">Statut</th>
                   <th className="px-6 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {shown.map(c => (
-                  <tr key={c.id} className="hover:bg-slate-50/60">
+                  <tr key={c.id} className="align-top hover:bg-slate-50/60">
                     <td className="px-6 py-3">
                       <p className="font-semibold text-slate-900">{c.patientNom}</p>
-                      {c.reference && <p className="text-xs text-slate-400">Réf. {c.reference}</p>}
+                      <p className="text-xs text-slate-400">{numeroFacture(c.invoiceId)}{c.externalReference ? ` · Réf. ${c.externalReference}` : ''}</p>
                     </td>
-                    <td className="px-3 py-3 text-slate-700">{insurerName(c.insurerId)} <span className="text-xs text-slate-400">· {c.rate} %</span></td>
+                    <td className="px-3 py-3 text-slate-700">
+                      {c.organizationName}
+                      {c.membershipNumber && <span className="block text-xs text-slate-400">N° {c.membershipNumber}</span>}
+                    </td>
                     <td className="px-3 py-3 text-slate-600">{fmtDate(c.createdAt)}</td>
-                    <td className="px-3 py-3 text-right text-slate-600">{dh(c.total)}</td>
-                    <td className="px-3 py-3 text-right font-bold text-slate-900">
-                      {dh(c.insurerShare)}
-                      {c.reimbursed > 0 && c.status !== 'rembourse' && <span className="block text-xs font-medium text-emerald-600">{dh(c.reimbursed)} reçu</span>}
+                    <td className="px-3 py-3 text-right text-slate-600">
+                      {dh(c.invoiceAmount)}
+                      <span className="block text-xs text-slate-400">patient {dh(c.patientShare)}</span>
                     </td>
-                    <td className="px-3 py-3 text-right text-slate-600">{dh(c.patientShare)}</td>
-                    <td className="px-3 py-3"><ClaimBadge status={c.status} /></td>
+                    <td className="px-3 py-3 text-right font-semibold text-slate-900">
+                      {dh(c.claimed)}
+                      {c.received > 0 && <span className="block text-xs font-medium text-emerald-600">{dh(c.received)} reçu</span>}
+                      {c.rejected > 0 && <span className="block text-xs font-medium text-red-600">{dh(c.rejected)} refusé</span>}
+                    </td>
+                    <td className="px-3 py-3 text-right font-bold text-slate-900">{dh(claimOutstanding(c))}</td>
+                    <td className="px-3 py-3">
+                      <ClaimBadge status={c.status} />
+                      {c.rejectionReason && <p className="mt-1 max-w-[180px] text-xs text-red-600">{c.rejectionReason}</p>}
+                    </td>
                     <td className="px-6 py-3">
-                      {canEdit && (
-                        <div className="flex justify-end gap-1.5">
-                          {c.status === 'a_deposer' && <Button variant="accentOutline" size="xs" onClick={() => setAction({ kind: 'submit', claim: c })}>Déposer</Button>}
-                          {c.status === 'depose' && <Button variant="success" size="xs" onClick={() => setAction({ kind: 'reimburse', claim: c })}>Remboursement</Button>}
-                          {c.status === 'depose' && <Button variant="secondary" size="xs" onClick={() => setAction({ kind: 'reject', claim: c })}>Rejeter</Button>}
-                          {c.status === 'rejete' && <Button variant="accentOutline" size="xs" onClick={() => setAction({ kind: 'submit', claim: c })}>Redéposer</Button>}
-                          {(c.status === 'a_deposer' || c.status === 'rejete' || (c.status === 'depose' && c.reimbursed === 0)) && (
-                            <Button variant="ghost" size="xs" onClick={() => setAction({ kind: 'cancel', claim: c })}>Annuler</Button>
-                          )}
+                      {canEdit && ACTIONS[c.status].length > 0 && (
+                        <div className="flex flex-wrap justify-end gap-1.5">
+                          {ACTIONS[c.status].map(a => (
+                            <Button key={a.kind} variant={a.variant} size="xs" onClick={() => setAction({ kind: a.kind, claim: c })}>{a.label}</Button>
+                          ))}
                         </div>
                       )}
                     </td>
@@ -513,8 +431,8 @@ export function TiersPayantView() {
         )}
       </Card>
 
-      <InsurersModal open={showInsurers} onClose={() => setShowInsurers(false)} insurers={insurers} />
-      <NewClaimModal open={showNew} onClose={() => setShowNew(false)} insurers={insurers} claimedPaymentIds={claimedPaymentIds} />
+      <OrganizationsModal open={showOrganizations} onClose={() => setShowOrganizations(false)} />
+      <CreateClaimModal open={showCreate} onClose={() => setShowCreate(false)} />
       <ClaimActionModal action={action} onClose={() => setAction(null)} />
     </div>
   );

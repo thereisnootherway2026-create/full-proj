@@ -38,17 +38,19 @@ function withBillingAmount(visit) {
   const { payments, ...rest } = visit
   const active = (payments || []).filter((p) => ['pending', 'paid', 'waived'].includes(p.status))
   if (active.length === 0) return rest
-  // amount = billed, amount_paid = collected so far (a short payment leaves the row pending).
+  // amount = billed, amount_paid = collected from the patient so far (a short payment leaves the
+  // row pending), third_party_amount = the share an organism pays in tiers payant (not owed by the patient).
   const amount = active.reduce((sum, p) => sum + Number(p.amount || 0), 0)
+  const thirdParty = active.reduce((sum, p) => sum + Number(p.third_party_amount || 0), 0)
   const paid = active.reduce((sum, p) => sum + Number(p.amount_paid || 0), 0)
-  return { ...rest, billing_amount: amount, total_paid: paid, remaining_balance: Math.max(0, amount - paid) }
+  return { ...rest, billing_amount: amount, third_party_amount: thirdParty, total_paid: paid, remaining_balance: Math.max(0, amount - thirdParty - paid) }
 }
 
 export async function getTodayVisits(clinicId) {
   const today = new Date().toLocaleDateString('fr-CA', { timeZone: 'Africa/Casablanca' })
   const { data, error } = await supabase
     .from('visits')
-    .select(`${VISIT_SELECT}, payments(id, amount, amount_paid, status)`)
+    .select(`${VISIT_SELECT}, payments(id, amount, amount_paid, third_party_amount, status)`)
     .eq('clinic_id', clinicId)
     .eq('queue_date', today)
     .in('status', ['waiting', 'called', 'consultation', 'billing', 'completed'])
@@ -68,7 +70,7 @@ export async function getOutstandingBalanceVisits(clinicId) {
   const today = new Date().toLocaleDateString('fr-CA', { timeZone: 'Africa/Casablanca' })
   const { data, error } = await supabase
     .from('visits')
-    .select(`${VISIT_SELECT}, payments!inner(id, amount, amount_paid, status)`)
+    .select(`${VISIT_SELECT}, payments!inner(id, amount, amount_paid, third_party_amount, status)`)
     .eq('clinic_id', clinicId)
     .in('status', ['billing', 'completed'])
     .eq('payments.status', 'pending')
@@ -219,7 +221,7 @@ export async function getBillingQueue(clinicId) {
 export async function getVisitBillingBalance(visitId) {
   const { data, error } = await supabase
     .from('payments')
-    .select('amount, amount_paid')
+    .select('amount, amount_paid, third_party_amount')
     .eq('visit_id', visitId)
     .eq('status', 'pending')
     .order('created_at', { ascending: false })
@@ -229,8 +231,9 @@ export async function getVisitBillingBalance(visitId) {
   if (error) throw error
   if (!data) return null
   const billed = Number(data.amount) || 0
+  const thirdParty = Number(data.third_party_amount) || 0
   const collected = Number(data.amount_paid) || 0
-  return { billed, collected, remaining: Math.max(0, billed - collected) }
+  return { billed, thirdParty, collected, remaining: Math.max(0, billed - thirdParty - collected) }
 }
 
 // `partial` must be true when collecting less than the remaining balance; the RPC rejects a

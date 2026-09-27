@@ -4,6 +4,7 @@ import { useFacturesQuery } from './queries';
 import { useAppContext } from '../../context/AppContext';
 import { X, Printer } from 'lucide-react';
 import { dh, fmtDateLong, amountInWords } from './format';
+import { factureReste } from './data';
 
 export function RecuPaiement() {
   const { ui, setRecuPaiementId } = useFacturationStore();
@@ -88,9 +89,9 @@ export function RecuPaiement() {
             <div className="bg-slate-50 p-6 rounded-lg text-center mb-8 border border-slate-100">
               <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Montant encaissé</p>
               <p className="text-4xl font-black text-slate-900">{dh(foundPaiement.montant)}</p>
-              {foundFacture.montant - foundPaiement.montant > 0 && (
+              {factureReste(foundFacture) > 0 && (
                 <p className="text-sm font-semibold text-amber-700 mt-2">
-                  Reste à payer : {dh(foundFacture.montant - foundPaiement.montant)}
+                  Reste à payer : {dh(factureReste(foundFacture))}
                 </p>
               )}
             </div>

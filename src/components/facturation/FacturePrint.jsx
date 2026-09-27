@@ -9,7 +9,8 @@ const MODE = { Especes: 'Espèces', Carte: 'Carte', Virement: 'Virement', 'Tiers
 // The printed facture (A5), on the same letterhead as ordonnances and documents.
 function FactureSheet({ facture: f, lignes, header, praticienNom }) {
   const paye = Number(f.paye) || 0
-  const reste = Math.max(0, f.montant - paye)
+  const partOrganisme = Number(f.partOrganisme) || 0
+  const reste = Math.max(0, f.montant - partOrganisme - paye)
   const paiements = [...f.paiements].sort((a, b) => new Date(a.date) - new Date(b.date))
   return (
     <div className="facture-print flex flex-col text-black">
@@ -64,7 +65,8 @@ function FactureSheet({ facture: f, lignes, header, praticienNom }) {
 
       <div className="ml-auto mt-[3mm] w-[62mm] space-y-[1mm] text-[9.5pt]">
         <div className="flex justify-between border-b border-slate-800 pb-[1mm] font-bold"><span>Total</span><span>{dh(f.montant, true)}</span></div>
-        <div className="flex justify-between"><span>Encaissé</span><span>{dh(paye, true)}</span></div>
+        {partOrganisme > 0 && <div className="flex justify-between"><span>Tiers payant (organisme)</span><span>{dh(partOrganisme, true)}</span></div>}
+        <div className="flex justify-between"><span>{partOrganisme > 0 ? 'Encaissé (patient)' : 'Encaissé'}</span><span>{dh(paye, true)}</span></div>
         <div className="flex justify-between font-bold"><span>Reste à payer</span><span>{dh(reste, true)}</span></div>
       </div>
 

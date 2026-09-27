@@ -41,7 +41,6 @@ import {
   Check,
   Wind,
   Zap,
-  Shield,
   Calculator,
   Info,
   ContactRound,
@@ -79,6 +78,7 @@ import { FactureDrawer } from '../../components/facturation/FactureDrawer'
 import { RecuPaiement } from '../../components/facturation/RecuPaiement'
 import { Backdrop, FocusableCard, MedicalTextarea } from '../../components/FocusMode'
 import PreparationChecklist from '../../components/consultation/PreparationChecklist'
+import { PatientCoverage, PatientCoverageChip } from '../../components/Patient/PatientCoverage'
 
 // --- Mock Data ---
 const MOCK_ALERTS = [
@@ -129,7 +129,7 @@ function PatientInfoRow({ icon: Icon, label, value }) {
   )
 }
 
-function PatientSidebar({ patient, patientId, canSeeClinical, canEditIdentity, activeMedNames = [], emergencyContact }) {
+function PatientSidebar({ patient, patientId, canSeeClinical, canEditIdentity, coverageMode, canEditCoverage, activeMedNames = [], emergencyContact }) {
   const initials = `${patient.prenom?.[0] || ''}${patient.nom?.[0] || ''}`.toUpperCase()
 
   return (
@@ -152,7 +152,7 @@ function PatientSidebar({ patient, patientId, canSeeClinical, canEditIdentity, a
       <div className="divide-y divide-slate-100 px-5">
         <PatientInfoRow icon={Droplets} label="Groupe sanguin" value={patient.groupe_sanguin || '—'} />
         <PatientInfoRow icon={Phone} label="Téléphone" value={patient.telephone || '—'} />
-        <PatientInfoRow icon={Shield} label="Assurance" value={patient.mutuelle || patient.assurance || '—'} />
+        <PatientCoverage patientId={patientId} mode={coverageMode} canEdit={canEditCoverage} />
         <PatientInfoRow icon={Calendar} label="Patient depuis" value={formatPatientSince(patient.created_at)} />
       </div>
 
@@ -1326,12 +1326,8 @@ export default function PatientWorkspace() {
               <ClinicalStatusBadge kind="antecedents" status={patient.antecedents_status} items={patient.antecedents} />
             )}
 
-            {(patient.mutuelle || patient.assurance) && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-sky-50 text-sky-700 border border-sky-100 text-[12.5px] font-semibold" title={patient.mutuelle || patient.assurance}>
-              <Shield className="w-3.5 h-3.5 text-sky-500" />
-              <span className="truncate max-w-[120px]">{patient.mutuelle || patient.assurance}</span>
-            </span>
-            )}
+            <PatientCoverageChip patientId={patientIdParam} mode={canonicalRole === 'doctor' ? 'compact' : 'full'}
+              canEdit={Boolean(can?.('patients.update'))} legacyLabel={patient.mutuelle || patient.assurance} />
           </div>
         </div>
       </motion.div>
@@ -1619,6 +1615,8 @@ export default function PatientWorkspace() {
               patientId={patientIdParam}
               canSeeClinical={canSeeClinical}
               canEditIdentity={canEditIdentity}
+              coverageMode={canonicalRole === 'doctor' ? 'compact' : 'full'}
+              canEditCoverage={Boolean(can?.('patients.update'))}
               activeMedNames={activeMedNames}
               emergencyContact={emergencyContact}
             />

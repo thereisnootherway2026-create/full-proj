@@ -8,6 +8,9 @@ export interface FilterState {
   praticienId: string;
   assureurId: string;
   statut: string;
+  // Tiers payant tab: its own organism / claim-status filters (claims are not invoices)
+  organisationId: string;
+  claimStatut: string;
   patientId?: string;
   patientNom?: string;
 }
@@ -40,6 +43,8 @@ export const useFacturationStore = create<FacturationStore>((set, get) => ({
     praticienId: '',
     assureurId: '',
     statut: '',
+    organisationId: '',
+    claimStatut: '',
     patientId: '',
     patientNom: '',
   },

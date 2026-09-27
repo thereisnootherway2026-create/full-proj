@@ -1,4 +1,4 @@
-import { Banknote, CreditCard, Landmark, ShieldCheck, Check, Printer, Info } from 'lucide-react'
+import { Banknote, CreditCard, Landmark, Check, Printer, Info } from 'lucide-react'
 import Modal from './Modal'
 import Button from './Button'
 
@@ -7,13 +7,14 @@ import Button from './Button'
 // detail). The pieces are exported so a host can embed them in its own panel:
 //   PaymentBody   amount + method + guidance      PaymentFooter  Annuler / Confirmer
 //   PaymentDone   "Paiement enregistré" + "Générer le reçu ? Oui / Non"
-// `method` values are the database's: cash | card | transfer | insurance.
+// `method` values are the database's: cash | card | transfer. These are the patient's own payments;
+// the share an organism pays in tiers payant is not collected here but tracked on its claim
+// (Facturation > Tiers payant).
 
 export const PAYMENT_METHODS = [
   { value: 'cash', label: 'Espèces', Icon: Banknote },
   { value: 'card', label: 'Carte', Icon: CreditCard },
   { value: 'transfer', label: 'Virement', Icon: Landmark },
-  { value: 'insurance', label: 'Tiers payant', Icon: ShieldCheck },
 ]
 
 export const paymentMethodLabel = (value) => PAYMENT_METHODS.find((m) => m.value === value)?.label || 'Espèces'
@@ -81,7 +82,7 @@ export function PaymentBody({ total, alreadyPaid, reste, amount, onAmountChange,
 
       <div>
         <p className="mb-2 text-sm font-semibold text-slate-700">Mode de paiement</p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label="Mode de paiement">
+        <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Mode de paiement">
           {PAYMENT_METHODS.map(({ value: v, label, Icon }) => {
             const selected = method === v
             return (

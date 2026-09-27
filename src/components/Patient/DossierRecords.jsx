@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Pill, Image as ImageIcon, FileCheck2, Activity, Info, ArrowRight, ChevronRight, Printer, Copy, Send, XCircle, FilePlus } from 'lucide-react'
 import Button from '../common/Button'
 import { StatutBadge } from '../facturation/ui'
+import { factureReste } from '../facturation/data'
 import { dh } from '../facturation/format'
 import { formatDoctorLabel } from '../../lib/professionalName'
 
@@ -194,7 +195,7 @@ const shortDate = (iso) => (iso ? new Date(iso).toLocaleDateString('fr-FR', { da
 
 // One facture = one quiet row: what, when, how much, and where it stands.
 function FactureRow({ facture: f, onOpen }) {
-  const reste = Math.max(0, f.montant - f.paye)
+  const reste = factureReste(f)
   const tone = FACTURE_TONE[f.statut] || FACTURE_TONE.en_attente
   const lignes = f.lignes?.length ? f.lignes : [{ libelle: 'Consultation' }]
   const actes = lignes.length > 1 ? `${lignes[0].libelle} +${lignes.length - 1}` : lignes[0].libelle
@@ -229,7 +230,7 @@ function FactureRow({ facture: f, onOpen }) {
 
 export function FacturesList({ items, loading, error, extra, onOpenFacturation, onSelectFacture }) {
   const sorted = [...items].sort((a, b) => String(b.dateEmission || '').localeCompare(String(a.dateEmission || '')))
-  const due = items.reduce((s, f) => s + Math.max(0, f.montant - f.paye), 0)
+  const due = items.reduce((s, f) => s + factureReste(f), 0)
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">

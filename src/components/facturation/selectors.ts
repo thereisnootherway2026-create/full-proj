@@ -2,15 +2,20 @@ import { Facture, facturePaye, factureReste, Paiement } from './data';
 import { FilterState } from './store';
 import { joursRetard, fmtMonthShort } from './format';
 
+// Start of the selected period (ms), 0 for "Depuis toujours".
+export const periodeStartMs = (periode: FilterState['periode']) => {
+  const now = Date.now();
+  if (periode === '1d') return now - 86400000;
+  if (periode === '7d') return now - 7 * 86400000;
+  if (periode === '1m') return now - 30 * 86400000;
+  if (periode === '3m') return now - 90 * 86400000;
+  if (periode === '6m') return now - 180 * 86400000;
+  if (periode === '12m') return now - 365 * 86400000;
+  return 0;
+};
+
 export const filterFactures = (factures: Facture[], filters: FilterState) => {
-  const now = new Date();
-  let startMs = 0;
-  if (filters.periode === '1d') startMs = now.getTime() - 86400000;
-  else if (filters.periode === '7d') startMs = now.getTime() - 7 * 86400000;
-  else if (filters.periode === '1m') startMs = now.getTime() - 30 * 86400000;
-  else if (filters.periode === '3m') startMs = now.getTime() - 90 * 86400000;
-  else if (filters.periode === '6m') startMs = now.getTime() - 180 * 86400000;
-  else if (filters.periode === '12m') startMs = now.getTime() - 365 * 86400000;
+  const startMs = periodeStartMs(filters.periode);
 
   return factures.filter(f => {
     if (startMs > 0 && new Date(f.dateEmission).getTime() < startMs) return false;
