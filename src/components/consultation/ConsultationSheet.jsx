@@ -4,7 +4,7 @@ import { AnimatePresence, animate, motion, useReducedMotion } from 'framer-motio
 import { AlertTriangle, ArrowLeft, Check, Loader2, PanelLeft, Receipt, X } from 'lucide-react'
 import { getPatientMedications, getPatientVitals } from '../../lib/dossierApi'
 import { DEPUIS_OPTIONS, EVOLUTION_OPTIONS, listCompletedEncounters } from '../../lib/encounterService'
-import { computeProgress } from '../../lib/consultationProgress'
+import { computeProgress, finalizeWarnings } from '../../lib/consultationProgress'
 import { BillingPill, FieldLabel, NarrativeField } from './ConsultationFields'
 import VitalsGrid from './VitalsGrid'
 import SectionStepper from './SectionStepper'
@@ -13,13 +13,17 @@ import Button from '../common/Button'
 import Chip from '../common/Chip'
 import IconButton from '../common/IconButton'
 import { isAtBottom, pickActiveStep, scrollTargetFor } from './sectionScroll'
-import { AddButton, BlockHeader, DiagnosisPicker, DocumentsBlock, ExamOrders, FollowUpBlock, Panel, PlanList, TreatmentEditor, allergyMatch, allergyTokens } from './PlanBlocks'
+import { AddButton, BlockHeader, DiagnosisPicker, DocumentsBlock, ExamOrders, FollowUpBlock, Panel, PlanList, RenewalFollowUp, TreatmentEditor, allergyMatch, allergyTokens } from './PlanBlocks'
 import PatientContextSidebar from './PatientContextSidebar'
 import { DiscardDialog, DoneScreen, FinalizeDialog } from './ConsultationDialogs'
 import { buildPatientContext, generateChecklist } from './ChecklistEngine'
 import { resolveClinicalStatus, splitClinicalList } from '../../lib/clinical/clinicalStatus'
 import { prescribingReadiness } from '../../lib/clinical/prescribingReadiness'
 import PrescribingGate from '../clinical/PrescribingGate'
+import RenewalPanel from './RenewalPanel'
+import { useAppContext } from '../../context/AppContext'
+import { getOrdonnancesForPatient } from '../../lib/api'
+import { applyRenewal, lastActiveOrdonnance, motifFlow, prefillRenewalEdit } from '../../lib/consultationFlow'
 
 const STEPS = [
   { id: 'subjectif', label: 'Motif & symptômes' },
@@ -113,6 +117,12 @@ export default function ConsultationSheet({
   const [contextOpen, setContextOpen] = useState(false)
   const [ctxCollapsed, setCtxCollapsed] = useState(readCollapsed)
   const [gateMissing, setGateMissing] = useState(null)
+  // What the prescribing gate unlocks once completed: a new row, the renewal, or the edit view.
+  const [gateNext, setGateNext] = useState('add')
+  // Lightweight flow (lib/consultationFlow): 'choose' until the doctor picks renew/modify,
+  // 'edit' once only the Traitement block is open. forceFull = "Passer au formulaire complet".
+  const [lightStage, setLightStage] = useState('choose')
+  const [forceFull, setForceFull] = useState(false)
   const scrollRef = useRef(null)
   const scrollAnim = useRef(null)
   const spyPausedUntil = useRef(0)
@@ -121,8 +131,28 @@ export default function ConsultationSheet({
   const refs = { subjectif: useRef(null), objectif: useRef(null), plan: useRef(null) }
 
   useEffect(() => {
-    if (open) { setMode('note'); setActionError(null); setResult(null); setShowFinalize(startInReview); setShowDiscard(false) }
+    if (open) { setMode('note'); setActionError(null); setResult(null); setShowFinalize(startInReview); setShowDiscard(false); setLightStage('choose'); setForceFull(false) }
   }, [open, startInReview])
+
+  const { profile } = useAppContext()
+  const cabinetId = profile?.cabinet_id
+  const flow = forceFull ? 'full' : motifFlow(note.motif)
+  const lightweight = flow === 'lightweight'
+  // Leaving the lightweight flow (motif changed) starts it over next time.
+  useEffect(() => { if (!lightweight) setLightStage('choose') }, [lightweight])
+  // The follow-up task's title follows the flow (renewal vs control). Kept in the note so the
+  // server trigger reads it at completion; saved with the draft like any other field.
+  const followUpKind = lightweight ? 'renouvellement' : 'controle'
+  useEffect(() => {
+    if (open) setNote((n) => (n.followUpKind === followUpKind ? n : { ...n, followUpKind }))
+  }, [open, followUpKind, setNote])
+  // Same query key as the dossier's Ordonnances tab, so the cache is shared.
+  const ordonnancesQ = useQuery({
+    queryKey: ['patient-real-ordonnances', cabinetId, patientId],
+    queryFn: () => getOrdonnancesForPatient(cabinetId, patientId),
+    enabled: open && lightweight && Boolean(cabinetId && patientId),
+  })
+  const lastOrdonnance = useMemo(() => lastActiveOrdonnance(ordonnancesQ.data), [ordonnancesQ.data])
 
   const vitalsQ = useQuery({ queryKey: ['consult-ctx-vitals', patientId], queryFn: () => getPatientVitals(patientId), enabled: open && Boolean(patientId) })
   const medsQ = useQuery({ queryKey: ['consult-ctx-meds', patientId], queryFn: () => getPatientMedications(patientId), enabled: open && Boolean(patientId) })
@@ -151,7 +181,10 @@ export default function ConsultationSheet({
 
   // One derivation feeds the stepper, stage cards, sidebar (X/N + readiness line)
   // and the finalize dialog's blockers (see lib/consultationProgress).
-  const progress = computeProgress(note, { ready: draft.ready, ageYears: age })
+  // Flow-aware (lightweight = motif + traitement) and finished-aware: once completed, the draft
+  // is closed (draft.ready = false), which must not read as "chargement du brouillon".
+  const progress = computeProgress(note, { ready: draft.ready, ageYears: age, flow, done: mode === 'done' })
+  const warnings = finalizeWarnings(note, { flow })
   const { has, blockers } = progress
   const tokens = allergyTokens(patient?.allergies)
   const allergyHits = note.traitements.map((r) => allergyMatch(r.medicament, tokens)).filter(Boolean)
@@ -171,10 +204,36 @@ export default function ConsultationSheet({
   // women of childbearing age). Missing items open a small inline prompt; the rest
   // of the consultation is never gated.
   const addTreatmentRow = () => setNote((n) => (n.traitements.length >= 30 ? n : { ...n, traitements: [...n.traitements, { medicament: '', posologie: '', duree: '' }] }))
-  const requestAddTreatment = () => {
+  // Runs `action` now if prescribing is possible, else opens the gate and runs it on "Continuer".
+  const withPrescribingGate = (next, action) => {
     const r = prescribingReadiness(patient, note)
-    if (r.ready) { setGateMissing(null); addTreatmentRow(); return }
+    if (r.ready) { setGateMissing(null); action(); return }
+    setGateNext(next)
     setGateMissing(r.missing)
+  }
+  const requestAddTreatment = () => withPrescribingGate('add', addTreatmentRow)
+
+  // ---- lightweight flow: renouvellement d'ordonnance ----
+  // "Reconduire à l'identique": the previous lines become this consultation's treatment, then
+  // straight to the final confirmation (its recap shows them). Cancelling that dialog lands back
+  // on the renewal panel (stage stays 'choose'). On completion the existing trigger issues the
+  // new ordonnance (migration 20260923050000). applyRenewal is idempotent (resumed drafts).
+  const doRenew = () => {
+    setNote((n) => applyRenewal(n, lastOrdonnance))
+    setActionError(null)
+    setShowFinalize(true)
+  }
+  // "Modifier avant de valider": only the Traitement block opens, prefilled with the previous lines.
+  const openRenewalEdit = () => {
+    setNote((n) => prefillRenewalEdit(n, lastOrdonnance))
+    setLightStage('edit')
+    setTimeout(() => goTo('plan'), 80)
+  }
+  const onGateContinue = () => {
+    setGateMissing(null)
+    if (gateNext === 'renew') doRenew()
+    else if (gateNext === 'modify') openRenewalEdit()
+    else addTreatmentRow()
   }
 
   const goBack = async () => {
@@ -269,6 +328,22 @@ export default function ConsultationSheet({
   )
   const actesTotal = acts.reduce((s, a) => s + (Number(a.montant) || 0), 0)
 
+  // Shown where the doctor is: in the renewal panel while choosing, else in the Traitement block.
+  const prescribingGate = gateMissing && (
+    <PrescribingGate patient={patient} patientId={patientId} missing={gateMissing}
+      pregnancyStatus={note.pregnancyStatus} onPregnancy={setField('pregnancyStatus')}
+      onContinue={onGateContinue} onCancel={() => setGateMissing(null)} />
+  )
+  const treatmentEditor = (
+    <TreatmentEditor rows={note.traitements} onChange={setField('traitements')} allergies={patient?.allergies} ordonnance={note.ordonnance} onOrdonnance={setField('ordonnance')}
+      onAdd={requestAddTreatment}
+      gate={lightweight && lightStage === 'choose' ? null : prescribingGate} />
+  )
+  // Lightweight: Motif, then Traitement once "Modifier" was chosen. Full: the 3 sections.
+  const visibleSteps = lightweight
+    ? STEPS.filter((s) => s.id === 'subjectif' || (s.id === 'plan' && lightStage === 'edit')).map((s) => (s.id === 'plan' ? { ...s, label: 'Traitement' } : s))
+    : STEPS
+
   return (
     <AnimatePresence>
       {open && (
@@ -333,7 +408,7 @@ export default function ConsultationSheet({
             <div className="flex h-full items-center justify-center gap-2 text-[14px] text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Chargement de la consultation…</div>
           ) : (
             <div className="mx-auto max-w-[1160px] px-5 pb-24 lg:px-8">
-              <SectionStepper steps={STEPS} activeId={activeStep} filled={has} onSelect={goTo} />
+              <SectionStepper steps={visibleSteps} activeId={activeStep} filled={has} onSelect={goTo} />
 
               <div className="space-y-6">
                 <StageSection id="subjectif" index={1} title="Motif & symptômes" hint="Pourquoi le patient consulte aujourd'hui"
@@ -341,6 +416,23 @@ export default function ConsultationSheet({
                   {/* Read top to bottom, the way the doctor asks: why → what/since when → how it evolves */}
                   <NarrativeField emphasis size="line" required label="Motif de consultation" value={note.motif} onChange={setField('motif')} autoFocus suggestKind="motif" quickPicks={6}
                     patientConsultations={patientConsultations} placeholder="Motif principal de la consultation…" />
+                  {/* Lightweight motif (lib/consultationFlow): renew the last ordonnance without the full form. */}
+                  <AnimatePresence initial={false}>
+                    {lightweight && (
+                      <RenewalPanel key="renewal" ordonnance={lastOrdonnance} loading={ordonnancesQ.isLoading} error={ordonnancesQ.isError}
+                        retrying={ordonnancesQ.isFetching} onRetry={() => ordonnancesQ.refetch()}
+                        followUp={(
+                          <RenewalFollowUp date={note.followUpDate} onDate={setField('followUpDate')}
+                            reminder={note.followUpReminder} onReminder={setField('followUpReminder')} />
+                        )}
+                        stage={lightStage}
+                        gate={lightStage === 'choose' ? prescribingGate : null}
+                        onRenew={() => withPrescribingGate('renew', doRenew)}
+                        onModify={() => withPrescribingGate('modify', openRenewalEdit)}
+                        onValidate={() => { setActionError(null); setShowFinalize(true) }}
+                        onFullForm={() => { setForceFull(true); setGateMissing(null) }} />
+                    )}
+                  </AnimatePresence>
                   <div>
                     <NarrativeField size="lg" label="Symptômes / histoire actuelle" value={note.histoire} onChange={setField('histoire')} suggestKind="histoire"
                       patientConsultations={patientConsultations} placeholder="Début, évolution, intensité, facteurs aggravants ou soulageants, traitements déjà essayés..." />
@@ -351,17 +443,28 @@ export default function ConsultationSheet({
                   </div>
                 </StageSection>
 
-                <StageSection id="objectif" index={2} title="Examen clinique" hint="Constantes et observations"
-                  filled={has.objectif} active={activeStep === 'objectif'} refEl={refs.objectif}>
-                  <div>
-                    <FieldLabel hint="Mesures d'aujourd'hui">Constantes</FieldLabel>
-                    <VitalsGrid vitals={v} setVital={setVital} applyLast={applyLastVital} lastVitals={lastVitals} when={when} age={age}
-                      review={progress.vitalsReview} onConfirm={confirmVital} />
-                  </div>
-                  <NarrativeField size="sm" label="Examen clinique" value={note.examen} onChange={setField('examen')} suggestKind="examen"
-                    patientConsultations={patientConsultations} placeholder="Observations et éléments pertinents de l'examen clinique..." />
-                </StageSection>
+                {/* Hidden (not cleared) in the lightweight flow: anything typed comes back with the full form. */}
+                {!lightweight && (
+                  <StageSection id="objectif" index={2} title="Examen clinique" hint="Constantes et observations"
+                    filled={has.objectif} active={activeStep === 'objectif'} refEl={refs.objectif}>
+                    <div>
+                      <FieldLabel hint="Mesures d'aujourd'hui">Constantes</FieldLabel>
+                      <VitalsGrid vitals={v} setVital={setVital} applyLast={applyLastVital} lastVitals={lastVitals} when={when} age={age}
+                        review={progress.vitalsReview} onConfirm={confirmVital} />
+                    </div>
+                    <NarrativeField size="sm" label="Examen clinique" value={note.examen} onChange={setField('examen')} suggestKind="examen"
+                      patientConsultations={patientConsultations} placeholder="Observations et éléments pertinents de l'examen clinique..." />
+                  </StageSection>
+                )}
 
+                {lightweight ? (
+                  lightStage === 'edit' && (
+                    <StageSection id="plan" index={2} title="Traitement" hint="Ajustez le traitement à renouveler, puis validez"
+                      filled={has.plan} active={activeStep === 'plan'} refEl={refs.plan}>
+                      <PlanList>{treatmentEditor}</PlanList>
+                    </StageSection>
+                  )
+                ) : (
                 <StageSection id="plan" index={3} title="Évaluation & conduite" hint="Diagnostic, traitement et suite"
                   filled={has.plan} active={activeStep === 'plan'} refEl={refs.plan}>
                   {/* Left: the clinical decision. Right: what it produces for the patient, as one list. */}
@@ -371,18 +474,13 @@ export default function ConsultationSheet({
                       <DiagnosisPicker items={note.diagnostics} onChange={setField('diagnostics')} />
                       <NarrativeField size="sm" label="Conduite à tenir" value={note.conduite} onChange={setField('conduite')} suggestKind="plan"
                         patientConsultations={patientConsultations} placeholder="Décision clinique, recommandations, surveillance..." />
-                      <FollowUpBlock date={note.followUpDate} notes={note.followUpNotes} onDate={setField('followUpDate')} onNotes={setField('followUpNotes')} />
+                      <FollowUpBlock date={note.followUpDate} notes={note.followUpNotes} onDate={setField('followUpDate')} onNotes={setField('followUpNotes')}
+                        reminder={note.followUpReminder} onReminder={setField('followUpReminder')} />
                     </div>
                     <div className="space-y-5">
                       <ColumnTitle>Prescriptions & actes</ColumnTitle>
                       <PlanList>
-                        <TreatmentEditor rows={note.traitements} onChange={setField('traitements')} allergies={patient?.allergies} ordonnance={note.ordonnance} onOrdonnance={setField('ordonnance')}
-                          onAdd={requestAddTreatment}
-                          gate={gateMissing && (
-                            <PrescribingGate patient={patient} patientId={patientId} missing={gateMissing}
-                              pregnancyStatus={note.pregnancyStatus} onPregnancy={setField('pregnancyStatus')}
-                              onContinue={() => { setGateMissing(null); addTreatmentRow() }} onCancel={() => setGateMissing(null)} />
-                          )} />
+                        {treatmentEditor}
                         <ExamOrders items={note.examens} onChange={setField('examens')} patient={patient}
                           renseignements={[note.motif.trim(), note.diagnostics.join(', ')].filter(Boolean).join(' — ')} />
                         <DocumentsBlock note={note} patient={patient}
@@ -403,6 +501,7 @@ export default function ConsultationSheet({
                     </div>
                   </div>
                 </StageSection>
+                )}
               </div>
             </div>
           )}
@@ -420,7 +519,7 @@ export default function ConsultationSheet({
       )}
 
       {showFinalize && (
-        <FinalizeDialog note={note} blockers={blockers} allergyHits={allergyHits} submitting={busy} error={actionError}
+        <FinalizeDialog note={note} blockers={blockers} allergyHits={allergyHits} warnings={warnings} submitting={busy} error={actionError}
           handoffText={visitLinked ? `Le patient sera envoyé à la caisse (montant proposé : ${billingAmount.toLocaleString('fr-FR')} MAD).` : 'Consultation non liée à une visite : enregistrée au dossier, sans passage en caisse.'}
           onCancel={() => setShowFinalize(false)} onConfirm={finalize} />
       )}

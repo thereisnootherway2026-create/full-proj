@@ -273,6 +273,7 @@ export default function PatientContextSidebar({
             {progress.status === 'blocked' && <><span className="font-semibold text-slate-700">Pour terminer :</span> {progress.blockers.join(', ')}</>}
             {progress.status === 'partial' && <><span className="font-semibold text-slate-700">Peut être terminée</span> · à compléter : {progress.missing.join(', ')}</>}
             {progress.status === 'complete' && <span className="font-semibold text-green-800">Prête à être terminée</span>}
+            {progress.status === 'done' && <span className="font-semibold text-green-800">Consultation terminée</span>}
           </p>
         </div>
       )}

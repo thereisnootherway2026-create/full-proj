@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 
-function Modal({ open, title, description, children, footer, onClose, width = 'max-w-md', noScroll = false }) {
+function Modal({ open, title, description, children, footer, onClose, width = 'max-w-md', noScroll = false, zIndex = 'z-[120]' }) {
   const reduceMotion = useReducedMotion()
 
   useEffect(() => {
@@ -28,7 +28,7 @@ function Modal({ open, title, description, children, footer, onClose, width = 'm
       {open ? (
         <motion.div
           key="modal-backdrop"
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50"
+          className={`fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center ${zIndex}`}
           onMouseDown={onClose}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

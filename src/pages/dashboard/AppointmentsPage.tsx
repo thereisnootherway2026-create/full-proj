@@ -307,6 +307,7 @@ const AppointmentsPage: React.FC = () => {
   const [editingAppointmentId, setEditingAppointmentId] = useState<string | null>(null)
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null)
   const [showCancelledDrawer, setShowCancelledDrawer] = useState(false)
+  const reopenCancelledDrawerRef = useRef(false)
   // Just-cancelled appointments still on screen for their exit animation, with the status they
   // had before cancelling. `cancelBump` replays the "N RDV annulés" bump when one lands there.
   const [leavingAppointments, setLeavingAppointments] = useState<Map<string, AgendaAppointmentStatus>>(new Map())
@@ -927,24 +928,49 @@ const AppointmentsPage: React.FC = () => {
 
         <CancelledAppointmentsDrawer
           isOpen={showCancelledDrawer}
-          onClose={() => setShowCancelledDrawer(false)}
+          onClose={() => {
+            reopenCancelledDrawerRef.current = false
+            setShowCancelledDrawer(false)
+          }}
           appointments={currentPeriodCancelledAppointments}
           takenSlotIds={takenSlotIds}
-          onSelectAppointment={setSelectedAppointmentId}
-          onReschedule={can('appointments.create') ? handleReschedule : undefined}
+          onSelectAppointment={(id) => {
+            reopenCancelledDrawerRef.current = true
+            setShowCancelledDrawer(false)
+            setSelectedAppointmentId(id)
+          }}
+          onReschedule={can('appointments.create') ? (appointment) => {
+            reopenCancelledDrawerRef.current = false
+            setShowCancelledDrawer(false)
+            handleReschedule(appointment)
+          } : undefined}
           periodLabel={periodLabel}
         />
 
         <AppointmentDetailModal
           isOpen={Boolean(selectedAppointment)}
           appointment={selectedAppointment}
-          onClose={() => setSelectedAppointmentId(null)}
+          onClose={() => {
+            setSelectedAppointmentId(null)
+            if (reopenCancelledDrawerRef.current) {
+              reopenCancelledDrawerRef.current = false
+              setShowCancelledDrawer(true)
+            }
+          }}
           onEditTime={(appointment) => {
+            reopenCancelledDrawerRef.current = false
             setSelectedAppointmentId(null)
             setEditingAppointmentId(appointment.id)
           }}
-          onReschedule={can('appointments.create') ? handleReschedule : undefined}
-          onUpdateStatus={handleAppointmentStatusUpdate}
+          onReschedule={can('appointments.create') ? (appointment) => {
+            reopenCancelledDrawerRef.current = false
+            setSelectedAppointmentId(null)
+            handleReschedule(appointment)
+          } : undefined}
+          onUpdateStatus={async (appointment, status, metadata) => {
+            reopenCancelledDrawerRef.current = false
+            await handleAppointmentStatusUpdate(appointment, status, metadata)
+          }}
         />
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useMemo, useState, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity,
   BriefcaseBusiness,
@@ -754,8 +754,8 @@ const PatientCard = forwardRef(function PatientCard({ rdv, index, isBusy, onActi
   // outstanding balance is still mentioned, as plain text.
   const doctorHistory = isDoctor && (isHistoryCard || balanceChips);
   const doctorStatus = normalizedStatus === VISIT_STATUSES.BILLING
-    ? { label: 'En encaissement', dot: 'bg-amber-400', text: 'text-amber-700' }
-    : { label: 'Terminée', dot: 'bg-emerald-500', text: 'text-emerald-700' };
+    ? { label: 'En cours d’encaissement', dot: 'bg-amber-400', text: 'text-amber-700' }
+    : { label: 'Payé', dot: 'bg-emerald-500', text: 'text-emerald-700' };
 
   return (
     <motion.div
@@ -1028,6 +1028,7 @@ function WalkInReveal({ children }) {
 
 export default function DashboardPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const {
     rdvList,
     visits,
@@ -1132,7 +1133,13 @@ export default function DashboardPage() {
   // Add Task modal state is managed inside TachesDuJourCard
   
   // Queue vs History view state
-  const [showingHistory, setShowingHistory] = useState(false)
+  const [showingHistory, setShowingHistory] = useState(() => new URLSearchParams(location.search).get('view') === 'history')
+
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('view') === 'history') {
+      setShowingHistory(true)
+    }
+  }, [location.search])
   
   // Paid visits state to show receipt button
   const [paidVisits, setPaidVisits] = useState(new Set())
@@ -1521,9 +1528,10 @@ export default function DashboardPage() {
       const isPaid = paidVisits.has(visit.id)
       const hasPayments = (allPayments[visit.id] || []).length > 0
       const isDoneOrPartial = visit.status === VISIT_STATUSES.COMPLETED || visit.status === VISIT_STATUSES.PARTIEL || visit.status === 'PARTIEL' || visit.status === 'TERMINÉ' || visit.status === 'completed' || visit.status === 'partiel'
-      return isDoneOrPartial || isPaid || hasPayments
+      const isAwaitingCollection = visit.status === VISIT_STATUSES.BILLING
+      return isDoneOrPartial || isPaid || hasPayments || (isDoctor && isAwaitingCollection)
     })
-  }, [localQueueVisits, visits, paidVisits, allPayments])
+  }, [localQueueVisits, visits, paidVisits, allPayments, isDoctor])
 
   // Balances from an earlier visit, shown ONLY for a patient who is back today (an active
   // appointment or a visit today) — so the secretary knows to collect it this time. Every
@@ -1788,7 +1796,12 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-full bg-slate-50 px-6 py-5">
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: 'easeOut' }}
+      className="min-h-full bg-slate-50 px-6 py-5"
+    >
       {/* Temporary dev role switcher — dev builds only, never rendered in production */}
       {import.meta.env.DEV && (
         <div className="mx-auto w-full mb-4">
@@ -2297,11 +2310,9 @@ export default function DashboardPage() {
                           const visitPayments = allPayments[rdv.id] || [];
                           const totalPaid = visitPayments.reduce((sum, p) => sum + Number(p.amount), 0);
                           
-                          // Create a modified rdv for PatientCard that always shows COMPLETED status
-                          const historyRdv = {
-                            ...rdv,
-                            status: VISIT_STATUSES.COMPLETED
-                          };
+                          // Preserve the live status: doctors must see whether the visit is still
+                          // awaiting collection or has already been paid by the secretary.
+                          const historyRdv = rdv;
                           
                           return (
                             <PatientCard 
@@ -2554,6 +2565,6 @@ export default function DashboardPage() {
           )}
         </div>
       </Modal>
-    </div>
+    </motion.div>
   )
 }

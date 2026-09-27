@@ -47,7 +47,18 @@ const SECTION_LABELS = { subjectif: 'Motif & symptômes', objectif: 'Examen clin
 const namedTreatments = (note) => note.traitements.filter((r) => filled(r.medicament))
 const halfFilledTreatment = (note) => note.traitements.some((r) => !filled(r.medicament) && (filled(r.posologie) || filled(r.duree)))
 
-export function computeProgress(note, { ready = true, ageYears = null } = {}) {
+// Sections that apply to each flow (lib/consultationFlow). Lightweight = motif + treatment:
+// Examen clinique is not part of it, so it is neither counted nor listed as missing.
+const FLOW_SECTIONS = {
+  full: ['subjectif', 'objectif', 'plan'],
+  lightweight: ['subjectif', 'plan'],
+}
+const FLOW_LABELS = { lightweight: { plan: 'Traitement' } }
+
+// `flow`: 'full' | 'lightweight'. `done`: the consultation is finished — nothing is left to do,
+// so no blocker is reported (the draft is closed at that point, which would otherwise read as
+// "chargement du brouillon") and status is 'done'.
+export function computeProgress(note, { ready = true, ageYears = null, flow = 'full', done = false } = {}) {
   const v = note.vitals
   const treatments = namedTreatments(note)
   const has = {
@@ -69,7 +80,11 @@ export function computeProgress(note, { ready = true, ageYears = null } = {}) {
     objectif: [measures && `${measures}/${otherVitals.length + 1} constantes`, filled(note.examen) && 'examen'].filter(Boolean).join(' · '),
     plan: planParts.join(' · '),
   }
-  const sections = ['subjectif', 'objectif', 'plan'].map((id) => ({ id, label: SECTION_LABELS[id], filled: has[id], detail: details[id] }))
+  const sectionIds = FLOW_SECTIONS[flow] || FLOW_SECTIONS.full
+  // Lightweight "Traitement" is filled by a named medication only — a renewal date alone is not
+  // a treatment (it would otherwise show 2/2 before anything was renewed).
+  const sectionFilled = (id) => (flow === 'lightweight' && id === 'plan' ? treatments.length > 0 : has[id])
+  const sections = sectionIds.map((id) => ({ id, label: FLOW_LABELS[flow]?.[id] || SECTION_LABELS[id], filled: sectionFilled(id), detail: details[id] }))
 
   const blockers = []
   if (!filled(note.motif)) blockers.push('motif de consultation')
@@ -81,12 +96,35 @@ export function computeProgress(note, { ready = true, ageYears = null } = {}) {
   if (vitalErrors) blockers.push('constantes vitales valides')
   else if (unconfirmed) blockers.push('confirmation des constantes inhabituelles')
   if (halfFilledTreatment(note)) blockers.push('médicament d\'une ligne de traitement')
-  if (!ready) blockers.push('chargement du brouillon')
+  if (!ready && !done) blockers.push('chargement du brouillon')
 
   const filledCount = sections.filter((s) => s.filled).length
   const missing = sections.filter((s) => !s.filled).map((s) => s.label)
-  const status = blockers.length ? 'blocked' : filledCount < sections.length ? 'partial' : 'complete'
-  return { has, sections, filledCount, total: sections.length, blockers, missing, canFinish: blockers.length === 0, status, vitalsReview: review }
+  const status = done ? 'done' : blockers.length ? 'blocked' : filledCount < sections.length ? 'partial' : 'complete'
+  return { has, sections, filledCount, total: sections.length, blockers: done ? [] : blockers, missing, canFinish: !done && blockers.length === 0, status, vitalsReview: review }
+}
+
+// What deserves an explicit, separate confirmation before finishing (never a blocker: the
+// doctor may document afterwards). Returns [{ id, message }]. Lightweight flows (e.g. a
+// prescription renewal) don't require a diagnosis.
+export function finalizeWarnings(note, { flow = 'full' } = {}) {
+  const warnings = []
+  if (flow !== 'lightweight' && !note.diagnostics.length) {
+    warnings.push({ id: 'no_diagnosis', message: 'Aucun diagnostic renseigné — cette consultation sera enregistrée sans diagnostic.', confirm: 'sans diagnostic' })
+  }
+  // Full flow only: Examen clinique is part of it, so "0 constante" deserves the same explicit gesture.
+  if (flow === 'full' && !VITAL_KEYS.some((k) => filled(note.vitals?.[k]))) {
+    warnings.push({ id: 'no_vitals', message: 'Aucune constante renseignée — cette consultation sera enregistrée sans constantes.', confirm: 'sans constantes' })
+  }
+  return warnings
+}
+
+// The checkbox wording for a set of warnings: "sans diagnostic", "sans diagnostic ni constantes", …
+export function finalizeConfirmLabel(warnings) {
+  const parts = warnings.map((w) => w.confirm).filter(Boolean)
+  if (!parts.length) return 'Je confirme terminer la consultation en l\'état'
+  if (parts.length === 1) return `Je confirme terminer la consultation ${parts[0]}`
+  return `Je confirme terminer la consultation ${parts[0]} ni ${parts.slice(1).map((p) => p.replace(/^sans /, '')).join(' ni ')}`
 }
 
 // Whether the dossier page should show the live-consultation UI (timer, "+ Acte",

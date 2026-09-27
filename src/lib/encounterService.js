@@ -72,6 +72,11 @@ export function normalizeNote(raw) {
     examens: strList(n.examens),
     followUpDate: str(n.followUpDate),
     followUpNotes: str(n.followUpNotes) || (legacyFollowUp && legacyFollowUp !== 'Aucun' ? `Contrôle dans ${legacyFollowUp}` : ''),
+    // With a followUpDate, completing the consultation creates a secretariat task (migration
+    // 20260927000000). Checked by default: only an explicit `false` opts out.
+    followUpReminder: n.followUpReminder !== false,
+    // Task title on the server: 'renouvellement' -> "Renouveler l'ordonnance", else "Planifier le contrôle".
+    followUpKind: n.followUpKind === 'renouvellement' ? 'renouvellement' : 'controle',
     documents: strList(n.documents),
     // Text + parameters of each document in `documents` (see lib/medicalDocuments).
     documentDrafts: normalizeDocumentDrafts(n.documentDrafts, strList(n.documents)),

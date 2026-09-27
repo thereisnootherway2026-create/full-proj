@@ -817,6 +817,7 @@ export default function PatientWorkspace() {
   const [showSuccess, setShowSuccess] = useState(null)
   const [busyOrdonnanceId, setBusyOrdonnanceId] = useState(null)
   const [showConsultationModal, setShowConsultationModal] = useState(startConsultation && canManageConsultation)
+  const [isNavigatingToDashboard, setIsNavigatingToDashboard] = useState(false)
 
   // --- Form States ---
   const [acteForm, setActeForm] = useState({ name: '', description: '', montant: '' })
@@ -927,6 +928,7 @@ export default function PatientWorkspace() {
       notify({ title: 'Consultation enregistrée', description: 'Ajoutée à l\'historique du patient.', tone: 'success' })
       return
     }
+    setIsNavigatingToDashboard(true)
     setConsultationStatus('completed')
     if (visitId) {
       updateVisitStatus(visitId, handoff === 'billing' ? VISIT_STATUSES.BILLING : VISIT_STATUSES.COMPLETED, {
@@ -942,8 +944,9 @@ export default function PatientWorkspace() {
     })
     // replace: the "?startConsultation=true" entry must not stay in history, or Back would
     // silently start a new consultation on this patient.
-    navigate('/dashboard', { replace: true })
-  }, [visitId, updateVisitStatus, notify, navigate, sessionActes, queryClient, patientIdParam, billingAmount])
+    const patientName = patient ? `${patient.prenom || ''} ${patient.nom || ''}`.trim() : ''
+    navigate('/dashboard', { replace: true, state: { fromConsultationEnd: true, patientName } })
+  }, [visitId, updateVisitStatus, notify, navigate, sessionActes, queryClient, patientIdParam, billingAmount, patient])
 
   const handleOrdonnanceCreated = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['patient-real-ordonnances', profile?.cabinet_id, patientIdParam] })
@@ -1529,7 +1532,16 @@ export default function PatientWorkspace() {
         startInReview={reviewRequested}
         onAddActe={() => setShowModal('addActe')}
         onOpenContext={() => setShowPatientSidebar(true)}
-        onCompleted={(result) => { setShowConsultationModal(false); setReviewRequested(false); handleConfirmEndConsultation(result) }}
+        onCompleted={(result) => {
+          if (result?.handoff === 'none') {
+            setShowConsultationModal(false)
+            setReviewRequested(false)
+            handleConfirmEndConsultation(result)
+          } else {
+            setIsNavigatingToDashboard(true)
+            handleConfirmEndConsultation(result)
+          }
+        }}
         onDiscarded={() => { setNote(normalizeNote({})); setConsultationStatus('not_started'); setShowConsultationModal(false); setReviewRequested(false); openDraftQ.refetch() }}
         patientConsultations={patientConsultations}
       />
@@ -1617,6 +1629,11 @@ export default function PatientWorkspace() {
       {/* Modales Facturation (Détail Facture & Reçu de paiement) */}
       <FactureDrawer />
       <RecuPaiement />
+
+      {/* Seamless transition curtain to ensure PatientWorkspace is never flashed when returning to dashboard */}
+      {isNavigatingToDashboard && (
+        <div className="fixed inset-0 z-[90] bg-slate-50 pointer-events-none" />
+      )}
 
     </section>
   )

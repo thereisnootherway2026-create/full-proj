@@ -59,24 +59,28 @@ const CancelledAppointmentsDrawer: React.FC<CancelledAppointmentsDrawerProps> = 
   return createPortal(
     <AnimatePresence>
       {isOpen && (
-    <motion.div key="cancelled-drawer" className="fixed inset-0 z-[110] flex justify-end">
+        <motion.div
+          key="cancelled-drawer"
+          className="fixed inset-0 z-[125] flex justify-end"
+          exit={{ pointerEvents: 'none' }}
+        >
       {/* Backdrop */}
       <motion.div
         className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        transition={{ duration: reduceMotion ? 0 : 0.2 }}
+        transition={{ duration: reduceMotion ? 0 : 0.24, ease: 'easeOut' }}
         onClick={onClose}
       />
 
-      {/* Drawer content: springs in from the right, slides back out on close */}
+      {/* Drawer content: smooth slide in from right, smooth slide back out on close */}
       <motion.div
         className="relative w-full max-w-lg bg-white shadow-2xl h-full flex flex-col z-10"
         initial={reduceMotion ? { opacity: 0 } : { x: '100%' }}
         animate={reduceMotion ? { opacity: 1 } : { x: 0 }}
-        exit={reduceMotion ? { opacity: 0 } : { x: '100%', transition: { duration: 0.22, ease: [0.4, 0, 1, 1] } }}
-        transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 380, damping: 36, mass: 0.9 }}
+        exit={reduceMotion ? { opacity: 0 } : { x: '100%', transition: { duration: 0.28, ease: [0.32, 0.72, 0, 1] } }}
+        transition={reduceMotion ? { duration: 0 } : { duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">

@@ -1,31 +1,34 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Loader2,
   Calendar,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   User,
   Phone,
-  Lock,
   AlertTriangle,
   UserPlus,
-  FileText,
   Clock,
   Sparkles,
   Stethoscope,
   RotateCcw,
-  Activity,
+  Check,
+  Search,
+  CheckCircle2,
   Shield,
-  Check
+  FileText
 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { cn } from '../../lib/utils'
 import Modal from '../common/Modal'
 import Select from '../common/Select'
-import Chip from '../common/Chip'
+import Button from '../common/Button'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAppContext } from '../../context/AppContext'
 import { useCabinetId } from '../../hooks/useCabinetId'
+import { useAvailableSlots } from '../../hooks/useAvailableSlots'
 import { createPatient, createRdv, getPatients, updateRdv as apiUpdateRdv } from '../../lib/api'
 import {
   useAgendaConfig,
@@ -42,20 +45,28 @@ const parseAppointmentMeta = (notes) => {
   if (!notes) {
     return {
       clinicalContext: '',
+      doctorNote: '',
     }
   }
 
   if (!notes.startsWith(META_PREFIX)) {
     return {
       clinicalContext: notes,
+      doctorNote: '',
     }
   }
 
   try {
-    return JSON.parse(notes.slice(META_PREFIX.length))
+    const parsed = JSON.parse(notes.slice(META_PREFIX.length))
+    return {
+      clinicalContext: parsed.clinicalContext || '',
+      doctorNote: parsed.doctorNote || parsed.notesMedecin || '',
+      ...parsed,
+    }
   } catch {
     return {
       clinicalContext: '',
+      doctorNote: '',
     }
   }
 }
@@ -67,6 +78,7 @@ const buildAppointmentMeta = (notes, overrides) => {
     confirmedAt: current.confirmedAt || null,
     confirmedBy: current.confirmedBy || null,
     clinicalContext: current.clinicalContext || '',
+    doctorNote: current.doctorNote || '',
     patientName: current.patientName || '',
     phone: current.phone || '',
     type: current.type || 'Consultation',
@@ -74,50 +86,57 @@ const buildAppointmentMeta = (notes, overrides) => {
   })}`
 }
 
-const APPOINTMENT_TYPES = [
+/**
+ * Standard Appointment Types with color dot system:
+ * blue = Consultation, purple = Suivi, green = Première consultation, red = Urgence
+ */
+const DEFAULT_APPOINTMENT_TYPES = [
   {
     value: 'Consultation',
     label: 'Consultation',
     description: 'Consultation standard ou bilan',
-    badge: '30 min',
+    dureeMinutes: 30,
     color: '#3b82f6',
-    pillClass: 'hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700',
-    activePillClass: 'bg-blue-50 border-blue-500 text-blue-700 ring-2 ring-blue-500/20 font-semibold shadow-xs',
+    dotClass: 'bg-blue-500',
     icon: Stethoscope,
   },
   {
     value: 'Suivi',
     label: 'Suivi',
     description: 'Contrôle d’évolution & renouvellement',
-    badge: '20 min',
+    dureeMinutes: 20,
     color: '#8b5cf6',
-    pillClass: 'hover:bg-purple-50 hover:border-purple-300 hover:text-purple-700',
-    activePillClass: 'bg-purple-50 border-purple-500 text-purple-700 ring-2 ring-purple-500/20 font-semibold shadow-xs',
+    dotClass: 'bg-purple-500',
     icon: RotateCcw,
+  },
+  {
+    value: 'Première consultation',
+    label: 'Première consultation',
+    description: 'Nouveau patient, dossier médical initial',
+    dureeMinutes: 45,
+    color: '#10b981',
+    dotClass: 'bg-emerald-500',
+    icon: UserPlus,
   },
   {
     value: 'Urgence',
     label: 'Urgence',
     description: 'Symptômes aigus, prise en charge immédiate',
-    badge: '15 min',
+    dureeMinutes: 15,
     color: '#ef4444',
-    pillClass: 'hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700',
-    activePillClass: 'bg-rose-50 border-rose-500 text-rose-700 ring-2 ring-rose-500/20 font-semibold shadow-xs',
+    dotClass: 'bg-rose-500',
     icon: AlertTriangle,
   },
   {
     value: 'Examen / Analyse',
     label: 'Examen / Analyse',
     description: 'Examen clinique ciblé ou prélèvements',
-    badge: '30 min',
+    dureeMinutes: 30,
     color: '#0ea5e9',
-    pillClass: 'hover:bg-sky-50 hover:border-sky-300 hover:text-sky-700',
-    activePillClass: 'bg-sky-50 border-sky-500 text-sky-700 ring-2 ring-sky-500/20 font-semibold shadow-xs',
+    dotClass: 'bg-sky-500',
     icon: FileText,
   },
 ]
-
-const typesRDV = APPOINTMENT_TYPES.map(t => t.value)
 
 const MOTIF_SUGGESTIONS = [
   'Contrôle de routine',
@@ -127,41 +146,247 @@ const MOTIF_SUGGESTIONS = [
   'Suivi traitement',
 ]
 
-// Motif component: patient-specific reason input with quick shortcuts
-function MotifField({ value = '', onChange, onBlur, placeholder = 'Pourquoi vient le patient ?' }) {
+/**
+ * Motif Selector Component:
+ * Single-select chips as primary input (filled state on selection).
+ * "Autre" chip reveals an animated small textarea only when selected.
+ */
+function MotifField({ value = '', onChange, onBlur, error }) {
+  const isPreset = MOTIF_SUGGESTIONS.some(
+    (s) => s.toLowerCase() === (value || '').trim().toLowerCase()
+  )
+  const isAutre = Boolean(value && !isPreset)
+
+  const [activeChip, setActiveChip] = useState(() => {
+    if (!value) return ''
+    if (isPreset) {
+      return MOTIF_SUGGESTIONS.find(
+        (s) => s.toLowerCase() === value.trim().toLowerCase()
+      ) || ''
+    }
+    return 'Autre'
+  })
+
+  const [customText, setCustomText] = useState(() => (isAutre ? value : ''))
+
+  useEffect(() => {
+    if (!value) {
+      setActiveChip('')
+      setCustomText('')
+    } else {
+      const match = MOTIF_SUGGESTIONS.find(
+        (s) => s.toLowerCase() === value.trim().toLowerCase()
+      )
+      if (match) {
+        setActiveChip(match)
+      } else {
+        setActiveChip('Autre')
+        setCustomText(value)
+      }
+    }
+  }, [value])
+
+  const handleChipClick = (suggestion) => {
+    if (suggestion === 'Autre') {
+      setActiveChip('Autre')
+      onChange(customText)
+    } else {
+      setActiveChip(suggestion)
+      onChange(suggestion)
+    }
+  }
+
+  const handleCustomTextChange = (e) => {
+    const text = e.target.value
+    setCustomText(text)
+    onChange(text)
+  }
+
   return (
     <div className="space-y-2">
-      <div className="rounded-[10px] border border-[#E5E7EB] bg-white transition-all hover:border-[#D1D5DB] focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
-        <textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onBlur={onBlur}
-          placeholder={placeholder}
-          rows={2}
-          className="w-full resize-none bg-transparent px-3 py-2 text-[14px] font-medium text-[#111827] placeholder:text-[#9CA3AF] focus:outline-none min-h-[54px]"
-        />
-      </div>
-
       <div className="flex flex-wrap items-center gap-1.5">
         {MOTIF_SUGGESTIONS.map((suggestion) => {
-          const isSelected = value.trim().toLowerCase() === suggestion.toLowerCase()
+          const isSelected = activeChip === suggestion
           return (
             <button
               key={suggestion}
               type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => onChange(suggestion)}
+              onClick={() => handleChipClick(suggestion)}
               className={cn(
-                "inline-flex items-center px-2.5 py-1 rounded-full text-[12px] font-medium transition-all cursor-pointer border select-none",
+                'inline-flex items-center px-3 py-1.5 rounded-[10px] text-xs font-semibold transition-all cursor-pointer border select-none',
                 isSelected
-                  ? "bg-blue-50 border-blue-400 text-blue-700 shadow-2xs font-semibold"
-                  : "bg-[#F9FAFB] border-[#E5E7EB] text-[#4B5563] hover:bg-slate-100 hover:text-slate-900 hover:border-slate-300"
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 hover:border-slate-300'
               )}
             >
               {suggestion}
             </button>
           )
         })}
+
+        <button
+          type="button"
+          onClick={() => handleChipClick('Autre')}
+          className={cn(
+            'inline-flex items-center px-3 py-1.5 rounded-[10px] text-xs font-semibold transition-all cursor-pointer border select-none',
+            activeChip === 'Autre'
+              ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+              : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 hover:border-slate-300'
+          )}
+        >
+          Autre
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {activeChip === 'Autre' && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden pt-1"
+          >
+            <textarea
+              value={customText}
+              onChange={handleCustomTextChange}
+              onBlur={onBlur}
+              placeholder="Précisez le motif du rendez-vous..."
+              rows={2}
+              className={cn(
+                'w-full resize-none rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-[14px] font-medium text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all',
+                error ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : ''
+              )}
+              autoFocus
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/**
+ * Merged Type & Durée Field:
+ * Single row showing selected type (dot + label) as primary element,
+ * with duration as a secondary badge button that opens an override dropdown.
+ */
+function TypeAndDurationField({
+  typeValue,
+  durationValue,
+  onTypeChange,
+  onDurationChange,
+  availableTypes,
+}) {
+  const [showTypeDropdown, setShowTypeDropdown] = useState(false)
+  const [showDurationDropdown, setShowDurationDropdown] = useState(false)
+  const typeMenuRef = useRef(null)
+  const durationMenuRef = useRef(null)
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (typeMenuRef.current && !typeMenuRef.current.contains(e.target)) {
+        setShowTypeDropdown(false)
+      }
+      if (durationMenuRef.current && !durationMenuRef.current.contains(e.target)) {
+        setShowDurationDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const selectedTypeObj = availableTypes.find(
+    (t) => t.value.toLowerCase() === (typeValue || '').toLowerCase()
+  ) || availableTypes[0]
+
+  return (
+    <div className="flex items-center gap-2 relative">
+      {/* Primary Element: Consultation Type Selector */}
+      <div ref={typeMenuRef} className="flex-1 relative">
+        <button
+          type="button"
+          onClick={() => setShowTypeDropdown((prev) => !prev)}
+          className="w-full h-[44px] px-3.5 bg-white border border-[#E5E7EB] hover:border-[#D1D5DB] rounded-[10px] text-[#111827] text-[14px] font-semibold flex items-center justify-between transition-all focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 cursor-pointer shadow-2xs"
+        >
+          <div className="flex items-center gap-2.5 truncate">
+            <span
+              className={cn(
+                'w-3 h-3 rounded-full flex-shrink-0',
+                selectedTypeObj?.dotClass || 'bg-blue-500'
+              )}
+            />
+            <span className="truncate">{selectedTypeObj?.label || typeValue}</span>
+          </div>
+          <ChevronDown size={16} className="text-slate-400 flex-shrink-0 ml-1" />
+        </button>
+
+        {showTypeDropdown && (
+          <div className="absolute left-0 right-0 top-full mt-1 z-50 rounded-[10px] border border-slate-200 bg-white shadow-lg py-1.5 max-h-60 overflow-y-auto">
+            {availableTypes.map((t) => {
+              const isCurrent = t.value.toLowerCase() === (typeValue || '').toLowerCase()
+              return (
+                <button
+                  key={t.value}
+                  type="button"
+                  onClick={() => {
+                    onTypeChange(t.value, t.dureeMinutes)
+                    setShowTypeDropdown(false)
+                  }}
+                  className={cn(
+                    'w-full px-3.5 py-2.5 text-left flex items-center justify-between text-xs font-semibold transition-colors hover:bg-slate-50 cursor-pointer',
+                    isCurrent ? 'bg-blue-50/60 text-blue-700' : 'text-slate-800'
+                  )}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className={cn('w-2.5 h-2.5 rounded-full', t.dotClass || 'bg-blue-500')} />
+                    <span>{t.label}</span>
+                  </div>
+                  <span className="text-[11px] font-medium text-slate-400">{t.dureeMinutes} min</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Secondary Element: Duration Override Badge */}
+      <div ref={durationMenuRef} className="relative">
+        <button
+          type="button"
+          onClick={() => setShowDurationDropdown((prev) => !prev)}
+          className="h-[44px] px-3.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 rounded-[10px] text-slate-700 text-xs font-bold inline-flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs select-none"
+          title="Modifier la durée"
+        >
+          <Clock size={14} className="text-slate-500" />
+          <span>{durationValue} min</span>
+          <ChevronDown size={14} className="text-slate-400" />
+        </button>
+
+        {showDurationDropdown && (
+          <div className="absolute right-0 top-full mt-1 z-50 w-32 rounded-[10px] border border-slate-200 bg-white shadow-lg py-1.5">
+            <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              Durée
+            </div>
+            {DURATION_CHOICES.map((dur) => (
+              <button
+                key={dur}
+                type="button"
+                onClick={() => {
+                  onDurationChange(dur)
+                  setShowDurationDropdown(false)
+                }}
+                className={cn(
+                  'w-full px-3 py-1.5 text-left text-xs font-semibold transition-colors hover:bg-slate-50 cursor-pointer flex items-center justify-between',
+                  dur === durationValue ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700'
+                )}
+              >
+                <span>{dur} min</span>
+                {dur === durationValue && <Check size={13} className="text-blue-600" />}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -198,18 +423,123 @@ const frDateToIso = (fr) => {
   return ''
 }
 
-function FrenchDateInput({
-  value,
-  onChange,
-  onBlur,
-  className,
-}) {
+function ConsultationTypeCards({ availableTypes, value, onChange }) {
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {availableTypes.map((type) => {
+        const Icon = type.icon || Stethoscope
+        const isSelected = value.toLowerCase() === type.value.toLowerCase()
+
+        return (
+          <Button
+            key={type.value}
+            variant={isSelected ? 'accentOutline' : 'secondary'}
+            aria-pressed={isSelected}
+            onClick={() => onChange(type.value, type.dureeMinutes)}
+            className={cn(
+              'group grid w-full min-h-[62px] grid-cols-[2rem_minmax(0,1fr)] items-center justify-start gap-3 rounded-[10px] px-3 text-left whitespace-normal',
+              isSelected
+                ? 'border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-500/15 hover:bg-blue-100'
+                : 'hover:border-blue-200'
+            )}
+          >
+            <span
+              className={cn(
+                'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg',
+                isSelected
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 text-slate-500 group-hover:bg-blue-100 group-hover:text-blue-600'
+              )}
+            >
+              <Icon size={16} />
+            </span>
+            <span className="min-w-0 self-center">
+              <span className="block truncate text-xs font-bold">{type.label}</span>
+              <span className={cn('mt-0.5 block text-[11px] font-medium', isSelected ? 'text-blue-600' : 'text-slate-400')}>
+                {type.dureeMinutes} min
+              </span>
+            </span>
+          </Button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * French Date Input with cleanly anchored picker positioning
+ */
+function FrenchDateInput({ value, onChange, onBlur, className }) {
   const pickerRef = useRef(null)
+  const calendarRef = useRef(null)
   const [displayText, setDisplayText] = useState(() => isoToFrDate(value))
+  const [isPickerOpen, setIsPickerOpen] = useState(false)
+  const [calendarPosition, setCalendarPosition] = useState(null)
+  const [viewDate, setViewDate] = useState(() => {
+    if (value) {
+      const [year, month] = value.split('-').map(Number)
+      return new Date(year, month - 1, 1)
+    }
+    return new Date()
+  })
 
   useEffect(() => {
     setDisplayText(isoToFrDate(value))
-  }, [value])
+    if (value && !isPickerOpen) {
+      const [year, month] = value.split('-').map(Number)
+      setViewDate(new Date(year, month - 1, 1))
+    }
+  }, [value, isPickerOpen])
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event) => {
+      const isInInput = pickerRef.current?.contains(event.target)
+      const isInCalendar = calendarRef.current?.contains(event.target)
+      if (!isInInput && !isInCalendar) {
+        setIsPickerOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick)
+  }, [])
+
+  const positionCalendar = () => {
+    const trigger = pickerRef.current
+    if (!trigger) return
+
+    const rect = trigger.getBoundingClientRect()
+    const calendarWidth = Math.min(280, window.innerWidth - 16)
+    const calendarHeight = 320
+    const spaceBelow = window.innerHeight - rect.bottom
+    const spaceAbove = rect.top
+    const opensAbove = spaceBelow < calendarHeight && spaceAbove > spaceBelow
+
+    setCalendarPosition({
+      top: Math.max(8, opensAbove ? rect.top - calendarHeight - 8 : rect.bottom + 8),
+      left: Math.min(Math.max(8, rect.left), window.innerWidth - calendarWidth - 8),
+      width: calendarWidth,
+      maxHeight: 'calc(100vh - 16px)',
+      placement: opensAbove ? 'top' : 'bottom',
+    })
+  }
+
+  const toggleCalendar = () => {
+    if (!isPickerOpen) positionCalendar()
+    setIsPickerOpen((open) => !open)
+  }
+
+  useEffect(() => {
+    if (!isPickerOpen) return undefined
+
+    positionCalendar()
+    window.addEventListener('resize', positionCalendar)
+    window.addEventListener('scroll', positionCalendar, true)
+    return () => {
+      window.removeEventListener('resize', positionCalendar)
+      window.removeEventListener('scroll', positionCalendar, true)
+    }
+  }, [isPickerOpen])
 
   const handleTextChange = (e) => {
     const raw = e.target.value
@@ -217,14 +547,6 @@ function FrenchDateInput({
     const iso = frDateToIso(raw)
     if (iso) {
       onChange(iso)
-    }
-  }
-
-  const handlePickerChange = (e) => {
-    const iso = e.target.value
-    if (iso) {
-      onChange(iso)
-      setDisplayText(isoToFrDate(iso))
     }
   }
 
@@ -239,45 +561,94 @@ function FrenchDateInput({
     onBlur?.(e)
   }
 
-  const openPicker = () => {
-    try {
-      if (pickerRef.current?.showPicker) {
-        pickerRef.current.showPicker()
-      } else {
-        pickerRef.current?.focus()
-      }
-    } catch {
-      pickerRef.current?.focus()
-    }
+  const selectDay = (day) => {
+    const iso = `${viewDate.getFullYear()}-${String(viewDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    onChange(iso)
+    setDisplayText(isoToFrDate(iso))
+    setIsPickerOpen(false)
   }
 
+  const selectToday = () => {
+    const now = new Date()
+    const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    setViewDate(new Date(now.getFullYear(), now.getMonth(), 1))
+    onChange(iso)
+    setDisplayText(isoToFrDate(iso))
+    setIsPickerOpen(false)
+  }
+
+  const selectedDay = value ? Number(value.split('-')[2]) : null
+  const selectedMonth = value ? Number(value.split('-')[1]) - 1 : null
+  const selectedYear = value ? Number(value.split('-')[0]) : null
+  const today = new Date()
+  const monthStart = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1)
+  const daysInMonth = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 0).getDate()
+  const firstWeekday = (monthStart.getDay() + 6) % 7
+  const monthLabel = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' }).format(viewDate)
+
   return (
-    <div className="relative flex items-center group">
-      <input
-        type="text"
-        value={displayText}
-        onChange={handleTextChange}
-        onBlur={handleBlur}
-        placeholder="JJ/MM/AAAA"
-        className={cn(className, "pr-10")}
-      />
-      <button
-        type="button"
-        onClick={openPicker}
-        aria-label="Choisir une date"
-        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 focus:outline-none transition-colors z-20 cursor-pointer"
-      >
-        <Calendar size={18} />
-      </button>
-      <input
-        ref={pickerRef}
-        type="date"
-        value={value || ''}
-        onChange={handlePickerChange}
-        tabIndex={-1}
-        aria-label="Date du rendez-vous"
-        className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 opacity-0 pointer-events-none"
-      />
+    <div ref={pickerRef} className="relative w-full">
+      <div className="relative flex items-center group w-full">
+        <input
+          type="text"
+          value={displayText}
+          onChange={handleTextChange}
+          onBlur={handleBlur}
+          placeholder="JJ/MM/AAAA"
+          className={cn(className, 'pr-10')}
+        />
+        <button
+          type="button"
+          onClick={toggleCalendar}
+          aria-label="Choisir une date"
+          aria-expanded={isPickerOpen}
+          className="absolute right-2.5 top-1/2 z-20 -translate-y-1/2 rounded-[7px] p-1.5 text-slate-400 transition-all hover:bg-blue-50 hover:text-blue-600 active:scale-95 focus:outline-none cursor-pointer"
+        >
+          <Calendar size={18} />
+        </button>
+      </div>
+      {isPickerOpen && calendarPosition && createPortal(
+        <motion.div
+          ref={calendarRef}
+          initial={{ opacity: 0, y: calendarPosition.placement === 'top' ? 6 : -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.16 }}
+          style={calendarPosition}
+          className="fixed z-[160] overflow-y-auto rounded-xl border border-slate-200 bg-white p-2.5 shadow-[0_12px_24px_-12px_rgba(15,23,42,0.22)]"
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <button type="button" onClick={() => setViewDate((date) => new Date(date.getFullYear(), date.getMonth() - 1, 1))} aria-label="Mois précédent" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 transition-all hover:bg-slate-100 hover:text-slate-900 active:scale-95">
+              <ChevronLeft size={17} />
+            </button>
+            <span className="capitalize text-sm font-bold text-slate-800">{monthLabel}</span>
+            <button type="button" onClick={() => setViewDate((date) => new Date(date.getFullYear(), date.getMonth() + 1, 1))} aria-label="Mois suivant" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 transition-all hover:bg-slate-100 hover:text-slate-900 active:scale-95">
+              <ChevronRight size={17} />
+            </button>
+          </div>
+          <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-slate-400">
+            {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((day, index) => <span key={`${day}-${index}`} className="py-1">{day}</span>)}
+          </div>
+          <div className="mt-1 grid grid-cols-7 gap-1">
+            {Array.from({ length: firstWeekday }).map((_, index) => <span key={`empty-${index}`} />)}
+            {Array.from({ length: daysInMonth }, (_, index) => index + 1).map((day) => {
+              const isSelected = selectedDay === day && selectedMonth === viewDate.getMonth() && selectedYear === viewDate.getFullYear()
+              const isToday = today.getDate() === day && today.getMonth() === viewDate.getMonth() && today.getFullYear() === viewDate.getFullYear()
+              return (
+                <button key={day} type="button" onClick={() => selectDay(day)} className={cn(
+                  'flex h-8 items-center justify-center rounded-[8px] text-xs font-semibold transition-all active:scale-95',
+                  isSelected ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/25' : isToday ? 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200 hover:bg-blue-100' : 'text-slate-700 hover:bg-slate-100'
+                )}>
+                  {day}
+                </button>
+              )
+            })}
+          </div>
+          <button type="button" onClick={selectToday} className="mt-3 w-full rounded-[8px] border border-slate-200 bg-white py-2 text-xs font-bold text-blue-600 transition-all hover:border-blue-200 hover:bg-blue-50 active:scale-[0.98]">
+            Aujourd’hui
+          </button>
+        </motion.div>,
+        document.body
+      )}
     </div>
   )
 }
@@ -288,23 +659,19 @@ const mutuelles = [
   'RAMED',
   'CNOPS',
   'Assurance privée',
-  'Autre'
+  'Autre',
 ]
 
-const mutuelleOptions = mutuelles.map(m => ({
+const mutuelleOptions = mutuelles.map((m) => ({
   value: m,
   label: m,
 }))
 
-// Two different conflicts, two different messages — the secretary has to know which one she's
-// looking at to fix it:
-//  - overlap (23P01, rdv_no_overlap_per_cabinet): the time slot is taken by ANOTHER appointment;
-//  - same-day duplicate (23505, rdv_one_active_per_patient_per_day): THIS patient already has
-//    an appointment that day.
 const hm = (iso) => {
   const d = new Date(iso)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
+
 const overlapMessage = (conflict) => {
   if (!conflict) {
     return 'Ce créneau chevauche un autre rendez-vous. Choisissez une autre heure ou une durée plus courte.'
@@ -314,11 +681,9 @@ const overlapMessage = (conflict) => {
   return `Ce créneau chevauche le rendez-vous de ${who} (${range}). Choisissez une autre heure ou une durée plus courte.`
 }
 
-// Helper Functions
 const parseName = (fullName) => {
   const trimmed = fullName.trim()
   if (!trimmed) return { prenom: '', nom: '' }
-  // Remove titles like "Dr.", "M.", "Mme"
   const cleaned = trimmed.replace(/^(Dr\.?|M\.?|Mme\.?|Mr\.?|Ms\.?)\s*/i, '')
   const parts = cleaned.split(' ')
   if (parts.length === 1) {
@@ -332,7 +697,7 @@ const parseName = (fullName) => {
 const formatPhoneNumber = (value) => {
   const digits = value.replace(/\D/g, '')
   let formatted = ''
-  
+
   if (digits.startsWith('212')) {
     formatted = '+212 '
     const rest = digits.slice(3)
@@ -356,51 +721,90 @@ function AppointmentFormModal({
   initialPatient,
   onSuccess,
   initialDate,
-  initialTime
+  initialTime,
+  doctorId,
 }) {
   const { notify, refreshRdv, refreshVisits } = useAppContext()
   const { cabinetId } = useCabinetId()
   const queryClient = useQueryClient()
 
+  // Real Supabase patient list
   const { data: livePatients = [] } = useQuery({
     queryKey: ['patients'],
     queryFn: getPatients,
     enabled: open,
   })
 
-  // Consultation types (with durations) + agenda settings for this cabinet. Before the agenda
-  // migration is applied this returns the historical defaults and schemaReady = false.
+  // Agenda settings & types
   const agenda = useAgendaConfig(cabinetId)
+
+  // Map types with proper color dot classes
+  const availableTypes = useMemo(() => {
+    const list = agenda.types && agenda.types.length > 0 ? agenda.types : DEFAULT_APPOINTMENT_TYPES
+    return list.map((t) => {
+      const val = t.libelle || t.value
+      const lower = val.toLowerCase()
+      let dotClass = 'bg-blue-500'
+      if (lower.includes('suivi')) dotClass = 'bg-purple-500'
+      else if (lower.includes('première') || lower.includes('premiere')) dotClass = 'bg-emerald-500'
+      else if (lower.includes('urgence')) dotClass = 'bg-rose-500'
+      else if (lower.includes('examen') || lower.includes('analyse')) dotClass = 'bg-sky-500'
+
+      return {
+        value: val,
+        label: val,
+        description: t.description || '',
+        dureeMinutes: t.duree_minutes || t.dureeMinutes || 30,
+        color: t.couleur || t.color || '#3b82f6',
+        dotClass,
+        // Keep the visual identity supplied by the default consultation types.
+        // Without this, every card falls back to Stethoscope below.
+        icon: t.icon || DEFAULT_APPOINTMENT_TYPES.find((defaultType) =>
+          defaultType.value.toLowerCase() === val.toLowerCase()
+        )?.icon || Stethoscope,
+      }
+    })
+  }, [agenda.types])
+
   const findType = (name) => {
     const key = String(name || '').trim().toLowerCase()
-    return agenda.types.find((t) => t.libelle.trim().toLowerCase() === key) || null
+    return availableTypes.find((t) => t.value.trim().toLowerCase() === key) || null
   }
-  // A form's duration: the one picked by hand, else the type's, else the cabinet default.
-  const effectiveDuree = (form) => form.duree || findType(form.type)?.dureeMinutes || agenda.settings.dureeDefautMinutes
-  const typeOptionsFor = (current) => {
-    const opts = agenda.types
-      .filter((t) => t.actif !== false || t.libelle === current)
-      .map((t) => ({ value: t.libelle, label: t.libelle, description: t.description, color: t.couleur, badge: `${t.dureeMinutes} min` }))
-    // An edited appointment may carry a type that no longer exists: keep it selectable as is.
-    if (current && !opts.some((o) => o.value === current)) opts.push({ value: current, label: current })
-    return opts
-  }
-  const timeOptionsFor = (current) => {
+
+  const effectiveDuree = (form) =>
+    form.duree || findType(form.type)?.dureeMinutes || agenda.settings.dureeDefautMinutes || 30
+
+  const timeOptionsFor = (current, form) => {
     const times = bookableTimes(agenda.settings)
     if (current && !times.includes(current)) times.push(current)
-    return times.sort().map((t) => ({ value: t, label: t }))
-  }
-  const durationOptionsFor = (current) => {
-    const values = [...new Set([...DURATION_CHOICES, current].filter(Boolean))].sort((a, b) => a - b)
-    return values.map((v) => ({ value: String(v), label: `${v} min` }))
-  }
-  // Columns only sent once the migration exists; before that the insert keeps its old shape.
-  const scheduleFields = (form) => (agenda.schemaReady
-    ? { duree_minutes: effectiveDuree(form), type_consultation_id: findType(form.type)?.id || null }
-    : {})
+    return times.sort().map((t) => {
+      const isOccupied = Boolean(
+        form?.date && !isSlotValid(form.date, t, effectiveDuree(form))
+      )
 
-  // Same-slot check before saving, so the message can name the appointment in the way.
-  // Returns true when the save must stop.
+      return {
+        value: t,
+        label: t,
+        disabled: isOccupied,
+        description: isOccupied ? 'Indisponible' : '',
+      }
+    })
+  }
+
+  const isSelectedTimeOccupied = (form) => Boolean(
+    form?.date && form?.heure && !isSlotValid(form.date, form.heure, effectiveDuree(form))
+  )
+
+  // Columns sent to DB
+  const scheduleFields = (form) =>
+    agenda.schemaReady
+      ? {
+          duree_minutes: effectiveDuree(form),
+          type_consultation_id: findType(form.type)?.id || null,
+        }
+      : {}
+
+  // Overlap pre-check
   const blockedByOverlap = async (form) => {
     const conflict = await findOverlappingAppointment({
       cabinetId,
@@ -410,7 +814,11 @@ function AppointmentFormModal({
       schemaReady: agenda.schemaReady,
     })
     if (!conflict) return false
-    notify({ title: 'Créneau déjà occupé', description: overlapMessage(conflict), variant: 'destructive' })
+    notify({
+      title: 'Créneau déjà occupé',
+      description: overlapMessage(conflict),
+      variant: 'destructive',
+    })
     return true
   }
 
@@ -423,14 +831,24 @@ function AppointmentFormModal({
   const submittingRef = useRef(false)
   const [touched, setTouched] = useState({})
   const [errors, setErrors] = useState({})
-  
-  // Button hover/pressed state
-  const [cancelHovered, setCancelHovered] = useState(false)
-  const [cancelPressed, setCancelPressed] = useState(false)
-  const [submitHovered, setSubmitHovered] = useState(false)
-  const [submitPressed, setSubmitPressed] = useState(false)
+
+  // Smart Slot Availability & Manual entry toggle
+  const [selectedSlotKey, setSelectedSlotKey] = useState(null)
+  const [showManualDateTime, setShowManualDateTime] = useState(false)
+  const [slotConflictWarning, setSlotConflictWarning] = useState('')
 
   // Form Data State
+  const [existingForm, setExistingForm] = useState({
+    patientId: '',
+    telephone: '',
+    motif: '',
+    date: '',
+    heure: '08:00',
+    type: 'Consultation',
+    duree: 30,
+    notes: '',
+  })
+
   const [rdvRapideForm, setRdvRapideForm] = useState({
     nomPrenom: '',
     telephone: '',
@@ -438,8 +856,8 @@ function AppointmentFormModal({
     date: '',
     heure: '08:00',
     type: 'Consultation',
-    duree: null,
-    notes: ''
+    duree: 30,
+    notes: '',
   })
 
   const [dossierCompletForm, setDossierCompletForm] = useState({
@@ -455,49 +873,59 @@ function AppointmentFormModal({
     date: '',
     heure: '08:00',
     type: 'Consultation',
-    duree: null,
-    notes: ''
+    duree: 30,
+    notes: '',
   })
 
-  const [existingForm, setExistingForm] = useState({
-    patientId: '',
-    telephone: '',
-    motif: '',
-    date: '',
-    heure: '08:00',
-    type: 'Consultation',
-    duree: null,
-    notes: ''
+  // Hook for Smart Availability Suggestions
+  const currentEffectiveDuration = effectiveDuree(existingForm)
+  const {
+    slots: smartSlots,
+    isLoading: isSlotsLoading,
+    isSlotValid,
+  } = useAvailableSlots({
+    cabinetId,
+    doctorId,
+    durationMinutes: currentEffectiveDuration,
+    excludeAppointmentId: appointment?.id,
+    enabled: open,
+    lookaheadDays: 7,
   })
 
-  // Initialize Data
+  // Initialize Data when Modal opens
   useEffect(() => {
     if (open) {
-      const todayCasablanca = new Date().toLocaleDateString('fr-CA', { timeZone: 'Africa/Casablanca' })
+      const todayCasablanca = new Date().toLocaleDateString('fr-CA', {
+        timeZone: 'Africa/Casablanca',
+      })
       const initialDateValue = initialDate || todayCasablanca
-      
+
       setModalState('existing')
       setSearchQuery('')
       setSelectedPatient(null)
       setShowDropdown(false)
       setTouched({})
       setErrors({})
-      
+      setSelectedSlotKey(null)
+      setShowManualDateTime(false)
+      setSlotConflictWarning('')
+
       if (appointment) {
-        // `appointment` here is the raw rdv row passed by AppointmentsPage's
-        // "Modifier l'heure" flow (snake_case: patient_id, notes) — it is
-        // NOT the mapped Appointment shape (camelCase: patientId, motif)
-        // used elsewhere in this file's own type definitions. Reading
-        // appointment.patientId/.motif directly always returned undefined,
-        // and motif was hardcoded to '' — since validateExisting() requires
-        // a non-empty motif, every edit-time submission was silently
-        // blocked by "Motif requis" unless the user happened to retype it.
         const meta = parseAppointmentMeta(appointment.notes)
-        setSearchQuery(`${appointment.patients?.prenom || ''} ${appointment.patients?.nom || ''}`)
+        setSearchQuery(
+          `${appointment.patients?.prenom || ''} ${appointment.patients?.nom || ''}`.trim()
+        )
         setSelectedPatient(appointment.patients)
         const dt = new Date(appointment.date_rdv)
-        const datePart = !isNaN(dt) ? `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}` : initialDateValue
-        const timePart = !isNaN(dt) ? `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}` : initialTime || '08:00'
+        const datePart = !isNaN(dt)
+          ? `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
+          : initialDateValue
+        const timePart = !isNaN(dt)
+          ? `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`
+          : initialTime || '08:00'
+
+        const initialType = meta.type || 'Consultation'
+        const initialDur = appointment.duree_minutes || findType(initialType)?.dureeMinutes || 30
 
         setExistingForm({
           patientId: appointment.patient_id || appointment.patientId,
@@ -505,10 +933,11 @@ function AppointmentFormModal({
           motif: meta.clinicalContext || '',
           date: datePart,
           heure: timePart,
-          type: meta.type || 'Consultation',
-          duree: appointment.duree_minutes || null,
-          notes: ''
+          type: initialType,
+          duree: initialDur,
+          notes: meta.doctorNote || '',
         })
+        setShowManualDateTime(true) // Keep manual open when editing existing rdv
       } else if (initialPatient) {
         const patientName = `${initialPatient.prenom || ''} ${initialPatient.nom || ''}`.trim()
         setSearchQuery(patientName)
@@ -520,8 +949,8 @@ function AppointmentFormModal({
           date: initialDateValue,
           heure: initialTime || '08:00',
           type: 'Consultation',
-          duree: null,
-          notes: ''
+          duree: 30,
+          notes: '',
         })
       } else {
         setExistingForm({
@@ -531,8 +960,8 @@ function AppointmentFormModal({
           date: initialDateValue,
           heure: initialTime || '08:00',
           type: 'Consultation',
-          duree: null,
-          notes: ''
+          duree: 30,
+          notes: '',
         })
 
         setRdvRapideForm({
@@ -542,8 +971,8 @@ function AppointmentFormModal({
           date: initialDateValue,
           heure: initialTime || '08:00',
           type: 'Consultation',
-          duree: null,
-          notes: ''
+          duree: 30,
+          notes: '',
         })
 
         setDossierCompletForm({
@@ -559,8 +988,8 @@ function AppointmentFormModal({
           date: initialDateValue,
           heure: initialTime || '08:00',
           type: 'Consultation',
-          duree: null,
-          notes: ''
+          duree: 30,
+          notes: '',
         })
       }
     }
@@ -570,23 +999,31 @@ function AppointmentFormModal({
   const filteredPatients = useMemo(() => {
     const query = searchQuery.toLowerCase().trim()
     if (!query) return []
-    return livePatients.filter(p =>
-      `${p.prenom} ${p.nom}`.toLowerCase().includes(query) ||
-      (p.telephone || '').includes(query)
+    return livePatients.filter(
+      (p) =>
+        `${p.prenom || ''} ${p.nom || ''}`.toLowerCase().includes(query) ||
+        (p.telephone || '').includes(query) ||
+        (p.cin || '').toLowerCase().includes(query)
     )
   }, [searchQuery, livePatients])
 
   // Handle Patient Selection
   const handleSelectPatient = (patient) => {
     setSelectedPatient(patient)
-    setSearchQuery(`${patient.prenom} ${patient.nom}`)
-    setExistingForm(prev => ({ 
-      ...prev, 
-      patientId: patient.id, 
-      telephone: patient.telephone,
-      type: 'Consultation',
-      duree: null
+    setSearchQuery(`${patient.prenom || ''} ${patient.nom || ''}`.trim())
+    setExistingForm((prev) => ({
+      ...prev,
+      patientId: patient.id,
+      telephone: patient.telephone || '',
     }))
+    setShowDropdown(false)
+    setTouched((prev) => ({ ...prev, searchQuery: false }))
+  }
+
+  // Handle Clearing Patient to Reopen Search
+  const handleClearPatient = () => {
+    setSelectedPatient(null)
+    setSearchQuery('')
     setShowDropdown(false)
   }
 
@@ -598,9 +1035,11 @@ function AppointmentFormModal({
 
     setTimeout(() => {
       if (value.trim() && selectedPatient === null) {
-        const filtered = livePatients.filter(p =>
-          `${p.prenom} ${p.nom}`.toLowerCase().includes(value.toLowerCase()) ||
-          (p.telephone || '').includes(value)
+        const filtered = livePatients.filter(
+          (p) =>
+            `${p.prenom || ''} ${p.nom || ''}`.toLowerCase().includes(value.toLowerCase()) ||
+            (p.telephone || '').includes(value) ||
+            (p.cin || '').toLowerCase().includes(value)
         )
         if (filtered.length === 0) {
           setModalState('invitation')
@@ -613,55 +1052,109 @@ function AppointmentFormModal({
     }, 300)
   }
 
-  // Handle RDV Rapide
+  // Handle Smart Slot Selection
+  const handleSelectSlot = (slot) => {
+    setSelectedSlotKey(`${slot.date}_${slot.time}`)
+    setExistingForm((prev) => ({
+      ...prev,
+      date: slot.date,
+      heure: slot.time,
+    }))
+    setShowManualDateTime(false)
+    setSlotConflictWarning('')
+  }
+
+  // Re-validate Slot Fit on Duration Change
+  const handleDurationChange = (newDuration) => {
+    setExistingForm((prev) => {
+      const updated = { ...prev, duree: Number(newDuration) }
+      if (selectedSlotKey && prev.date && prev.heure) {
+        const fits = isSlotValid(prev.date, prev.heure, Number(newDuration))
+        if (!fits) {
+          setSelectedSlotKey(null)
+          setSlotConflictWarning(
+            `Le créneau à ${prev.heure} n'est plus disponible pour une durée de ${newDuration} min. Veuillez choisir un autre créneau.`
+          )
+          setShowManualDateTime(true)
+        } else {
+          setSlotConflictWarning('')
+        }
+      }
+      return updated
+    })
+  }
+
+  // Handle Type Change
+  const handleTypeChange = (newType, defaultDuration) => {
+    setExistingForm((prev) => {
+      const nextDur = defaultDuration || findType(newType)?.dureeMinutes || 30
+      const updated = { ...prev, type: newType, duree: nextDur }
+      if (selectedSlotKey && prev.date && prev.heure) {
+        const fits = isSlotValid(prev.date, prev.heure, nextDur)
+        if (!fits) {
+          setSelectedSlotKey(null)
+          setSlotConflictWarning(
+            `Le créneau à ${prev.heure} n'est plus disponible pour la durée de ${nextDur} min (${newType}).`
+          )
+          setShowManualDateTime(true)
+        } else {
+          setSlotConflictWarning('')
+        }
+      }
+      return updated
+    })
+  }
+
+  const keepCreatedPatient = (patient, form) => {
+    setSelectedPatient(patient)
+    setSearchQuery(`${patient.prenom || ''} ${patient.nom || ''}`.trim())
+    setExistingForm((prev) => ({
+      ...prev,
+      patientId: patient.id,
+      telephone: patient.telephone || '',
+      motif: form.motif,
+      date: form.date,
+      heure: form.heure,
+      type: form.type,
+      duree: form.duree,
+      notes: form.notes || '',
+    }))
+    setModalState('existing')
+    queryClient.invalidateQueries({ queryKey: ['patients'] })
+  }
+
+  // Modes transition
   const handleRdvRapide = () => {
     const parsed = parseName(searchQuery)
-    setRdvRapideForm(prev => ({ 
-      ...prev, 
+    setRdvRapideForm((prev) => ({
+      ...prev,
       nomPrenom: searchQuery.trim(),
       prenom: parsed.prenom,
-      nom: parsed.nom
+      nom: parsed.nom,
     }))
     setModalState('rdv-rapide')
   }
 
-  // Handle Dossier Complet
   const handleDossierComplet = () => {
     const parsed = parseName(searchQuery)
-    setDossierCompletForm(prev => ({
+    setDossierCompletForm((prev) => ({
       ...prev,
       prenom: parsed.prenom,
-      nom: parsed.nom
+      nom: parsed.nom,
     }))
     setModalState('dossier-complet')
   }
 
-  // Handle Return to Invitation
   const handleReturnToInvitation = () => {
     setModalState('invitation')
   }
 
-  // Handle Return to Search
-  const handleReturnToSearch = () => {
-    setModalState('existing')
-    setSearchQuery('')
-    setSelectedPatient(null)
-  }
-
-  // Validation Functions
+  // Validations
   const validateExisting = () => {
     const newErrors = {}
     if (!selectedPatient) newErrors.searchQuery = 'Veuillez sélectionner un patient'
     if (!existingForm.date) newErrors.date = 'Date requise'
     if (!existingForm.heure) newErrors.heure = 'Heure requise'
-    // Motif was never actually persisted by any create/edit path (see
-    // handleSubmit below — buildAppointmentMeta never stored it), so an
-    // existing appointment's motif is always empty and there is nothing
-    // real to prefill. Requiring it only made sense for brand-new
-    // appointments (force the user to type a reason); requiring it to edit
-    // an existing one's time made every "Modifier l'heure" submission
-    // silently fail validation with no realistic way to satisfy it.
-    if (!appointment && !existingForm.motif.trim()) newErrors.motif = 'Motif requis'
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
@@ -692,15 +1185,13 @@ function AppointmentFormModal({
   // Handle Form Submission
   const handleSubmit = async (e) => {
     e.preventDefault()
-    // Synchronous guard: `loading` only disables the button after a re-render, a ref closes
-    // that gap so one save can never be sent twice.
     if (submittingRef.current) return
     submittingRef.current = true
     setLoading(true)
 
     try {
       let successMessage = 'Rendez-vous créé avec succès'
-      
+
       if (modalState === 'existing') {
         if (!validateExisting()) return
         if (await blockedByOverlap(existingForm)) return
@@ -710,6 +1201,7 @@ function AppointmentFormModal({
           const newNotes = buildAppointmentMeta(currentNotes, {
             type: existingForm.type,
             clinicalContext: existingForm.motif,
+            doctorNote: existingForm.notes,
           })
           await apiUpdateRdv(appointment.id, {
             patient_id: existingForm.patientId,
@@ -722,6 +1214,7 @@ function AppointmentFormModal({
           const newNotes = buildAppointmentMeta(null, {
             type: existingForm.type,
             clinicalContext: existingForm.motif,
+            doctorNote: existingForm.notes,
           })
           await createRdv({
             cabinet_id: cabinetId,
@@ -735,11 +1228,10 @@ function AppointmentFormModal({
         }
       } else if (modalState === 'rdv-rapide') {
         if (!validateRdvRapide()) return
-        // Before creating the patient, so a taken slot doesn't leave an orphan patient behind.
         if (await blockedByOverlap(rdvRapideForm)) return
 
         const { prenom, nom } = parseName(rdvRapideForm.nomPrenom)
-        
+
         const createdPatient = await createPatient({
           cabinet_id: cabinetId,
           prenom,
@@ -750,18 +1242,24 @@ function AppointmentFormModal({
         const newNotes = buildAppointmentMeta(null, {
           type: rdvRapideForm.type,
           clinicalContext: rdvRapideForm.motif,
+          doctorNote: rdvRapideForm.notes,
         })
-        await createRdv({
-          cabinet_id: cabinetId,
-          rappel_envoye: false,
-          patient_id: createdPatient.id,
-          date_rdv: new Date(`${rdvRapideForm.date}T${rdvRapideForm.heure}:00`).toISOString(),
-          status: 'confirme',
-          notes: newNotes,
-          ...scheduleFields(rdvRapideForm),
-        })
-        
-        successMessage = 'Rendez-vous créé — Le patient sera enregistré à l\'arrivée'
+        try {
+          await createRdv({
+            cabinet_id: cabinetId,
+            rappel_envoye: false,
+            patient_id: createdPatient.id,
+            date_rdv: new Date(`${rdvRapideForm.date}T${rdvRapideForm.heure}:00`).toISOString(),
+            status: 'confirme',
+            notes: newNotes,
+            ...scheduleFields(rdvRapideForm),
+          })
+        } catch (rdvError) {
+          keepCreatedPatient(createdPatient, rdvRapideForm)
+          throw rdvError
+        }
+
+        successMessage = "Rendez-vous créé — Le patient sera enregistré à l'arrivée"
       } else if (modalState === 'dossier-complet') {
         if (!validateDossierComplet()) return
         if (await blockedByOverlap(dossierCompletForm)) return
@@ -781,55 +1279,54 @@ function AppointmentFormModal({
         const newNotes = buildAppointmentMeta(null, {
           type: dossierCompletForm.type,
           clinicalContext: dossierCompletForm.motif,
+          doctorNote: dossierCompletForm.notes,
         })
-        await createRdv({
-          cabinet_id: cabinetId,
-          rappel_envoye: false,
-          patient_id: createdPatient.id,
-          date_rdv: new Date(`${dossierCompletForm.date}T${dossierCompletForm.heure}:00`).toISOString(),
-          status: 'confirme',
-          notes: newNotes,
-          ...scheduleFields(dossierCompletForm),
-        })
-        
+        try {
+          await createRdv({
+            cabinet_id: cabinetId,
+            rappel_envoye: false,
+            patient_id: createdPatient.id,
+            date_rdv: new Date(`${dossierCompletForm.date}T${dossierCompletForm.heure}:00`).toISOString(),
+            status: 'confirme',
+            notes: newNotes,
+            ...scheduleFields(dossierCompletForm),
+          })
+        } catch (rdvError) {
+          keepCreatedPatient(createdPatient, dossierCompletForm)
+          throw rdvError
+        }
+
         successMessage = 'Patient et rendez-vous créés avec succès'
       }
 
       queryClient.invalidateQueries({ queryKey: ['patients'] })
       queryClient.invalidateQueries({ queryKey: ['appointments'] })
       queryClient.invalidateQueries({ queryKey: ['agenda-range'] })
-      
-      await Promise.all([
-        refreshRdv?.(),
-        refreshVisits?.(),
-      ])
-      
+      queryClient.invalidateQueries({ queryKey: ['available-slots-rdv'] })
+
+      await Promise.all([refreshRdv?.(), refreshVisits?.()])
+
       notify({
         title: 'Succès',
-        description: successMessage
+        description: successMessage,
       })
-      
+
       onSuccess?.()
       onClose()
     } catch (error) {
-      // Same unwrapping as InvoiceFormModal: PostgREST errors are plain objects, never String() them.
-      const errorMsg = typeof error === 'string'
-        ? error
-        : error?.message || error?.details || error?.hint || (error?.code ? `code ${error.code}` : 'erreur inconnue')
-      // PostgREST errors carry far more than .message (code/details/hint) —
-      // logging the full object is the only way to tell which underlying
-      // query actually failed when the message alone is ambiguous (e.g.
-      // "permission denied for table patients" during an rdv save, where
-      // rdv's own update never references patients directly).
-      console.error('Error creating appointment:', { message: errorMsg, code: error?.code, details: error?.details, hint: error?.hint, error })
-      // 23505 = unique_violation. Only translate the specific one-per-day
-      // constraint to a clean French message — the database stays the real
-      // authority (this is UX only), any other error still shows the raw
-      // technical message so nothing genuinely wrong is hidden.
-      // 23P01 = exclusion_violation on rdv_no_overlap_per_cabinet: the slot overlaps ANOTHER
-      // appointment (reaches here when two people book the same slot at the same moment, after
-      // the pre-check). Kept apart from the same-patient case on purpose — different fix.
-      const isSameDayDuplicate = error?.code === '23505' && /rdv_one_active_per_patient_per_day/.test(errorMsg || error?.details || '')
+      const errorMsg =
+        typeof error === 'string'
+          ? error
+          : error?.message || error?.details || error?.hint || (error?.code ? `code ${error.code}` : 'erreur inconnue')
+      console.error('Error creating appointment:', {
+        message: errorMsg,
+        code: error?.code,
+        details: error?.details,
+        hint: error?.hint,
+        error,
+      })
+      const isSameDayDuplicate =
+        error?.code === '23505' && /rdv_one_active_per_patient_per_day/.test(errorMsg || error?.details || '')
       const isOverlap = isOverlapError(error)
       notify({
         title: isOverlap ? 'Créneau déjà occupé' : isSameDayDuplicate ? 'Rendez-vous en double' : 'Erreur',
@@ -846,83 +1343,55 @@ function AppointmentFormModal({
     }
   }
 
-  // Input styles
-  const inputClass = "w-full h-[44px] px-3 bg-white border border-[#E5E7EB] rounded-[10px] text-[#111827] text-[14px] font-medium placeholder:text-[#9CA3AF] focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all hover:border-[#D1D5DB]"
-  const labelClass = "block text-[11px] font-semibold text-[#9CA3AF] uppercase tracking-[0.06em] mb-[6px]"
+  // Common Input styles
+  const inputClass =
+    'w-full h-[44px] px-3.5 bg-white border border-[#E5E7EB] rounded-[10px] text-[#111827] text-[14px] font-medium placeholder:text-[#9CA3AF] focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all hover:border-[#D1D5DB]'
+  const labelClass = 'block text-[11px] font-semibold text-[#9CA3AF] uppercase tracking-[0.06em] mb-[6px]'
+  const sectionTitleClass = 'text-[13px] font-bold text-slate-800'
 
-  // Footer buttons
+  // Patient initials
+  const patientInitials = useMemo(() => {
+    if (!selectedPatient) return 'P'
+    const p = (selectedPatient.prenom || '').trim()[0] || ''
+    const n = (selectedPatient.nom || '').trim()[0] || ''
+    return `${p}${n}`.toUpperCase() || 'P'
+  }, [selectedPatient])
+
+  // Exactly one filled/accent button in footer; "Annuler" stays neutral/outline
   const footer = (
     <div className="flex gap-3">
-      <button
-        type="button"
+      <Button
+        variant="secondary"
         onClick={onClose}
         disabled={loading}
-        style={{
-          backgroundColor: cancelHovered ? '#F9FAFB' : '#FFFFFF',
-          color: '#374151',
-          border: `2px solid ${cancelHovered ? '#D1D5DB' : '#E5E7EB'}`,
-          padding: '0.625rem 1.25rem',
-          minHeight: '44px',
-          transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-          whiteSpace: 'nowrap',
-          fontSize: '14px',
-          fontWeight: 'bold',
-          width: 'auto',
-          flex: 1,
-          transform: cancelPressed ? 'translateY(-1px) scale(0.98)' : cancelHovered ? 'translateY(-2px)' : 'translateY(0)',
-          boxShadow: cancelHovered ? '0 6px 16px -4px rgba(148, 163, 184, 0.15)' : 'none',
-          opacity: loading ? 0.7 : 1,
-          cursor: loading ? 'not-allowed' : 'pointer'
-        }}
-        onMouseEnter={() => setCancelHovered(true)}
-        onMouseLeave={() => { setCancelHovered(false); setCancelPressed(false); }}
-        onMouseDown={() => setCancelPressed(true)}
-        onMouseUp={() => setCancelPressed(false)}
+        className="flex-1 h-11 px-5"
       >
         Annuler
-      </button>
+      </Button>
       {modalState !== 'invitation' && (
-        <button
-          type="button"
+        <Button
+          variant="primary"
           onClick={handleSubmit}
           disabled={loading}
-          style={{
-            backgroundColor: submitHovered ? '#2563EB' : '#3B82F6',
-            color: '#FFFFFF',
-            border: `2px solid ${submitHovered ? '#1E40AF' : '#60A5FA'}`,
-            padding: '0.625rem 1.25rem',
-            minHeight: '44px',
-            transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-            whiteSpace: 'nowrap',
-            fontSize: '14px',
-            fontWeight: 'bold',
-            width: 'auto',
-            flex: 1,
-            transform: submitPressed ? 'translateY(-1px) scale(0.98)' : submitHovered ? 'translateY(-2px)' : 'translateY(0)',
-            boxShadow: submitHovered ? '0 6px 16px -4px rgba(37, 99, 235, 0.15)' : 'none',
-            opacity: loading ? 0.7 : 1,
-            cursor: loading ? 'not-allowed' : 'pointer'
-          }}
-          onMouseEnter={() => setSubmitHovered(true)}
-          onMouseLeave={() => { setSubmitHovered(false); setSubmitPressed(false); }}
-          onMouseDown={() => setSubmitPressed(true)}
-          onMouseUp={() => setSubmitPressed(false)}
+          className="flex-1 h-11 px-5"
         >
           {loading ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Création...
+              <span>Enregistrement...</span>
             </>
           ) : (
-            modalState === 'existing' ? (
-              appointment ? 'Modifier' : 'Créer le rendez-vous'
-            ) : modalState === 'rdv-rapide' ? (
-              'Créer le RDV'
-            ) : (
-              'Créer patient et RDV'
-            )
+            <span>
+              {modalState === 'existing'
+                ? appointment
+                  ? 'Modifier'
+                  : 'Créer le rendez-vous'
+                : modalState === 'rdv-rapide'
+                ? 'Créer le RDV'
+                : 'Créer patient et RDV'}
+            </span>
           )}
-        </button>
+        </Button>
       )}
     </div>
   )
@@ -931,179 +1400,357 @@ function AppointmentFormModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={modalState === 'dossier-complet' ? "Nouveau patient · Rendez-vous" : "Nouveau rendez-vous"}
-      width="max-w-[520px]"
+      title={modalState === 'dossier-complet' ? 'Nouveau patient · Rendez-vous' : 'Nouveau rendez-vous'}
+      width="max-w-[540px]"
       footer={footer}
-      noScroll={modalState !== 'dossier-complet'}
+      noScroll={false}
     >
       <div className="space-y-4">
-        {/* Links de retour */}
+        {/* Navigation links for quick creation flows */}
         {(modalState === 'rdv-rapide' || modalState === 'dossier-complet') && (
           <button
             type="button"
             onClick={handleReturnToInvitation}
-            className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
+            className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline inline-flex items-center gap-1 cursor-pointer"
           >
             ← Revenir au choix du mode
           </button>
         )}
 
-        {/* -------------------------- ÉTAT 1 : EXISTANT -------------------------- */}
+        {/* ─────────────────── ÉTAT 1 : RENDEZ-VOUS STANDARD ─────────────────── */}
         {modalState === 'existing' && (
-          <div className="space-y-4">
+          <div className="space-y-5">
+            {/* 1. Patient Section */}
             <div>
-              <label className={labelClass}>Patient</label>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className={sectionTitleClass}>Patient</h3>
+                {selectedPatient && (
+                  <span className="text-[11px] font-medium text-emerald-600">Patient sélectionné</span>
+                )}
+              </div>
               {!selectedPatient ? (
                 <div className="relative">
-                  <div className={`${inputClass} flex items-center gap-3 ${
-                    touched.searchQuery && errors.searchQuery ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : ''
-                  }`}>
-                    <User size={18} className="text-slate-500" />
+                  <div
+                    className={cn(
+                      inputClass,
+                      'flex items-center gap-3',
+                      touched.searchQuery && errors.searchQuery
+                        ? 'border-red-500 focus:border-red-500 focus:ring-red-100'
+                        : ''
+                    )}
+                  >
+                    <Search size={18} className="text-slate-400 flex-shrink-0" />
                     <input
                       type="text"
-                      placeholder="Rechercher..."
+                      placeholder="Rechercher par nom, prénom, téléphone..."
                       value={searchQuery}
                       onChange={(e) => handleSearchChange(e.target.value)}
                       onFocus={() => setShowDropdown(true)}
                       onBlur={() => {
-                        setTouched(prev => ({ ...prev, searchQuery: true }))
-                        setTimeout(() => setShowDropdown(false), 200)
+                        setTouched((prev) => ({ ...prev, searchQuery: true }))
+                        setTimeout(() => setShowDropdown(false), 220)
                       }}
-                      className="w-full bg-transparent outline-none"
+                      className="w-full bg-transparent outline-none text-[14px]"
                     />
                   </div>
+
                   {touched.searchQuery && errors.searchQuery && (
                     <p className="mt-1 text-xs font-medium text-red-600">{errors.searchQuery}</p>
                   )}
 
                   {/* Search Dropdown */}
                   {showDropdown && filteredPatients.length > 0 && (
-                    <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
-                      {filteredPatients.map(patient => (
+                    <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-y-auto rounded-[10px] border border-slate-200 bg-white shadow-xl py-1">
+                      {filteredPatients.map((patient) => (
                         <button
                           key={patient.id}
                           type="button"
                           onMouseDown={() => handleSelectPatient(patient)}
-                          className="flex w-full flex-col border-b border-slate-100 px-4 py-3 text-left transition-colors last:border-0 hover:bg-slate-50"
+                          className="flex w-full items-center justify-between border-b border-slate-100 px-3.5 py-2.5 text-left transition-colors last:border-0 hover:bg-slate-50 cursor-pointer"
                         >
-                          <span className="text-sm font-semibold text-slate-900">
-                            {patient.prenom} {patient.nom}
-                          </span>
-                          <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
-                            <span>{patient.telephone}</span>
-                            {patient.derniereVisite && (
-                              <>
-                                <span>•</span>
-                                <span>Dernière visite: {patient.derniereVisite}</span>
-                              </>
-                            )}
+                          <div>
+                            <span className="text-sm font-semibold text-slate-900">
+                              {patient.prenom} {patient.nom}
+                            </span>
+                            <div className="flex items-center gap-2 text-xs text-slate-500 font-medium mt-0.5">
+                              <span>{patient.telephone || 'Sans téléphone'}</span>
+                              {patient.cin && (
+                                <>
+                                  <span>•</span>
+                                  <span>CIN: {patient.cin}</span>
+                                </>
+                              )}
+                            </div>
                           </div>
+                          <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-[6px]">
+                            Choisir
+                          </span>
                         </button>
                       ))}
                     </div>
                   )}
                 </div>
               ) : (
-                <div className="flex items-center justify-between p-3 rounded-[10px] border border-slate-200 bg-slate-50">
+                /* Confirmed-State Card */
+                <div className="p-3 rounded-[10px] border border-blue-200/80 bg-blue-50/40 flex items-center justify-between transition-all">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-slate-200 flex items-center justify-center text-slate-500">
-                      <User size={18} />
+                    <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-sm shadow-xs flex-shrink-0">
+                      {patientInitials}
                     </div>
                     <div>
-                      <p className="font-semibold text-[14px] text-slate-900 leading-tight">
-                        {selectedPatient.prenom} {selectedPatient.nom}
-                      </p>
-                      <p className="text-[12px] font-medium text-slate-500 mt-0.5 flex items-center gap-1.5">
-                        <Phone size={11} /> {selectedPatient.telephone || 'Non renseigné'}
-                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-[14px] text-slate-900 leading-tight">
+                          {selectedPatient.prenom} {selectedPatient.nom}
+                        </span>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                      </div>
+                      <div className="text-[12px] font-medium text-slate-500 flex items-center gap-3 mt-0.5">
+                        <span className="flex items-center gap-1">
+                          <Phone size={11} className="text-slate-400" />
+                          {selectedPatient.telephone || 'Non renseigné'}
+                        </span>
+                        {selectedPatient.cin && (
+                          <span className="text-slate-400">• CIN: {selectedPatient.cin}</span>
+                        )}
+                      </div>
                     </div>
                   </div>
+
                   <button
                     type="button"
-                    onClick={() => {
-                      setSelectedPatient(null)
-                      setSearchQuery('')
-                    }}
-                    className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-colors"
+                    onClick={handleClearPatient}
+                    className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline px-2.5 py-1 rounded-[6px] hover:bg-blue-100/50 transition-colors cursor-pointer"
                   >
-                    <span className="text-xl leading-none -mt-0.5">×</span>
+                    Changer
                   </button>
                 </div>
               )}
             </div>
 
-            {/* Motif */}
-            <div>
-              <label className={labelClass}>Motif</label>
-              <MotifField
-                value={existingForm.motif}
-                onChange={(text) => setExistingForm(prev => ({ ...prev, motif: text }))}
-                onBlur={() => setTouched(prev => ({ ...prev, motif: true }))}
-              />
-              {touched.motif && errors.motif && (
-                <p className="mt-1 text-xs font-medium text-red-600">{errors.motif}</p>
+            {/* Appointment details */}
+            <section className="border-t border-slate-100 pt-4 space-y-4">
+              <div>
+                <h3 className={sectionTitleClass}>Choisir la consultation</h3>
+                <p className="mt-0.5 text-xs font-medium text-slate-500">
+                  La durée est appliquée automatiquement.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {availableTypes.map((type) => {
+                  const Icon = type.icon || Stethoscope
+                  const isSelected = existingForm.type.toLowerCase() === type.value.toLowerCase()
+
+                  return (
+                    <Button
+                      key={type.value}
+                      variant={isSelected ? 'accentOutline' : 'secondary'}
+                      aria-pressed={isSelected}
+                      onClick={() => handleTypeChange(type.value, type.dureeMinutes)}
+                      className={cn(
+                        'group grid w-full min-h-[62px] grid-cols-[2rem_minmax(0,1fr)] items-center justify-start gap-3 rounded-[10px] px-3 text-left whitespace-normal',
+                        isSelected
+                          ? 'border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-500/15 hover:bg-blue-100'
+                          : 'hover:border-blue-200'
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg',
+                          isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 group-hover:bg-blue-100 group-hover:text-blue-600'
+                        )}
+                      >
+                        <Icon size={16} />
+                      </span>
+                      <span className="min-w-0 self-center">
+                        <span className="block truncate text-xs font-bold">{type.label}</span>
+                        <span className={cn('mt-0.5 block text-[11px] font-medium', isSelected ? 'text-blue-600' : 'text-slate-400')}>
+                          {type.dureeMinutes} min
+                        </span>
+                      </span>
+                    </Button>
+                  )
+                })}
+              </div>
+            </section>
+
+            {/* 4. Smart Slot Suggestions Row */}
+            <section className="border-t border-slate-100 pt-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className={sectionTitleClass}>Créneau</h3>
+                <span className="text-[11px] font-medium text-slate-400">Date et heure</span>
+              </div>
+              <div className="hidden">
+              <div className="flex items-center justify-between">
+                <label className={labelClass + ' mb-0 flex items-center gap-1.5'}>
+                  <Sparkles size={13} className="text-blue-600" />
+                  Créneaux disponibles suggérés
+                </label>
+                {smartSlots.length > 0 && (
+                  <span className="text-[11px] font-medium text-slate-400">7 prochains jours</span>
+                )}
+              </div>
+
+              {/* Loading State: Skeleton Chips */}
+              {isSlotsLoading ? (
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div
+                      key={i}
+                      className="h-8 w-28 rounded-[10px] bg-slate-100 animate-pulse flex-shrink-0"
+                    />
+                  ))}
+                </div>
+              ) : smartSlots.length === 0 ? (
+                /* Empty State */
+                <div className="rounded-[10px] border border-amber-200/70 bg-amber-50/60 p-2.5 text-xs text-amber-800 flex items-center gap-2">
+                  <AlertTriangle size={15} className="text-amber-600 flex-shrink-0" />
+                  <span>
+                    Aucun créneau libre dans les 7 prochains jours. Choisissez une heure manuellement.
+                  </span>
+                </div>
+              ) : (
+                /* Horizontal Row of Tappable Chips */
+                <div className="flex items-center gap-2 overflow-x-auto pb-1.5 scrollbar-thin">
+                  {smartSlots.map((slot) => {
+                    const isSelected = selectedSlotKey === `${slot.date}_${slot.time}`
+                    return (
+                      <button
+                        key={`${slot.date}_${slot.time}`}
+                        type="button"
+                        onClick={() => handleSelectSlot(slot)}
+                        className={cn(
+                          'px-3 py-1.5 rounded-[10px] text-xs font-semibold border transition-all cursor-pointer whitespace-nowrap flex-shrink-0 select-none',
+                          isSelected
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-2xs ring-2 ring-blue-500/20'
+                            : 'bg-white border-slate-200 text-slate-700 hover:border-blue-300 hover:bg-blue-50/50 hover:text-blue-700'
+                        )}
+                      >
+                        {slot.label}
+                      </button>
+                    )
+                  })}
+                </div>
               )}
-            </div>
 
-            {/* Date + Heure + Type + Durée in 2x2 grid */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={labelClass}>Date</label>
-                <FrenchDateInput
-                  value={existingForm.date}
-                  onChange={(val) => setExistingForm(prev => ({ ...prev, date: val }))}
-                  onBlur={() => setTouched(prev => ({ ...prev, date: true }))}
-                  className={cn(inputClass, touched.date && errors.date ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : '')}
-                />
-                {touched.date && errors.date && (
-                  <p className="mt-1 text-xs font-medium text-red-600">{errors.date}</p>
+              {/* Conflict warning when duration changed and slot no longer fits */}
+              {slotConflictWarning && (
+                <div className="rounded-[10px] border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 flex items-center gap-1.5">
+                  <AlertTriangle size={14} className="text-amber-600 flex-shrink-0" />
+                  <span>{slotConflictWarning}</span>
+                </div>
+              )}
+              </div>
+
+            {/* 5. Date & Time Scheduling: Compact Confirmed Box OR Manual Fields */}
+              {selectedSlotKey && !showManualDateTime ? (
+              <div className="rounded-[10px] border border-slate-200 bg-slate-50/70 p-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-[8px] bg-blue-100 text-blue-600 flex items-center justify-center flex-shrink-0">
+                    <Calendar size={16} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-900">
+                      {isoToFrDate(existingForm.date)} à {existingForm.heure}
+                    </p>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Durée: {currentEffectiveDuration} min
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowManualDateTime(true)}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                >
+                  Choisir une autre heure
+                </button>
+              </div>
+              ) : (
+              <div className="space-y-2">
+                <div className="space-y-3">
+                  <div>
+                    <label className={labelClass}>Date</label>
+                    <FrenchDateInput
+                      value={existingForm.date}
+                      onChange={(val) => {
+                        setExistingForm((prev) => ({ ...prev, date: val }))
+                        setSelectedSlotKey(null)
+                      }}
+                      onBlur={() => setTouched((prev) => ({ ...prev, date: true }))}
+                      className={cn(
+                        inputClass,
+                        touched.date && errors.date
+                          ? 'border-red-500 focus:border-red-500 focus:ring-red-100'
+                          : ''
+                      )}
+                    />
+                    {touched.date && errors.date && (
+                      <p className="mt-1 text-xs font-medium text-red-600">{errors.date}</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className={labelClass}>Heure</label>
+                    <Select
+                      value={existingForm.heure}
+                      onChange={(val) => {
+                        setExistingForm((prev) => ({ ...prev, heure: val }))
+                        setSelectedSlotKey(null)
+                      }}
+                      options={timeOptionsFor(existingForm.heure, existingForm)}
+                      icon={Clock}
+                      placement="auto"
+                    />
+                    {touched.heure && errors.heure && (
+                      <p className="mt-1 text-xs font-medium text-red-600">{errors.heure}</p>
+                    )}
+                    {!loading && isSelectedTimeOccupied(existingForm) && (
+                      <p className="mt-1 flex items-center gap-1.5 text-xs font-medium text-rose-600">
+                        <AlertTriangle size={13} /> Ce créneau n’est pas disponible. Choisissez une autre heure.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {selectedSlotKey && (
+                  <div className="text-right">
+                    <button
+                      type="button"
+                      onClick={() => setShowManualDateTime(false)}
+                      className="text-xs font-medium text-slate-500 hover:text-slate-700 hover:underline cursor-pointer"
+                    >
+                      Masquer la saisie manuelle
+                    </button>
+                  </div>
                 )}
               </div>
-              <div>
-                <label className={labelClass}>Heure</label>
-                <Select
-                  value={existingForm.heure}
-                  onChange={(val) => setExistingForm(prev => ({ ...prev, heure: val }))}
-                  options={timeOptionsFor(existingForm.heure)}
-                  icon={Clock}
-                  placement="top"
-                />
-                {touched.heure && errors.heure && (
-                  <p className="mt-1 text-xs font-medium text-red-600">{errors.heure}</p>
-                )}
-              </div>
-              <div>
-                <label className={labelClass}>Type</label>
-                <Select
-                  value={existingForm.type}
-                  onChange={(val) => setExistingForm(prev => ({ ...prev, type: val, duree: null }))}
-                  options={typeOptionsFor(existingForm.type)}
-                  placement="top"
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Durée</label>
-                <Select
-                  value={String(effectiveDuree(existingForm))}
-                  onChange={(val) => setExistingForm(prev => ({ ...prev, duree: Number(val) }))}
-                  options={durationOptionsFor(effectiveDuree(existingForm))}
-                  icon={Clock}
-                  placement="top"
-                />
-              </div>
-            </div>
+              )}
+            </section>
 
+            {/* 6. Note pour le médecin (Optionnel) */}
+            <section className="border-t border-slate-100 pt-4">
+              <h3 className={sectionTitleClass + ' mb-2'}>Informations complémentaires</h3>
+              <label className={labelClass}>Note pour le médecin (optionnel)</label>
+              <textarea
+                value={existingForm.notes}
+                onChange={(e) => setExistingForm((prev) => ({ ...prev, notes: e.target.value }))}
+                placeholder="Ex: amène ses résultats d'analyses, première consultation, suivi post-opératoire..."
+                rows={2}
+                className="w-full resize-none rounded-[10px] border border-[#E5E7EB] bg-white px-3 py-2 text-[14px] font-medium text-[#111827] placeholder:text-[#9CA3AF] focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all hover:border-[#D1D5DB]"
+              />
+            </section>
           </div>
         )}
 
-        {/* -------------------------- ÉTAT 2 : INVITATION -------------------------- */}
+        {/* ─────────────────── ÉTAT 2 : INVITATION (AUCUN PATIENT) ─────────────────── */}
         {modalState === 'invitation' && (
           <div className="space-y-4">
             <div>
               <label className={labelClass}>Patient</label>
               <div className="relative">
                 <div className={`${inputClass} flex items-center gap-3`}>
-                  <User size={18} className="text-slate-500" />
+                  <Search size={18} className="text-slate-400" />
                   <input
                     type="text"
                     value={searchQuery}
@@ -1113,59 +1760,33 @@ function AppointmentFormModal({
                       setShowDropdown(true)
                     }}
                     onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
-                    className="w-full bg-transparent outline-none"
+                    className="w-full bg-transparent outline-none text-[14px]"
                   />
                 </div>
-                {showDropdown && filteredPatients.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
-                    {filteredPatients.map(patient => (
-                      <button
-                        key={patient.id}
-                        type="button"
-                        onMouseDown={() => handleSelectPatient(patient)}
-                        className="flex w-full flex-col border-b border-slate-100 px-4 py-3 text-left transition-colors last:border-0 hover:bg-slate-50"
-                      >
-                        <span className="text-sm font-semibold text-slate-900">
-                          {patient.prenom} {patient.nom}
-                        </span>
-                        <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
-                          <span>{patient.telephone}</span>
-                          {patient.derniereVisite && (
-                            <>
-                              <span>•</span>
-                              <span>Dernière visite: {patient.derniereVisite}</span>
-                            </>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             </div>
 
-            {/* Carte d'invitation (Aucun patient) */}
             <div className="py-6 flex flex-col items-center justify-center text-center">
               <p className="text-[15px] font-semibold text-slate-800 mb-1">
                 Aucun patient trouvé
               </p>
               <p className="text-sm text-slate-500 mb-6">
-                Aucun patient correspondant à votre recherche.
+                Aucun patient ne correspond à « {searchQuery} ».
               </p>
-              
+
               <div className="flex flex-col gap-3 w-full max-w-sm mx-auto">
                 <button
                   type="button"
                   onClick={handleDossierComplet}
-                  className="w-full flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors shadow-sm"
+                  className="w-full flex items-center justify-center gap-2 h-10 px-4 rounded-[10px] bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors shadow-sm cursor-pointer"
                 >
                   <UserPlus size={16} />
-                  Créer un nouveau patient
+                  Créer un nouveau patient (dossier)
                 </button>
                 <button
                   type="button"
                   onClick={handleRdvRapide}
-                  className="w-full flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-white border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
+                  className="w-full flex items-center justify-center gap-2 h-10 px-4 rounded-[10px] bg-white border border-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors cursor-pointer"
                 >
                   Créer un RDV rapide sans dossier
                 </button>
@@ -1174,21 +1795,29 @@ function AppointmentFormModal({
           </div>
         )}
 
-        {/* -------------------------- ÉTAT 3A : RDV RAPIDE -------------------------- */}
+        {/* ─────────────────── ÉTAT 3A : RDV RAPIDE ─────────────────── */}
         {modalState === 'rdv-rapide' && (
           <div className="space-y-4">
             <div>
               <label className={labelClass}>Nom & Prénom</label>
-              <div className={`${inputClass} flex items-center gap-3 ${
-                touched.nomPrenom && errors.nomPrenom ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : ''
-              }`}>
-                <User size={18} className="text-slate-500" />
+              <div
+                className={cn(
+                  inputClass,
+                  'flex items-center gap-3',
+                  touched.nomPrenom && errors.nomPrenom
+                    ? 'border-red-500 focus:border-red-500 focus:ring-red-100'
+                    : ''
+                )}
+              >
+                <User size={18} className="text-slate-400" />
                 <input
                   type="text"
                   value={rdvRapideForm.nomPrenom}
-                  onChange={(e) => setRdvRapideForm(prev => ({ ...prev, nomPrenom: e.target.value }))}
-                  onBlur={() => setTouched(prev => ({ ...prev, nomPrenom: true }))}
-                  className="w-full bg-transparent outline-none"
+                  onChange={(e) =>
+                    setRdvRapideForm((prev) => ({ ...prev, nomPrenom: e.target.value }))
+                  }
+                  onBlur={() => setTouched((prev) => ({ ...prev, nomPrenom: true }))}
+                  className="w-full bg-transparent outline-none text-[14px]"
                 />
               </div>
               {touched.nomPrenom && errors.nomPrenom && (
@@ -1198,17 +1827,28 @@ function AppointmentFormModal({
 
             <div>
               <label className={labelClass}>Téléphone</label>
-              <div className={`${inputClass} flex items-center gap-3 ${
-                touched.telephone && errors.telephone ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : ''
-              }`}>
-                <Phone size={18} className="text-slate-500" />
+              <div
+                className={cn(
+                  inputClass,
+                  'flex items-center gap-3',
+                  touched.telephone && errors.telephone
+                    ? 'border-red-500 focus:border-red-500 focus:ring-red-100'
+                    : ''
+                )}
+              >
+                <Phone size={18} className="text-slate-400" />
                 <input
                   type="text"
                   value={rdvRapideForm.telephone}
-                  onChange={(e) => setRdvRapideForm(prev => ({ ...prev, telephone: formatPhoneNumber(e.target.value) }))}
-                  onBlur={() => setTouched(prev => ({ ...prev, telephone: true }))}
+                  onChange={(e) =>
+                    setRdvRapideForm((prev) => ({
+                      ...prev,
+                      telephone: formatPhoneNumber(e.target.value),
+                    }))
+                  }
+                  onBlur={() => setTouched((prev) => ({ ...prev, telephone: true }))}
                   placeholder="06 12 34 56 78"
-                  className="w-full bg-transparent outline-none"
+                  className="w-full bg-transparent outline-none text-[14px]"
                 />
               </div>
               {touched.telephone && errors.telephone && (
@@ -1220,91 +1860,123 @@ function AppointmentFormModal({
               <label className={labelClass}>Motif</label>
               <MotifField
                 value={rdvRapideForm.motif}
-                onChange={(text) => setRdvRapideForm(prev => ({ ...prev, motif: text }))}
-                onBlur={() => setTouched(prev => ({ ...prev, motif: true }))}
+                onChange={(text) => setRdvRapideForm((prev) => ({ ...prev, motif: text }))}
+                onBlur={() => setTouched((prev) => ({ ...prev, motif: true }))}
+                error={touched.motif && errors.motif}
               />
               {touched.motif && errors.motif && (
                 <p className="mt-1 text-xs font-medium text-red-600">{errors.motif}</p>
               )}
             </div>
 
-            {/* Date + Heure + Type + Durée in 2x2 grid */}
+            <div>
+              <label className={labelClass}>Choisir la consultation</label>
+              <p className="mb-2 text-xs font-medium text-slate-500">La durée est appliquée automatiquement.</p>
+              <ConsultationTypeCards
+                availableTypes={availableTypes}
+                value={rdvRapideForm.type}
+                onChange={(val, dur) =>
+                  setRdvRapideForm((prev) => ({
+                    ...prev,
+                    type: val,
+                    duree: dur || findType(val)?.dureeMinutes || 30,
+                  }))
+                }
+              />
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelClass}>Date</label>
                 <FrenchDateInput
                   value={rdvRapideForm.date}
-                  onChange={(val) => setRdvRapideForm(prev => ({ ...prev, date: val }))}
-                  onBlur={() => setTouched(prev => ({ ...prev, date: true }))}
-                  className={cn(inputClass, touched.date && errors.date ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : '')}
+                  onChange={(val) => setRdvRapideForm((prev) => ({ ...prev, date: val }))}
+                  onBlur={() => setTouched((prev) => ({ ...prev, date: true }))}
+                  className={cn(
+                    inputClass,
+                    touched.date && errors.date
+                      ? 'border-red-500 focus:border-red-500 focus:ring-red-100'
+                      : ''
+                  )}
                 />
                 {touched.date && errors.date && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.date}</p>
                 )}
               </div>
+
               <div>
                 <label className={labelClass}>Heure</label>
                 <Select
                   value={rdvRapideForm.heure}
-                  onChange={(val) => setRdvRapideForm(prev => ({ ...prev, heure: val }))}
-                  options={timeOptionsFor(rdvRapideForm.heure)}
+                  onChange={(val) => setRdvRapideForm((prev) => ({ ...prev, heure: val }))}
+                  options={timeOptionsFor(rdvRapideForm.heure, rdvRapideForm)}
                   icon={Clock}
-                  placement="top"
+                  placement="auto"
                 />
                 {touched.heure && errors.heure && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.heure}</p>
                 )}
-              </div>
-              <div>
-                <label className={labelClass}>Type</label>
-                <Select
-                  value={rdvRapideForm.type}
-                  onChange={(val) => setRdvRapideForm(prev => ({ ...prev, type: val, duree: null }))}
-                  options={typeOptionsFor(rdvRapideForm.type)}
-                  placement="top"
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Durée</label>
-                <Select
-                  value={String(effectiveDuree(rdvRapideForm))}
-                  onChange={(val) => setRdvRapideForm(prev => ({ ...prev, duree: Number(val) }))}
-                  options={durationOptionsFor(effectiveDuree(rdvRapideForm))}
-                  icon={Clock}
-                  placement="top"
-                />
+                {!loading && isSelectedTimeOccupied(rdvRapideForm) && (
+                  <p className="mt-1 flex items-center gap-1.5 text-xs font-medium text-rose-600">
+                    <AlertTriangle size={13} /> Ce créneau n’est pas disponible. Choisissez une autre heure.
+                  </p>
+                )}
               </div>
             </div>
 
+            <div>
+              <label className={labelClass}>Note pour le médecin (optionnel)</label>
+              <textarea
+                value={rdvRapideForm.notes}
+                onChange={(e) => setRdvRapideForm((prev) => ({ ...prev, notes: e.target.value }))}
+                placeholder="Ex: amène ses résultats d'analyses..."
+                rows={2}
+                className="w-full resize-none rounded-[10px] border border-[#E5E7EB] bg-white px-3 py-2 text-[14px] font-medium text-[#111827] placeholder:text-[#9CA3AF] focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all hover:border-[#D1D5DB]"
+              />
+            </div>
           </div>
         )}
 
-        {/* -------------------------- ÉTAT 3B : DOSSIER COMPLET -------------------------- */}
+        {/* ─────────────────── ÉTAT 3B : DOSSIER COMPLET ─────────────────── */}
         {modalState === 'dossier-complet' && (
           <div className="space-y-[14px]">
-            {/* Nom & Prénom */}
             <div className="grid grid-cols-2 gap-[10px]">
               <div>
                 <label className={labelClass}>Nom</label>
                 <input
                   type="text"
                   value={dossierCompletForm.nom}
-                  onChange={(e) => setDossierCompletForm(prev => ({ ...prev, nom: e.target.value }))}
-                  onBlur={() => setTouched(prev => ({ ...prev, nom: true }))}
-                  className={cn(inputClass, touched.nom && errors.nom ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : '')}
+                  onChange={(e) =>
+                    setDossierCompletForm((prev) => ({ ...prev, nom: e.target.value }))
+                  }
+                  onBlur={() => setTouched((prev) => ({ ...prev, nom: true }))}
+                  className={cn(
+                    inputClass,
+                    touched.nom && errors.nom
+                      ? 'border-red-500 focus:border-red-500 focus:ring-red-100'
+                      : ''
+                  )}
                 />
                 {touched.nom && errors.nom && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.nom}</p>
                 )}
               </div>
+
               <div>
                 <label className={labelClass}>Prénom</label>
                 <input
                   type="text"
                   value={dossierCompletForm.prenom}
-                  onChange={(e) => setDossierCompletForm(prev => ({ ...prev, prenom: e.target.value }))}
-                  onBlur={() => setTouched(prev => ({ ...prev, prenom: true }))}
-                  className={cn(inputClass, touched.prenom && errors.prenom ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : '')}
+                  onChange={(e) =>
+                    setDossierCompletForm((prev) => ({ ...prev, prenom: e.target.value }))
+                  }
+                  onBlur={() => setTouched((prev) => ({ ...prev, prenom: true }))}
+                  className={cn(
+                    inputClass,
+                    touched.prenom && errors.prenom
+                      ? 'border-red-500 focus:border-red-500 focus:ring-red-100'
+                      : ''
+                  )}
                 />
                 {touched.prenom && errors.prenom && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.prenom}</p>
@@ -1312,19 +1984,29 @@ function AppointmentFormModal({
               </div>
             </div>
 
-            {/* Téléphone & CIN */}
             <div className="grid grid-cols-2 gap-[10px]">
               <div>
                 <label className={labelClass}>Téléphone</label>
-                <div className={`${inputClass} flex items-center gap-3 ${
-                  touched.telephone && errors.telephone ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : ''
-                }`}>
+                <div
+                  className={cn(
+                    inputClass,
+                    'flex items-center gap-3',
+                    touched.telephone && errors.telephone
+                      ? 'border-red-500 focus:border-red-500 focus:ring-red-100'
+                      : ''
+                  )}
+                >
                   <Phone size={18} className="text-[#9CA3AF] flex-shrink-0" />
                   <input
                     type="text"
                     value={dossierCompletForm.telephone}
-                    onChange={(e) => setDossierCompletForm(prev => ({ ...prev, telephone: formatPhoneNumber(e.target.value) }))}
-                    onBlur={() => setTouched(prev => ({ ...prev, telephone: true }))}
+                    onChange={(e) =>
+                      setDossierCompletForm((prev) => ({
+                        ...prev,
+                        telephone: formatPhoneNumber(e.target.value),
+                      }))
+                    }
+                    onBlur={() => setTouched((prev) => ({ ...prev, telephone: true }))}
                     placeholder="06 12 34 56 78"
                     className="w-full bg-transparent outline-none text-[14px]"
                   />
@@ -1333,52 +2015,57 @@ function AppointmentFormModal({
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.telephone}</p>
                 )}
               </div>
+
               <div>
                 <label className={labelClass}>CIN</label>
                 <input
                   type="text"
                   value={dossierCompletForm.cin}
-                  onChange={(e) => setDossierCompletForm(prev => ({ ...prev, cin: e.target.value }))}
+                  onChange={(e) =>
+                    setDossierCompletForm((prev) => ({ ...prev, cin: e.target.value }))
+                  }
                   placeholder="AB123456"
                   className={inputClass}
                 />
               </div>
             </div>
 
-            {/* Date de naissance & Sexe */}
             <div className="grid grid-cols-[1fr_1fr] gap-[10px]">
               <div>
                 <label className={labelClass}>Date de naissance</label>
                 <input
                   type="date"
                   value={dossierCompletForm.dateNaissance}
-                  onChange={(e) => setDossierCompletForm(prev => ({ ...prev, dateNaissance: e.target.value }))}
+                  onChange={(e) =>
+                    setDossierCompletForm((prev) => ({ ...prev, dateNaissance: e.target.value }))
+                  }
                   className={inputClass}
                 />
               </div>
+
               <div>
                 <label className={labelClass}>Sexe</label>
                 <div className="flex gap-[10px]" role="radiogroup" aria-label="Sexe du patient">
                   <button
                     type="button"
-                    onClick={() => setDossierCompletForm(prev => ({ ...prev, sexe: 'homme' }))}
+                    onClick={() => setDossierCompletForm((prev) => ({ ...prev, sexe: 'homme' }))}
                     className={cn(
-                      "flex-1 h-[44px] px-4 rounded-[10px] text-[14px] font-medium transition-all flex items-center justify-center",
+                      'flex-1 h-[44px] px-4 rounded-[10px] text-[14px] font-medium transition-all flex items-center justify-center cursor-pointer',
                       dossierCompletForm.sexe === 'homme'
-                        ? "bg-[#EFF6FF] border border-[#3B82F6] text-[#3B82F6] font-semibold"
-                        : "bg-white border border-[#E5E7EB] text-[#6B7280] hover:bg-[#F9FAFB] hover:border-[#D1D5DB]"
+                        ? 'bg-[#EFF6FF] border border-[#3B82F6] text-[#3B82F6] font-semibold'
+                        : 'bg-white border border-[#E5E7EB] text-[#6B7280] hover:bg-[#F9FAFB] hover:border-[#D1D5DB]'
                     )}
                   >
                     Homme
                   </button>
                   <button
                     type="button"
-                    onClick={() => setDossierCompletForm(prev => ({ ...prev, sexe: 'femme' }))}
+                    onClick={() => setDossierCompletForm((prev) => ({ ...prev, sexe: 'femme' }))}
                     className={cn(
-                      "flex-1 h-[44px] px-4 rounded-[10px] text-[14px] font-medium transition-all flex items-center justify-center",
+                      'flex-1 h-[44px] px-4 rounded-[10px] text-[14px] font-medium transition-all flex items-center justify-center cursor-pointer',
                       dossierCompletForm.sexe === 'femme'
-                        ? "bg-[#EFF6FF] border border-[#3B82F6] text-[#3B82F6] font-semibold"
-                        : "bg-white border border-[#E5E7EB] text-[#6B7280] hover:bg-[#F9FAFB] hover:border-[#D1D5DB]"
+                        ? 'bg-[#EFF6FF] border border-[#3B82F6] text-[#3B82F6] font-semibold'
+                        : 'bg-white border border-[#E5E7EB] text-[#6B7280] hover:bg-[#F9FAFB] hover:border-[#D1D5DB]'
                     )}
                   >
                     Femme
@@ -1387,90 +2074,113 @@ function AppointmentFormModal({
               </div>
             </div>
 
-            {/* Adresse */}
             <div>
               <label className={labelClass}>Adresse</label>
               <textarea
                 value={dossierCompletForm.adresse}
-                onChange={(e) => setDossierCompletForm(prev => ({ ...prev, adresse: e.target.value }))}
+                onChange={(e) =>
+                  setDossierCompletForm((prev) => ({ ...prev, adresse: e.target.value }))
+                }
                 placeholder="12 Rue des Lilas, Casablanca"
-                className={cn(inputClass, "h-[70px] py-3 resize-none")}
+                className={cn(inputClass, 'h-[65px] py-2.5 resize-none')}
               />
             </div>
 
-            {/* Mutuelle */}
             <div>
               <label className={labelClass}>Mutuelle</label>
               <Select
                 value={dossierCompletForm.mutuelle}
-                onChange={(val) => setDossierCompletForm(prev => ({ ...prev, mutuelle: val }))}
+                onChange={(val) =>
+                  setDossierCompletForm((prev) => ({ ...prev, mutuelle: val }))
+                }
                 options={mutuelleOptions}
                 icon={Shield}
                 placement="top"
               />
             </div>
 
-            {/* Motif du RDV */}
             <div>
               <label className={labelClass}>Motif du RDV</label>
               <MotifField
                 value={dossierCompletForm.motif}
-                onChange={(text) => setDossierCompletForm(prev => ({ ...prev, motif: text }))}
-                onBlur={() => setTouched(prev => ({ ...prev, motif: true }))}
+                onChange={(text) =>
+                  setDossierCompletForm((prev) => ({ ...prev, motif: text }))
+                }
+                onBlur={() => setTouched((prev) => ({ ...prev, motif: true }))}
+                error={touched.motif && errors.motif}
               />
               {touched.motif && errors.motif && (
                 <p className="mt-1 text-xs font-medium text-red-600">{errors.motif}</p>
               )}
             </div>
 
-            {/* Date + Heure + Type + Durée in 2x2 grid */}
+            <div>
+              <label className={labelClass}>Choisir la consultation</label>
+              <p className="mb-2 text-xs font-medium text-slate-500">La durée est appliquée automatiquement.</p>
+              <ConsultationTypeCards
+                availableTypes={availableTypes}
+                value={dossierCompletForm.type}
+                onChange={(val, dur) =>
+                  setDossierCompletForm((prev) => ({
+                    ...prev,
+                    type: val,
+                    duree: dur || findType(val)?.dureeMinutes || 30,
+                  }))
+                }
+              />
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelClass}>Date</label>
                 <FrenchDateInput
                   value={dossierCompletForm.date}
-                  onChange={(val) => setDossierCompletForm(prev => ({ ...prev, date: val }))}
-                  onBlur={() => setTouched(prev => ({ ...prev, date: true }))}
-                  className={cn(inputClass, touched.date && errors.date ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : '')}
+                  onChange={(val) => setDossierCompletForm((prev) => ({ ...prev, date: val }))}
+                  onBlur={() => setTouched((prev) => ({ ...prev, date: true }))}
+                  className={cn(
+                    inputClass,
+                    touched.date && errors.date
+                      ? 'border-red-500 focus:border-red-500 focus:ring-red-100'
+                      : ''
+                  )}
                 />
                 {touched.date && errors.date && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.date}</p>
                 )}
               </div>
+
               <div>
                 <label className={labelClass}>Heure</label>
                 <Select
                   value={dossierCompletForm.heure}
-                  onChange={(val) => setDossierCompletForm(prev => ({ ...prev, heure: val }))}
-                  options={timeOptionsFor(dossierCompletForm.heure)}
+                  onChange={(val) => setDossierCompletForm((prev) => ({ ...prev, heure: val }))}
+                  options={timeOptionsFor(dossierCompletForm.heure, dossierCompletForm)}
                   icon={Clock}
-                  placement="top"
+                  placement="auto"
                 />
                 {touched.heure && errors.heure && (
                   <p className="mt-1 text-xs font-medium text-red-600">{errors.heure}</p>
                 )}
-              </div>
-              <div>
-                <label className={labelClass}>Type</label>
-                <Select
-                  value={dossierCompletForm.type}
-                  onChange={(val) => setDossierCompletForm(prev => ({ ...prev, type: val, duree: null }))}
-                  options={typeOptionsFor(dossierCompletForm.type)}
-                  placement="top"
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Durée</label>
-                <Select
-                  value={String(effectiveDuree(dossierCompletForm))}
-                  onChange={(val) => setDossierCompletForm(prev => ({ ...prev, duree: Number(val) }))}
-                  options={durationOptionsFor(effectiveDuree(dossierCompletForm))}
-                  icon={Clock}
-                  placement="top"
-                />
+                {!loading && isSelectedTimeOccupied(dossierCompletForm) && (
+                  <p className="mt-1 flex items-center gap-1.5 text-xs font-medium text-rose-600">
+                    <AlertTriangle size={13} /> Ce créneau n’est pas disponible. Choisissez une autre heure.
+                  </p>
+                )}
               </div>
             </div>
 
+            <div>
+              <label className={labelClass}>Note pour le médecin (optionnel)</label>
+              <textarea
+                value={dossierCompletForm.notes}
+                onChange={(e) =>
+                  setDossierCompletForm((prev) => ({ ...prev, notes: e.target.value }))
+                }
+                placeholder="Ex: amène ses résultats d'analyses..."
+                rows={2}
+                className="w-full resize-none rounded-[10px] border border-[#E5E7EB] bg-white px-3 py-2 text-[14px] font-medium text-[#111827] placeholder:text-[#9CA3AF] focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all hover:border-[#D1D5DB]"
+              />
+            </div>
           </div>
         )}
       </div>

@@ -1052,6 +1052,15 @@ export default function ConsultationWorkspace() {
 
   const timer = useLiveTimer(visit?.consultation_start_at || visit?.consultation?.started_at || visit?.updated_at)
 
+  const returnToDashboard = useCallback(() => {
+    const destination = canonicalRole === 'doctor' ? '/dashboard?view=history' : '/dashboard'
+    if (typeof document.startViewTransition === 'function') {
+      document.startViewTransition(() => navigate(destination))
+      return
+    }
+    navigate(destination)
+  }, [canonicalRole, navigate])
+
   const handleTerminer = async () => {
     if (!visit || saving) return
 
@@ -1083,7 +1092,7 @@ export default function ConsultationWorkspace() {
         description: 'Le dossier a été transféré à l\'encaissement.',
         variant: 'success'
       })
-      navigate('/dashboard')
+      returnToDashboard()
     } catch (error) {
       console.warn('handleTerminer graceful fallback:', error)
       notify({
@@ -1091,7 +1100,7 @@ export default function ConsultationWorkspace() {
         description: 'Le dossier a été transféré à l\'encaissement.',
         variant: 'success'
       })
-      navigate('/dashboard')
+      returnToDashboard()
     } finally {
       setSaving(false)
     }

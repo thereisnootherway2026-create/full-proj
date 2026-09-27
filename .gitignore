@@ -3,6 +3,7 @@ dist/
 .env
 build-error.log
 build-error-cmd.txt
+*.log
 
 # local secrets (service-role key etc.) - never commit
 .env.local

@@ -372,7 +372,24 @@ const addDays = (dateStr, days) => {
 }
 const QUICK_FOLLOW = [['1 semaine', 7], ['2 semaines', 14], ['1 mois', 30], ['3 mois', 90]]
 
-export function FollowUpBlock({ date, notes, onDate, onNotes }) {
+// Shown once a follow-up date is set: completing the consultation then creates a task for the
+// secretariat (server trigger, migration 20260927000000). Checked by default.
+export function FollowUpReminderToggle({ date, checked, onChange, kind = 'controle' }) {
+  if (!date) return null
+  return (
+    <label className="mt-2 flex cursor-pointer items-start gap-2 text-[12.5px] font-medium text-slate-700">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 h-4 w-4 flex-shrink-0 rounded border-slate-300 accent-slate-900" />
+      <span>
+        Créer un rappel de suivi pour le secrétariat
+        <span className="block text-[11.5px] font-normal text-slate-500">
+          {kind === 'renouvellement' ? 'Tâche « Renouveler l\'ordonnance »' : 'Tâche « Planifier le contrôle »'} au {new Date(`${date}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}
+        </span>
+      </span>
+    </label>
+  )
+}
+
+export function FollowUpBlock({ date, notes, onDate, onNotes, reminder = true, onReminder }) {
   const today = clinicToday()
   return (
     <div>
@@ -386,6 +403,7 @@ export function FollowUpBlock({ date, notes, onDate, onNotes }) {
               <Chip key={label} selected={date === addDays(today, days)} onClick={() => onDate(addDays(today, days))}>{label}</Chip>
             ))}
           </div>
+          {onReminder && <FollowUpReminderToggle date={date} checked={reminder} onChange={onReminder} />}
         </div>
         <div>
           <label className="mb-1 block text-[12px] font-semibold text-slate-700" htmlFor="followup-notes">Consignes / suivi</label>
@@ -393,6 +411,28 @@ export function FollowUpBlock({ date, notes, onDate, onNotes }) {
             className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13.5px] text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300" />
         </div>
       </div>
+    </div>
+  )
+}
+
+const QUICK_RENEWAL = [['1 mois', 30], ['3 mois', 90], ['6 mois', 180]]
+
+// Lightweight flow (renewal): when the treatment should be renewed next — the same note fields
+// as "Prochain contrôle" (followUpDate / followUpReminder), titled as a renewal on the task.
+export function RenewalFollowUp({ date, onDate, reminder = true, onReminder }) {
+  const today = clinicToday()
+  return (
+    <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-[12px] font-semibold text-slate-700" htmlFor="renewal-date">Prochain renouvellement</label>
+        <div className="flex flex-wrap gap-1">
+          {QUICK_RENEWAL.map(([label, days]) => (
+            <Chip key={label} selected={date === addDays(today, days)} onClick={() => onDate(date === addDays(today, days) ? '' : addDays(today, days))}>{label}</Chip>
+          ))}
+        </div>
+        <input id="renewal-date" type="date" min={today} value={date} onChange={(e) => onDate(e.target.value)} className={`${inputCls} !h-8 !w-auto`} />
+      </div>
+      <FollowUpReminderToggle date={date} checked={reminder} onChange={onReminder} kind="renouvellement" />
     </div>
   )
 }

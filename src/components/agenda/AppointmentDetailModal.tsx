@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { X, Phone, ExternalLink, Loader2, RotateCcw, CalendarX, AlertCircle, UserX, Clock, Stethoscope, MoreHorizontal } from 'lucide-react'
 import { format, parse } from 'date-fns'
 import { fr } from 'date-fns/locale'
@@ -46,13 +47,22 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
-  appointment,
+  appointment: propAppointment,
   isOpen,
   onClose,
   onUpdateStatus,
   onEditTime,
   onReschedule,
 }) => {
+  const reduceMotion = useReducedMotion()
+  const lastAppointmentRef = useRef<Appointment | null>(propAppointment)
+  useEffect(() => {
+    if (propAppointment) {
+      lastAppointmentRef.current = propAppointment
+    }
+  }, [propAppointment])
+
+  const appointment = propAppointment || lastAppointmentRef.current
   const [loadingAction, setLoadingAction] = useState<AppointmentStatus | null>(null)
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const [cancelReason, setCancelReason] = useState('patient_cancelled')
@@ -128,18 +138,16 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
     }
   }, [isOpen])
 
-  if (!isOpen || !appointment) return null
-
-  const appointmentDateStr = `${appointment.date} ${appointment.time}`
-  const appointmentStart = parse(appointmentDateStr, 'yyyy-MM-dd HH:mm', new Date())
-  const appointmentEnd = new Date(appointmentStart.getTime() + (appointment.duration || 15) * 60000)
+  const appointmentDateStr = appointment ? `${appointment.date} ${appointment.time}` : ''
+  const appointmentStart = appointmentDateStr ? parse(appointmentDateStr, 'yyyy-MM-dd HH:mm', new Date()) : new Date()
+  const appointmentEnd = appointment ? new Date(appointmentStart.getTime() + (appointment.duration || 15) * 60000) : new Date()
   const now = new Date()
 
   const isPast = appointmentEnd < now
   const isOngoing = appointmentStart <= now && now < appointmentEnd
 
   const handleStatusChange = async (target: AppointmentStatus, metadata?: any) => {
-    if (!onUpdateStatus) return
+    if (!onUpdateStatus || !appointment) return
 
     setLoadingAction(target)
     // Close first: the parent applies the new status optimistically, so waiting for the
@@ -170,14 +178,32 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
   const isLoadingAny = loadingAction !== null
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-950/45 backdrop-blur-sm" onClick={() => !isLoadingAny && onClose()} />
+    <AnimatePresence>
+      {isOpen && appointment && (
+        <div key="detail-modal-root">
+          {/* Smooth backdrop at z-[120] (behind drawer at z-[125]) */}
+          <motion.div
+            key="detail-backdrop"
+            className="fixed inset-0 z-[120] bg-slate-950/45 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduceMotion ? 0.12 : 0.25, ease: 'easeOut' }}
+            onClick={() => !isLoadingAny && onClose()}
+          />
 
-      <div
-        ref={modalRef}
-        tabIndex={-1}
-        className="relative w-full max-w-lg outline-none rounded-xl border border-gray-200 bg-white shadow-2xl animate-in fade-in zoom-in duration-200 p-8"
-      >
+          {/* Modal Container at z-[130] */}
+          <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 pointer-events-none">
+            <motion.div
+              key="detail-dialog"
+              ref={modalRef}
+              tabIndex={-1}
+              className="relative w-full max-w-lg outline-none rounded-2xl border border-gray-200 bg-white shadow-2xl p-8 pointer-events-auto"
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 14 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 8 }}
+              transition={reduceMotion ? { duration: 0.12 } : { duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+            >
         {/* Header */}
         <div className="flex items-start justify-between mb-6">
           <div className="flex items-center gap-4">
@@ -389,7 +415,6 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    onClose()
                     onReschedule(appointment)
                   }}
                   className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 transition"
@@ -513,8 +538,11 @@ const AppointmentDetailModal: React.FC<AppointmentDetailModalProps> = ({
             </div>
           )}
         </div>
-      </div>
-    </div>,
+      </motion.div>
+    </div>
+  </div>
+)}
+</AnimatePresence>,
     document.body
   )
 }
