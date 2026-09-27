@@ -17,10 +17,11 @@ const inputCls = 'h-[44px] w-full rounded-[10px] border border-[#E5E7EB] bg-whit
 const labelCls = 'mb-1.5 block text-[12px] font-semibold uppercase tracking-wide text-slate-500';
 const parseAmount = (s: string) => Number(String(s).replace(/\s/g, '').replace(',', '.'));
 
-// An invoice can go into tiers payant while it is open, linked to its visit, has something the
-// patient has not paid yet, and carries no live dossier.
-export const isClaimEligible = (f: Facture, liveClaimInvoiceIds: Set<string>) =>
-  Boolean(f.visitId) && f.statut !== 'payee' && factureReste(f) > 0 && !liveClaimInvoiceIds.has(f.id);
+// An invoice can take a (further) organism claim while it is open, linked to its visit and the
+// patient still owes something on it. Several organisms can share one invoice (AMO + complementary);
+// the database refuses a total above the invoice.
+export const isClaimEligible = (f: Facture) =>
+  Boolean(f.visitId) && f.statut !== 'payee' && factureReste(f) > 0;
 
 // Opens a tiers-payant dossier FROM an invoice: the invoice switches to tiers payant, the organism's
 // share becomes a receivable, the patient keeps only their share. A dossier always has a real
@@ -39,12 +40,15 @@ export function CreateClaimModal({ open, onClose, facture: fixedFacture }: { ope
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
 
-  const liveInvoiceIds = useMemo(() => new Set(claims.filter(c => c.status !== 'CANCELLED').map(c => c.invoiceId)), [claims]);
-  const eligible = useMemo(() => factures.filter(f => isClaimEligible(f, liveInvoiceIds)), [factures, liveInvoiceIds]);
+  const eligible = useMemo(() => factures.filter(isClaimEligible), [factures]);
   const facture = fixedFacture ?? eligible.find(f => f.id === factureId) ?? null;
+  // claims already on this invoice: one original dossier per organism
+  const existing = useMemo(() => claims.filter(c => c.invoiceId === facture?.id && c.status !== 'CANCELLED'), [claims, facture?.id]);
+  const claimedOrgs = new Set(existing.filter(c => !c.previousClaimId).map(c => c.organizationId));
 
   const coveragesQ = usePatientCoveragesQuery(facture?.patientId);
-  const usable = (coveragesQ.data || []).filter(c => isCoverageUsable(c));
+  const active = (coveragesQ.data || []).filter(c => isCoverageUsable(c));
+  const usable = active.filter(c => !claimedOrgs.has(c.organizationId as string));
   const orgName = (id: string | null) => organizations.find(o => o.id === id)?.name || '—';
   const coverage = usable.find(c => c.id === coverageId) || null;
 
@@ -76,7 +80,7 @@ export function CreateClaimModal({ open, onClose, facture: fixedFacture }: { ope
   };
 
   const noInvoice = !fixedFacture && eligible.length === 0;
-  const fixedIneligible = fixedFacture && !isClaimEligible(fixedFacture, liveInvoiceIds);
+  const fixedIneligible = fixedFacture && !isClaimEligible(fixedFacture);
 
   return (
     <Modal open={open} onClose={onClose} title="Créer un dossier en tiers payant"
@@ -87,7 +91,7 @@ export function CreateClaimModal({ open, onClose, facture: fixedFacture }: { ope
         </p>
       ) : fixedIneligible ? (
         <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-500">
-          Cette facture ne peut plus passer en tiers payant (déjà réglée par le patient ou dossier existant).
+          Plus rien à répartir sur cette facture : elle est déjà réglée ou entièrement couverte.
         </p>
       ) : (
         <div className="space-y-4">
@@ -105,9 +109,17 @@ export function CreateClaimModal({ open, onClose, facture: fixedFacture }: { ope
             </div>
           )}
 
+          {facture && existing.length > 0 && (
+            <p className="text-xs text-slate-500">
+              Déjà en tiers payant : {existing.map(c => `${c.organizationName} ${dh(c.claimed)}`).join(' · ')}
+            </p>
+          )}
+
           {facture && (
             coveragesQ.isLoading ? (
               <p className="text-sm text-slate-400">Chargement de la couverture…</p>
+            ) : usable.length === 0 && active.length > 0 ? (
+              <p className="rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-600">Chaque couverture active du patient a déjà un dossier sur cette facture.</p>
             ) : usable.length === 0 ? (
               <div className="rounded-lg bg-amber-50 px-3 py-3 text-sm text-amber-800">
                 <p className="font-medium">Ce patient n'a pas de couverture active.</p>
@@ -132,8 +144,8 @@ export function CreateClaimModal({ open, onClose, facture: fixedFacture }: { ope
                 </div>
                 <div className="grid grid-cols-3 gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
                   <div><p className="text-[11px] font-semibold uppercase text-slate-400">Facture</p><p className="text-sm font-bold text-slate-900">{dh(facture.montant)}</p></div>
-                  <div><p className="text-[11px] font-semibold uppercase text-slate-400">Organisme</p><p className="text-sm font-bold text-blue-700">{dh(validAmount ? value : 0)}</p></div>
-                  <div><p className="text-[11px] font-semibold uppercase text-slate-400">Patient</p><p className="text-sm font-bold text-slate-900">{dh(facture.montant - (validAmount ? value : 0))}</p></div>
+                  <div><p className="text-[11px] font-semibold uppercase text-slate-400">Ce dossier</p><p className="text-sm font-bold text-blue-700">{dh(validAmount ? value : 0)}</p></div>
+                  <div><p className="text-[11px] font-semibold uppercase text-slate-400">Part patient</p><p className="text-sm font-bold text-slate-900">{dh(facture.montant - (facture.partOrganisme || 0) - (validAmount ? value : 0))}</p></div>
                 </div>
                 <div>
                   <label className={labelCls}>Note (optionnel)</label>

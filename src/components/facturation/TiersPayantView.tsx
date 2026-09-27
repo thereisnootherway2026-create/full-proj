@@ -11,7 +11,7 @@ import { dh, fmtDate, num } from './format';
 import { CreateClaimModal } from './CreateClaimModal';
 import { OrganizationsModal } from './OrganizationsModal';
 import {
-  AWAITING_SETTLEMENT_STATUSES, CLAIM_STATUS, OPEN_CLAIM_STATUSES, ORGANIZATION_TYPE_LABEL, RESOLUTION_LABEL,
+  AWAITING_SETTLEMENT_STATUSES, CLAIM_STATUS, COVERAGE_TYPE_LABEL, OPEN_CLAIM_STATUSES, ORGANIZATION_TYPE_LABEL, RESOLUTION_LABEL,
   canReceiveSettlement, claimOutstanding, unresolvedRejected, useClaimsQuery, useOrganizationsQuery, useSettlementsQuery,
 } from './tiersPayant';
 import type { Claim, ClaimStatus } from './tiersPayant';
@@ -27,12 +27,12 @@ const csvCell = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
 const money = (n: number) => n.toFixed(2).replace('.', ',');
 
 function exportClaims(claims: Claim[]) {
-  const headers = ['Organisme', 'Date', 'Patient', 'N° adhérent', 'Facture', 'Total facture', 'Montant demandé', 'Part patient', 'Reçu', 'Rejeté', 'Reste à recevoir', 'Statut', 'Référence', 'Motif du rejet', 'Traitement du rejet'];
+  const headers = ['Organisme', 'Couverture', 'Date', 'Patient', 'N° adhérent', 'Facture', 'Total facture', 'Montant demandé', 'Part patient à la création', 'Reçu', 'Rejeté', 'Reste à recevoir', 'Statut', 'Référence', 'Motif du rejet', 'Traitement du rejet'];
   const rows = claims.map(c => [
-    csvCell(c.organizationName), c.createdAt.split('T')[0], csvCell(c.patientNom), csvCell(c.membershipNumber), numeroFacture(c.invoiceId),
+    csvCell(c.organizationName), c.coverageType ? COVERAGE_TYPE_LABEL[c.coverageType] : '', c.createdAt.split('T')[0], csvCell(c.patientNom), csvCell(c.membershipNumber), numeroFacture(c.invoiceId),
     money(c.invoiceAmount), money(c.claimed), money(c.patientShare), money(c.received), money(c.rejected), money(claimOutstanding(c)),
     CLAIM_STATUS[c.status].label, csvCell(c.externalReference), csvCell(c.rejectionReason),
-    c.resolution ? RESOLUTION_LABEL[c.resolution] : (unresolvedRejected(c) > 0 ? 'À traiter' : ''),
+    c.rejections.map(r => `${money(r.amount)} ${r.resolution ? RESOLUTION_LABEL[r.resolution] : 'à traiter'}`).join(' / '),
   ].join(';'));
   const blob = new Blob(['﻿' + [headers.join(';'), ...rows].join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -226,7 +226,7 @@ export function TiersPayantView() {
               <thead>
                 <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
                   <th className="px-6 py-3 font-semibold">Patient</th>
-                  <th className="px-3 py-3 font-semibold">Organisme</th>
+                  <th className="px-3 py-3 font-semibold">Organisme · couverture</th>
                   <th className="px-3 py-3 font-semibold">Date</th>
                   <th className="px-3 py-3 text-right font-semibold">Demandé</th>
                   <th className="px-3 py-3 text-right font-semibold">Reçu</th>
@@ -244,7 +244,9 @@ export function TiersPayantView() {
                     </td>
                     <td className="px-3 py-3 text-slate-700">
                       {c.organizationName}
-                      {c.membershipNumber && <span className="block text-xs text-slate-400">N° {c.membershipNumber}</span>}
+                      <span className="block text-xs text-slate-400">
+                        {[c.coverageType && COVERAGE_TYPE_LABEL[c.coverageType], c.membershipNumber && `N° ${c.membershipNumber}`].filter(Boolean).join(' · ')}
+                      </span>
                     </td>
                     <td className="px-3 py-3 text-slate-600">{fmtDate(c.createdAt)}</td>
                     <td className="px-3 py-3 text-right font-semibold text-slate-900">{dh(c.claimed)}</td>

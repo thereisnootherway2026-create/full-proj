@@ -7,6 +7,7 @@ import { Card, Ring } from './ui';
 import { dh, num, pct, fmtMonthShort } from './format';
 import { Reveal } from './chartTheme';
 import { Wallet, CalendarDays, Timer } from 'lucide-react';
+import { useClaimsQuery } from './tiersPayant';
 
 // The analytical cards of "Détail avancé": panier moyen, ce mois-ci, recouvrement, délai moyen de
 // paiement. Data logic is unchanged from the former Aperçu cards.
@@ -15,6 +16,14 @@ export function DetailKpis() {
   const { data: factures = [], isLoading, isError, error, refetch } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   const totals = getTotals(filteredFactures);
+  const { data: claims = [] } = useClaimsQuery();
+  // Two collection rates, never blended: what patients paid of what they were billed, and what
+  // the cabinet collected (patients + organisms) of everything it billed.
+  const ids = new Set(filteredFactures.map(f => f.id));
+  const partPatientFacturee = filteredFactures.reduce((a, f) => a + f.montant - (f.partOrganisme || 0), 0);
+  const recuOrganismes = claims.filter(c => ids.has(c.invoiceId)).reduce((a, c) => a + c.received, 0);
+  const tauxPatients = partPatientFacturee > 0 ? totals.totalEncaisse / partPatientFacturee : 0;
+  const tauxGlobal = totals.caNet > 0 ? (totals.totalEncaisse + recuOrganismes) / totals.caNet : 0;
   const dsoInfo = getDSO(filteredFactures);
 
   if (isLoading) return <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"><Skeleton className="h-24"/><Skeleton className="h-24"/><Skeleton className="h-24"/><Skeleton className="h-24"/></div>;
@@ -65,24 +74,35 @@ export function DetailKpis() {
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Ce mois-ci · {currentMonthLabel}</p>
               <p className="text-xl font-bold tracking-tight text-slate-900 mt-1">{dh(caMois)} facturés</p>
-              <p className="text-sm text-slate-500 mt-0.5">{dh(encaisseMois)} encaissés</p>
+              <p className="text-sm text-slate-500 mt-0.5">{dh(encaisseMois)} encaissés auprès des patients</p>
               <p className="text-[11px] text-slate-400 mt-1">Objectif mensuel non configuré</p>
             </div>
           </div>
         </Card>
       </Reveal>
 
-      {/* Taux de recouvrement */}
+      {/* Taux d'encaissement: patients and global, each with its numerator and denominator */}
       <Reveal delay={0.1}>
-        <Card className="h-full flex items-center gap-4">
-          <div className="relative flex items-center justify-center">
-            <Ring progress={Math.round(totals.tauxRecouvrement * 100)} size={56} strokeWidth={5} colorClass="text-emerald-500" />
-            <span className="absolute text-xs font-bold text-slate-700">{pct(totals.tauxRecouvrement)}</span>
+        <Card className="h-full space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="relative flex items-center justify-center">
+              <Ring progress={Math.round(tauxPatients * 100)} size={44} strokeWidth={4} colorClass="text-emerald-500" />
+              <span className="absolute text-[10px] font-bold text-slate-700">{pct(tauxPatients)}</span>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Taux d'encaissement patients</p>
+              <p className="text-xs text-slate-500">{dh(totals.totalEncaisse)} payés sur {dh(partPatientFacturee)} de part patient</p>
+            </div>
           </div>
-          <div className="flex-1">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Recouvrement</p>
-            <p className="text-sm font-medium text-slate-900 mt-0.5">Période filtrée ({num(totals.count)} facture{totals.count > 1 ? 's' : ''})</p>
-            <p className="text-xs text-slate-500 mt-1">{dh(totals.totalEncaisse)} encaissés sur {dh(totals.caNet)}</p>
+          <div className="flex items-center gap-3">
+            <div className="relative flex items-center justify-center">
+              <Ring progress={Math.round(tauxGlobal * 100)} size={44} strokeWidth={4} colorClass="text-blue-500" />
+              <span className="absolute text-[10px] font-bold text-slate-700">{pct(tauxGlobal)}</span>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Taux d'encaissement global</p>
+              <p className="text-xs text-slate-500">{dh(totals.totalEncaisse + recuOrganismes)} (patients + organismes) sur {dh(totals.caNet)} facturés · {num(totals.count)} facture{totals.count > 1 ? 's' : ''}</p>
+            </div>
           </div>
         </Card>
       </Reveal>

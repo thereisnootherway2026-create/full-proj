@@ -115,7 +115,7 @@ export function ChartsGrid() {
                 <Tooltip content={<CustomTooltip />} />
                 <Legend verticalAlign="top" align="right" iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12, color: CHART.axis, paddingBottom: 8 }} />
                 <Area type="monotone" dataKey="ca" name="CA net" stroke={CHART.primary} strokeWidth={2.5} fillOpacity={1} fill="url(#fillCA)" {...motion.recharts} />
-                <Area type="monotone" dataKey="encaisse" name="Encaissé" stroke={CHART.secondary} strokeWidth={2.5} fillOpacity={1} fill="url(#fillEnc)" {...motion.recharts} />
+                <Area type="monotone" dataKey="encaisse" name="Encaissements patients" stroke={CHART.secondary} strokeWidth={2.5} fillOpacity={1} fill="url(#fillEnc)" {...motion.recharts} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -174,7 +174,7 @@ export function ChartsGrid() {
       {/* 3. Âge des créances: real zeros stay zeros */}
       <Reveal delay={0.15}>
         <Card className="h-full">
-          <SectionTitle title="Âge des créances" subtitle="Reste à encaisser par délai de retard" />
+          <SectionTitle title="Âge des créances patients" subtitle="Montants dus par les patients, par délai de retard" />
           <div className="h-64 mt-2 relative">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={ageingData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>

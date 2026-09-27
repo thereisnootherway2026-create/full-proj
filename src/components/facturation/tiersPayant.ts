@@ -12,9 +12,11 @@ import { useAppContext } from '../../context/AppContext';
 //   insurance_claims         the cabinet's receivable on the organism for a tiers-payant invoice.
 //   insurance_settlements    immutable ledger of the money each organism actually paid (never patient
 //                            money). claim.amount_received is a cached sum of it.
+//   insurance_claim_rejections  each amount an organism refused. It waits for its own explicit
+//                            resolution (re-file, put on the patient, waive). amount_rejected = sum.
 //
-// An amount the organism refuses is never dropped silently: it waits for an explicit resolution
-// (re-file, put on the patient's balance, or waive).
+// An invoice can carry several claims (one per organization, plus re-filings). Its third-party
+// share (payments.third_party_amount) is derived from them by the database.
 //
 // A patient who pays everything and gets reimbursed later is not a claim: nothing is owed to the
 // cabinet. No reimbursement rate is computed anywhere: the organism's share is entered by the user.
@@ -77,12 +79,22 @@ export interface Claim {
   notes: string;
   rejectionReason: string;
   previousClaimId: string | null;
-  resolution: RejectionResolution | null;
-  resolutionNote: string;
-  resolvedAt: string | null;
+  rejections: Rejection[];
   createdAt: string;
   submittedAt: string | null;
   receivedAt: string | null;
+}
+
+export interface Rejection {
+  id: string;
+  claimId: string;
+  amount: number;
+  reason: string;
+  rejectedAt: string;
+  resolution: RejectionResolution | null;
+  resolutionNote: string;
+  resolvedAt: string | null;
+  refiledClaimId: string | null;
 }
 
 export interface Settlement {
@@ -155,8 +167,15 @@ export const claimOutstanding = (c: Pick<Claim, 'claimed' | 'received' | 'reject
   Math.max(0, c.claimed - c.received - c.rejected);
 
 // A refused amount that still needs an explicit decision (re-file, patient, waive).
-export const unresolvedRejected = (c: Pick<Claim, 'rejected' | 'resolution' | 'status'>) =>
-  (c.status === 'REJECTED' || c.status === 'SETTLED') && c.rejected > 0 && !c.resolution ? c.rejected : 0;
+export const unresolvedRejected = (c: Pick<Claim, 'rejections'>) =>
+  c.rejections.filter(r => !r.resolution).reduce((a, r) => a + r.amount, 0);
+export const waivedAmount = (c: Pick<Claim, 'rejections'>) =>
+  c.rejections.filter(r => r.resolution === 'WAIVED').reduce((a, r) => a + r.amount, 0);
+// What the organism is (still) responsible for on this claim: the claimed amount minus refusals
+// moved to the patient or to a re-filed claim. Summed per invoice, it is the invoice's organism share.
+export const claimAllocation = (c: Pick<Claim, 'status' | 'claimed' | 'rejections'>) =>
+  c.status === 'CANCELLED' ? 0
+    : c.claimed - c.rejections.filter(r => r.resolution === 'REFILED' || r.resolution === 'TRANSFERRED_TO_PATIENT').reduce((a, r) => a + r.amount, 0);
 
 // Claims that can receive money from the organism.
 export const canReceiveSettlement = (c: Pick<Claim, 'status'>) => AWAITING_SETTLEMENT_STATUSES.includes(c.status);
@@ -167,7 +186,8 @@ export const isCoverageUsable = (c: Coverage, today = new Date().toISOString().s
   && (!c.validFrom || c.validFrom <= today) && (!c.validUntil || c.validUntil >= today);
 
 const ERRORS: Array<[RegExp, string]> = [
-  [/already exists for this invoice/i, 'Un dossier en tiers payant existe déjà pour cette facture.'],
+  [/already exists for this invoice and organization/i, 'Un dossier existe déjà pour cet organisme sur cette facture.'],
+  [/claims exceed what is still unpaid/i, 'Le total des dossiers dépasse le reste à payer de la facture.'],
   [/invoice is not open/i, "Cette facture n'est plus ouverte : le patient l'a déjà réglée ou elle est annulée."],
   [/not linked to a visit/i, "Cette facture n'est liée à aucune visite."],
   [/visit is cancelled/i, 'La visite de cette facture est annulée.'],
@@ -244,6 +264,23 @@ const fetchOrganizations = async (clinicId: string): Promise<Organization[]> => 
 };
 
 const fetchClaims = async (clinicId: string): Promise<Claim[]> => {
+  const { data: rej, error: rejError } = await supabase
+    .from('insurance_claim_rejections')
+    .select('id, claim_id, amount, reason, rejected_at, resolution, resolution_note, resolved_at, refiled_claim_id')
+    .eq('clinic_id', clinicId)
+    .order('rejected_at');
+  if (rejError) throw rejError;
+  const rejectionsByClaim = new Map<string, Rejection[]>();
+  (rej || []).forEach((r: any) => {
+    const list = rejectionsByClaim.get(r.claim_id) || [];
+    list.push({
+      id: r.id, claimId: r.claim_id, amount: Number(r.amount), reason: r.reason, rejectedAt: r.rejected_at,
+      resolution: r.resolution || null, resolutionNote: r.resolution_note || '', resolvedAt: r.resolved_at || null,
+      refiledClaimId: r.refiled_claim_id || null,
+    });
+    rejectionsByClaim.set(r.claim_id, list);
+  });
+
   const { data, error } = await supabase
     .from('insurance_claims')
     // embedded through the same-clinic (composite) foreign keys, named explicitly
@@ -275,9 +312,7 @@ const fetchClaims = async (clinicId: string): Promise<Claim[]> => {
     notes: r.notes || '',
     rejectionReason: r.rejection_reason || '',
     previousClaimId: r.previous_claim_id || null,
-    resolution: r.rejection_resolution || null,
-    resolutionNote: r.resolution_note || '',
-    resolvedAt: r.resolved_at || null,
+    rejections: rejectionsByClaim.get(r.id) || [],
     createdAt: r.created_at,
     submittedAt: r.submitted_at,
     receivedAt: r.received_at,
@@ -451,10 +486,11 @@ export const useRejectClaim = () => {
 export const useResolveRejection = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string; resolution: RejectionResolution; note?: string; coverageId?: string | null }) => {
-      if (v.resolution === 'REFILED') return rpc('refile_insurance_claim', { p_claim_id: v.id, p_coverage_id: v.coverageId ?? null, p_notes: v.note ?? null });
-      if (v.resolution === 'TRANSFERRED_TO_PATIENT') return rpc('transfer_rejection_to_patient', { p_claim_id: v.id, p_note: v.note ?? null });
-      return rpc('waive_rejected_amount', { p_claim_id: v.id, p_reason: v.note ?? '' });
+    // id = the rejection (one refused amount), not the claim
+    mutationFn: (v: { rejectionId: string; resolution: RejectionResolution; note?: string; coverageId?: string | null }) => {
+      if (v.resolution === 'REFILED') return rpc('refile_insurance_claim', { p_rejection_id: v.rejectionId, p_coverage_id: v.coverageId ?? null, p_notes: v.note ?? null });
+      if (v.resolution === 'TRANSFERRED_TO_PATIENT') return rpc('transfer_rejection_to_patient', { p_rejection_id: v.rejectionId, p_note: v.note ?? null });
+      return rpc('waive_rejected_amount', { p_rejection_id: v.rejectionId, p_reason: v.note ?? '' });
     },
     onSuccess: () => refreshAll(qc),
   });

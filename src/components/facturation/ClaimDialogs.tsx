@@ -11,7 +11,7 @@ import {
   canReceiveSettlement, claimOutstanding, isCoverageUsable, unresolvedRejected, useClaimStatus,
   useOrganizationsQuery, usePatientCoveragesQuery, useRecordSettlement, useRejectClaim, useResolveRejection,
 } from './tiersPayant';
-import type { Claim, ClaimStatus, RejectionResolution, Settlement, SettlementMethod } from './tiersPayant';
+import type { Claim, ClaimStatus, Rejection, RejectionResolution, Settlement, SettlementMethod } from './tiersPayant';
 
 const inputCls = 'h-[44px] w-full rounded-[10px] border border-[#E5E7EB] bg-white px-3 text-[14px] font-medium text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
 const labelCls = 'mb-1.5 block text-[12px] font-semibold uppercase tracking-wide text-slate-500';
@@ -195,7 +195,8 @@ const RESOLUTION_COPY: Record<RejectionResolution, { title: string; text: (amoun
   },
 };
 
-export function ResolveModal({ action, onClose }: { action: { claim: Claim; resolution: RejectionResolution } | null; onClose: () => void }) {
+// Resolves ONE refused amount (a claim can carry several, each decided on its own).
+export function ResolveModal({ action, onClose }: { action: { claim: Claim; rejection: Rejection; resolution: RejectionResolution } | null; onClose: () => void }) {
   const resolve = useResolveRejection();
   const { showToast } = useFacturationStore();
   const { data: organizations = [] } = useOrganizationsQuery();
@@ -205,14 +206,14 @@ export function ResolveModal({ action, onClose }: { action: { claim: Claim; reso
   const [error, setError] = useState('');
   const usable = useMemo(() => (coveragesQ.data || []).filter(c => isCoverageUsable(c)), [coveragesQ.data]);
 
-  useEffect(() => { setNote(''); setError(''); setCoverageId(''); }, [action?.claim.id, action?.resolution]);
+  useEffect(() => { setNote(''); setError(''); setCoverageId(''); }, [action?.rejection.id, action?.resolution]);
   useEffect(() => {
     if (!action || coverageId || usable.length === 0) return;
     setCoverageId((usable.find(c => c.id === action.claim.coverageId) || usable[0]).id);
   }, [usable, coverageId, action]);
 
   if (!action) return null;
-  const { claim, resolution } = action;
+  const { claim, rejection, resolution } = action;
   const copy = RESOLUTION_COPY[resolution];
   const orgName = (id: string | null) => organizations.find(o => o.id === id)?.name || '—';
 
@@ -220,17 +221,17 @@ export function ResolveModal({ action, onClose }: { action: { claim: Claim; reso
     if (resolution === 'WAIVED' && !note.trim()) return setError("Indiquez le motif de l'abandon.");
     if (resolution === 'REFILED' && !coverageId) return setError('Choisissez la couverture du patient.');
     try {
-      await resolve.mutateAsync({ id: claim.id, resolution, note, coverageId });
+      await resolve.mutateAsync({ rejectionId: rejection.id, resolution, note, coverageId });
       showToast({ REFILED: 'Nouveau dossier créé, à déposer.', TRANSFERRED_TO_PATIENT: 'Montant mis à la charge du patient.', WAIVED: 'Montant abandonné.' }[resolution]);
       onClose();
     } catch (e: any) { setError(e.message); }
   };
 
   return (
-    <Modal open onClose={onClose} title={copy.title} description={`${claim.patientNom} · ${claim.organizationName} · rejeté ${dh(claim.rejected, true)}`} width="max-w-md">
+    <Modal open onClose={onClose} title={copy.title} description={`${claim.patientNom} · ${claim.organizationName} · rejeté ${dh(rejection.amount, true)}`} width="max-w-md">
       <div className="space-y-3">
-        {claim.rejectionReason && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">Motif du rejet : {claim.rejectionReason}</p>}
-        <p className="text-sm text-slate-600">{copy.text(dh(claim.rejected, true))}</p>
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">Motif du rejet : {rejection.reason}</p>
+        <p className="text-sm text-slate-600">{copy.text(dh(rejection.amount, true))}</p>
         {resolution === 'REFILED' && (
           usable.length === 0 ? (
             <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">Ce patient n'a plus de couverture active : renseignez-la dans son dossier.</p>
@@ -311,7 +312,7 @@ export type ClaimAction =
   | { type: 'status'; kind: StatusActionKind }
   | { type: 'settle' }
   | { type: 'reject' }
-  | { type: 'resolve'; resolution: RejectionResolution };
+  | { type: 'resolve'; resolution: RejectionResolution; rejection: Rejection };
 
 // What can be done on a claim, in display order (the server enforces the same rules).
 export function claimActions(c: Claim): Array<{ action: ClaimAction; label: string; variant: string }> {
@@ -321,11 +322,6 @@ export function claimActions(c: Claim): Array<{ action: ClaimAction; label: stri
   if (c.status === 'READY') out.push({ action: { type: 'status', kind: 'submit' }, label: 'Déposer', variant: 'accentOutline' });
   if (c.status === 'SUBMITTED') out.push({ action: { type: 'status', kind: 'processing' }, label: 'En cours', variant: 'secondary' });
   if (canReceiveSettlement(c)) out.push({ action: { type: 'reject' }, label: 'Rejet', variant: 'secondary' });
-  if (unresolvedRejected(c) > 0) {
-    out.push({ action: { type: 'resolve', resolution: 'REFILED' }, label: 'Redéposer le dossier', variant: 'accentOutline' });
-    out.push({ action: { type: 'resolve', resolution: 'TRANSFERRED_TO_PATIENT' }, label: 'Mettre à la charge du patient', variant: 'secondary' });
-    out.push({ action: { type: 'resolve', resolution: 'WAIVED' }, label: 'Abandonner / exonérer', variant: 'secondary' });
-  }
   if (c.status === 'READY') out.push({ action: { type: 'status', kind: 'draft' }, label: 'Brouillon', variant: 'ghost' });
   if (['DRAFT', 'READY', 'SUBMITTED', 'PROCESSING'].includes(c.status) && c.received === 0 && c.rejected === 0) {
     out.push({ action: { type: 'status', kind: 'cancel' }, label: 'Annuler', variant: 'ghost' });
@@ -333,10 +329,14 @@ export function claimActions(c: Claim): Array<{ action: ClaimAction; label: stri
   return out;
 }
 
+// The three decisions for one refused amount, in the order a secretary reads them.
+export const RESOLUTION_ACTIONS: Array<{ resolution: RejectionResolution; label: string; variant: string }> = [
+  { resolution: 'REFILED', label: 'Redéposer', variant: 'accentOutline' },
+  { resolution: 'TRANSFERRED_TO_PATIENT', label: 'Mettre à la charge du patient', variant: 'secondary' },
+  { resolution: 'WAIVED', label: 'Abandonner / exonérer', variant: 'secondary' },
+];
+
 export function ResolutionBadge({ claim }: { claim: Claim }) {
-  if (claim.resolution) {
-    return <span className="inline-flex whitespace-nowrap rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">{RESOLUTION_LABEL[claim.resolution]}</span>;
-  }
   if (unresolvedRejected(claim) > 0) {
     return <span className="inline-flex whitespace-nowrap rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-200">Rejet à traiter</span>;
   }
@@ -350,7 +350,7 @@ export function ClaimDetailModal({ claim, claims, settlements, canEdit, onAction
   if (!claim) return null;
   const history = settlements.filter(s => s.claimId === claim.id).sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
   const previous = claim.previousClaimId ? claims.find(c => c.id === claim.previousClaimId) : null;
-  const next = claims.find(c => c.previousClaimId === claim.id);
+  const next = claims.filter(c => c.previousClaimId === claim.id);
   const actions = canEdit ? claimActions(claim) : [];
 
   return (
@@ -364,28 +364,44 @@ export function ClaimDetailModal({ claim, claims, settlements, canEdit, onAction
         </div>
         <ClaimFigures claim={claim} />
 
-        {claim.rejected > 0 && (
-          <div className="rounded-lg border border-red-100 bg-red-50/60 px-3 py-2 text-sm">
-            <p className="font-semibold text-red-700">Rejeté : {dh(claim.rejected, true)}</p>
-            {claim.rejectionReason && <p className="text-red-700">Motif : {claim.rejectionReason}</p>}
-            {claim.resolution && (
-              <p className="mt-1 text-slate-600">
-                {RESOLUTION_LABEL[claim.resolution]}{claim.resolvedAt ? ` le ${fmtDate(claim.resolvedAt)}` : ''}{claim.resolution !== 'REFILED' && claim.resolutionNote ? ` · ${claim.resolutionNote}` : ''}
-              </p>
-            )}
-          </div>
+        {claim.rejections.length > 0 && (
+          <section>
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Rejets</p>
+            <ul className="space-y-2">
+              {claim.rejections.map(r => (
+                <li key={r.id} className={cn('rounded-lg border px-3 py-2 text-sm', r.resolution ? 'border-slate-100 bg-slate-50' : 'border-red-100 bg-red-50/60')}>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className={r.resolution ? 'text-slate-700' : 'font-semibold text-red-700'}>{fmtDate(r.rejectedAt)} · {r.reason}</span>
+                    <span className={cn('shrink-0 font-semibold tabular-nums', r.resolution ? 'text-slate-700' : 'text-red-700')}>{dh(r.amount, true)}</span>
+                  </div>
+                  {r.resolution ? (
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {RESOLUTION_LABEL[r.resolution]}{r.resolvedAt ? ` le ${fmtDate(r.resolvedAt)}` : ''}{r.resolutionNote ? ` · ${r.resolutionNote}` : ''}
+                      {r.refiledClaimId && <> · <button type="button" className="font-semibold text-blue-600 hover:underline" onClick={() => onOpenClaim(r.refiledClaimId!)}>voir le nouveau dossier</button></>}
+                    </p>
+                  ) : canEdit ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {RESOLUTION_ACTIONS.map(a => (
+                        <Button key={a.resolution} variant={a.variant} size="xs" onClick={() => onAction(claim, { type: 'resolve', resolution: a.resolution, rejection: r })}>{a.label}</Button>
+                      ))}
+                    </div>
+                  ) : <p className="mt-0.5 text-xs font-semibold text-red-700">À traiter</p>}
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
 
-        {(previous || next) && (
+        {(previous || next.length > 0) && (
           <div className="space-y-1 text-sm">
             {previous && (
-              <p className="text-slate-600">Redépôt du dossier rejeté du {fmtDate(previous.createdAt)}{previous.rejectionReason ? ` (motif : ${previous.rejectionReason})` : ''}.{' '}
+              <p className="text-slate-600">Redépôt d'un rejet du dossier du {fmtDate(previous.createdAt)} ({previous.organizationName}).{' '}
                 <button type="button" className="font-semibold text-blue-600 hover:underline" onClick={() => onOpenClaim(previous.id)}>Voir</button></p>
             )}
-            {next && (
-              <p className="text-slate-600">Redéposé le {fmtDate(next.createdAt)} : <ClaimBadge status={next.status} />{' '}
-                <button type="button" className="font-semibold text-blue-600 hover:underline" onClick={() => onOpenClaim(next.id)}>Voir</button></p>
-            )}
+            {next.map(n => (
+              <p key={n.id} className="text-slate-600">Redéposé le {fmtDate(n.createdAt)} ({n.organizationName}, {dh(n.claimed, true)}) : <ClaimBadge status={n.status} />{' '}
+                <button type="button" className="font-semibold text-blue-600 hover:underline" onClick={() => onOpenClaim(n.id)}>Voir</button></p>
+            ))}
           </div>
         )}
 
@@ -427,7 +443,7 @@ export function ClaimActionDialogs({ current, onClose }: { current: { claim: Cla
     <>
       <SettlementModal claim={a?.type === 'settle' ? current!.claim : null} onClose={onClose} />
       <RejectModal claim={a?.type === 'reject' ? current!.claim : null} onClose={onClose} />
-      <ResolveModal action={a?.type === 'resolve' ? { claim: current!.claim, resolution: a.resolution } : null} onClose={onClose} />
+      <ResolveModal action={a?.type === 'resolve' ? { claim: current!.claim, rejection: a.rejection, resolution: a.resolution } : null} onClose={onClose} />
       <StatusModal action={a?.type === 'status' ? { kind: a.kind, claim: current!.claim } : null} onClose={onClose} />
     </>
   );
