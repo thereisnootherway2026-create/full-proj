@@ -8,3 +8,8 @@ build-error-cmd.txt
 # local secrets (service-role key etc.) - never commit
 .env.local
 .env*.local
+
+# WhatsApp Web local session files
+.wwebjs_auth/
+.wwebjs_cache/
+

@@ -250,3 +250,29 @@ export interface ClinicalNote {
   is_active: boolean
   created_at: string
 }
+
+export type WhatsAppRequestType = 'booking' | 'reclamation' | 'general'
+export type WhatsAppInboxStatus = 'pending' | 'resolved' | 'confirmed' | 'rejected'
+
+export interface WhatsAppInboxItem {
+  id: string
+  patient_phone: string
+  patient_name?: string | null
+  patient_motif?: string | null
+  request_type: WhatsAppRequestType
+  raw_message: string
+  status: WhatsAppInboxStatus
+  extracted_details?: {
+    extractedSlot?: string | null
+    parsedDate?: string | null
+    parsedTime?: string | null
+    patientMotif?: string | null
+    aiGeneratedReply?: string | null
+    receivedAt?: string | null
+    [key: string]: any
+  } | null
+  created_at: string
+  resolved_at?: string | null
+  resolved_by?: string | null
+}
+

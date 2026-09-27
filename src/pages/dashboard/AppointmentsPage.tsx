@@ -64,6 +64,7 @@ type AppointmentMeta = {
   patientName?: string
   phone?: string
   type?: string
+  source?: string
 }
 
 const META_PREFIX = '__AGENDA_META__'
@@ -138,9 +139,11 @@ const mapAppointmentStatus = (rdv: DailyRdv, meta: AppointmentMeta): Appointment
   if (s === 'absent' || s === 'no_show') return 'ABSENT'
   if (s === 'arrive' || s === 'en_consultation') return 'ARRIVE'
   if (s === 'termine' || s === 'paye' || s === 'credit' || s === 'completed') return 'TERMINE'
+  // Inbox approvals predate the agenda metadata and may still carry this legacy note.
+  if (s === 'confirme' && String(rdv.notes || '').includes('Pris via WhatsApp Bot Inbox')) return 'CONFIRME'
   // rdv.status 'confirme' is the DB's default "scheduled" state for every new RDV, not a real
   // confirmation — only the explicit confirm action (stored in the notes meta) counts.
-  if (meta.confirmationState === 'CONFIRME' || meta.confirmedAt) return 'CONFIRME'
+  if (meta.confirmationState === 'CONFIRME' || meta.confirmedAt || meta.source === 'whatsapp_inbox') return 'CONFIRME'
   return 'PLANIFIE'
 }
 
@@ -429,6 +432,16 @@ const AppointmentsPage: React.FC = () => {
 
   // Use real data directly
   const dailyRdvs = dailyRdvsRaw || []
+
+  useEffect(() => {
+    if (dailyRdvsRaw && dailyRdvsRaw.length > 0) {
+      fetch('http://localhost:3001/api/appointments/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appointments: dailyRdvsRaw }),
+      }).catch(() => {})
+    }
+  }, [dailyRdvsRaw])
 
   const agendaAppointments = useMemo<AgendaCalendarAppointmentInput[]>(() => {
     return dailyRdvs

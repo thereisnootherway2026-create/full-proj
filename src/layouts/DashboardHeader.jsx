@@ -1,8 +1,10 @@
-import { Bell, Search, User, Settings, LogOut, Menu, Loader2, Calendar, Stethoscope } from 'lucide-react'
+import { Bell, Search, User, Settings, LogOut, Menu, Loader2, Calendar, Stethoscope, MessageSquare } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, useScroll, useTransform } from 'framer-motion'
 import { useAppContext } from '../context/AppContext'
+import { useWhatsAppInbox } from '../lib/useWhatsAppInbox'
+import WhatsAppInboxModal from '../components/dashboard/WhatsAppInboxModal'
 
 // The page background everywhere is bg-gray-50 (#f9fafb) — the header
 // starts as a distinct white bar and smoothly interpolates into that same
@@ -59,7 +61,11 @@ function DashboardHeader({ onMenuClick, search, setSearch, searchResults, search
     setIsOpen(false)
   }
 
+  const { items: inboxItems, loading: inboxLoading, unreadCount, resolveItem, refetch: refetchInbox } = useWhatsAppInbox()
+  const [showInboxModal, setShowInboxModal] = useState(false)
+
   return (
+    <>
     <motion.header
       style={{ backgroundColor, borderBottomColor: borderColor, boxShadow }}
       className="sticky top-0 z-50 flex h-[64px] items-center justify-between border-b px-6 py-2"
@@ -89,7 +95,23 @@ function DashboardHeader({ onMenuClick, search, setSearch, searchResults, search
         )}
       </div>
 
-      <div className="flex shrink-0 items-center justify-end gap-6">
+      <div className="flex shrink-0 items-center justify-end gap-3 sm:gap-4">
+        {/* WhatsApp Inbox Button */}
+        <button
+          type="button"
+          onClick={() => setShowInboxModal(true)}
+          title="Boîte de Réception WhatsApp"
+          className="relative inline-flex items-center gap-2 h-9 px-3 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold transition-all border border-emerald-200 active:scale-95 shadow-sm"
+        >
+          <MessageSquare className="h-4 w-4 text-emerald-600" />
+          <span className="hidden sm:inline">WhatsApp Inbox</span>
+          {unreadCount > 0 && (
+            <span className="inline-flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full text-[10px] font-extrabold bg-emerald-600 text-white animate-pulse">
+              {unreadCount}
+            </span>
+          )}
+        </button>
+
         <button type="button" className="relative inline-flex h-9 w-9 items-center justify-center rounded-full bg-[#f3f4f6] text-slate-600">
           <Bell className="h-5 w-5" />
           <span className="absolute top-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-white bg-red-500" />
@@ -114,6 +136,17 @@ function DashboardHeader({ onMenuClick, search, setSearch, searchResults, search
         </div>
       </div>
     </motion.header>
+
+    {/* WhatsApp Inbox Realtime Modal */}
+    <WhatsAppInboxModal
+      open={showInboxModal}
+      onClose={() => setShowInboxModal(false)}
+      items={inboxItems}
+      loading={inboxLoading}
+      onResolve={resolveItem}
+      onRefetch={refetchInbox}
+    />
+    </>
   )
 }
 

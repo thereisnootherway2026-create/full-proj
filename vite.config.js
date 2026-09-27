@@ -9,4 +9,9 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
-})
+  server: {
+    watch: {
+      ignored: ['**/.wwebjs_auth/**', '**/.wwebjs_cache/**'],
+    },
+  },
+})

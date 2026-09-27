@@ -100,6 +100,15 @@ function DashboardLayout() {
         allRdvRef.current = rRes.data || []
         allConsultRef.current = cRes.data || []
         cacheLoadedRef.current = true
+
+        // Automatically sync appointments with the local WhatsApp Bot Backend for live availability
+        if (rRes.data && rRes.data.length > 0) {
+          fetch('http://localhost:3001/api/appointments/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ appointments: rRes.data }),
+          }).catch(() => {})
+        }
       } catch (err) {
         console.error('Search cache load error:', err)
       }

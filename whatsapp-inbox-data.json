@@ -1,0 +1,159 @@
+[
+  {
+    "id": "wb_1790467667253_33bj4h",
+    "patient_phone": "212652116635",
+    "patient_name": "Othmane touggani",
+    "patient_motif": "Suivi",
+    "request_type": "booking",
+    "raw_message": "[Message purgé pour confidentialité CNDP]",
+    "status": "confirmed",
+    "extracted_details": {
+      "extractedSlot": "Lundi 15 Février à 11h30",
+      "parsedDate": "2027-02-15",
+      "parsedTime": "11:30",
+      "rawSlotInput": "Le lundi matin , le 15 à 11h:30min",
+      "patientMotif": "Suivi",
+      "receivedAt": "2026-09-27T00:07:47.253Z"
+    },
+    "created_at": "2026-09-27T00:07:47.253Z",
+    "resolved_at": "2026-09-27T00:08:14.730Z",
+    "resolved_by": null
+  },
+  {
+    "id": "wb_1790465602141_c0ux2m",
+    "patient_phone": "188321548484777",
+    "patient_name": "Yayayah Suzy",
+    "patient_motif": "Consultation",
+    "request_type": "booking",
+    "raw_message": "[Message purgé pour confidentialité CNDP]",
+    "status": "confirmed",
+    "extracted_details": {
+      "extractedSlot": "Lundi 15 Février 2027 à 15h00",
+      "parsedDate": "2027-02-15",
+      "parsedTime": "15:00",
+      "rawSlotInput": "Lundi 15 à 15h",
+      "patientMotif": "Consultation",
+      "receivedAt": "2026-09-26T23:33:22.141Z"
+    },
+    "created_at": "2026-09-26T23:33:22.141Z",
+    "resolved_at": "2026-09-26T23:34:14.801Z",
+    "resolved_by": null
+  },
+  {
+    "id": "wb_1790465269372_2aa8on",
+    "patient_phone": "99097830809620",
+    "patient_name": "Jarvis bhhhhh",
+    "patient_motif": "Ewa c quoi ce",
+    "request_type": "booking",
+    "raw_message": "[Message purgé pour confidentialité CNDP]",
+    "status": "rejected",
+    "extracted_details": {
+      "extractedSlot": "Wyd",
+      "parsedDate": null,
+      "parsedTime": null,
+      "rawSlotInput": "Wyd",
+      "patientMotif": "Ewa c quoi ce",
+      "receivedAt": "2026-09-26T23:27:49.372Z"
+    },
+    "created_at": "2026-09-26T23:27:49.372Z",
+    "resolved_at": "2026-09-26T23:33:54.048Z",
+    "resolved_by": null
+  },
+  {
+    "id": "wb_1790462156844_hxijty",
+    "patient_phone": "188321548484777",
+    "patient_name": "Tata bababab",
+    "patient_motif": "Consultation",
+    "request_type": "booking",
+    "raw_message": "[Message purgé pour confidentialité CNDP]",
+    "status": "confirmed",
+    "extracted_details": {
+      "extractedSlot": "Lundi 15 Février 2027 à 15h00",
+      "parsedDate": "2027-02-15",
+      "parsedTime": "15:00",
+      "rawSlotInput": "Lundi 15 à 15h",
+      "patientMotif": "Consultation",
+      "receivedAt": "2026-09-26T22:35:56.844Z"
+    },
+    "created_at": "2026-09-26T22:35:56.844Z",
+    "resolved_at": "2026-09-26T22:36:39.645Z",
+    "resolved_by": null
+  },
+  {
+    "id": "wb_1790462077851_bddwyt",
+    "patient_phone": "99097830809620",
+    "patient_name": "M waiting",
+    "patient_motif": "Ewa sf chukraan",
+    "request_type": "booking",
+    "raw_message": "[Message purgé pour confidentialité CNDP]",
+    "status": "rejected",
+    "extracted_details": {
+      "extractedSlot": "Db",
+      "parsedDate": null,
+      "parsedTime": null,
+      "rawSlotInput": "Db",
+      "patientMotif": "Ewa sf chukraan",
+      "receivedAt": "2026-09-26T22:34:37.851Z"
+    },
+    "created_at": "2026-09-26T22:34:37.851Z",
+    "resolved_at": "2026-09-26T22:35:03.409Z",
+    "resolved_by": null
+  },
+  {
+    "id": "wb_1790462055457_hsqk2l",
+    "patient_phone": "188321548484777",
+    "patient_name": "Othmane touggani",
+    "patient_motif": "Consultation",
+    "request_type": "booking",
+    "raw_message": "[Message purgé pour confidentialité CNDP]",
+    "status": "rejected",
+    "extracted_details": {
+      "extractedSlot": "Mardi 18 Mai 2027 à 12h00",
+      "parsedDate": "2027-05-18",
+      "parsedTime": "12:00",
+      "rawSlotInput": "Mardi matin le 18 à 12h",
+      "patientMotif": "Consultation",
+      "receivedAt": "2026-09-26T22:34:15.457Z"
+    },
+    "created_at": "2026-09-26T22:34:15.457Z",
+    "resolved_at": "2026-09-26T22:34:39.946Z",
+    "resolved_by": null
+  },
+  {
+    "id": "wb_1790461952098_wqg6vn",
+    "patient_phone": "99097830809620",
+    "patient_name": "Asap",
+    "patient_motif": "Mhm db db",
+    "request_type": "booking",
+    "raw_message": "[Message purgé pour confidentialité CNDP]",
+    "status": "rejected",
+    "extracted_details": {
+      "extractedSlot": "",
+      "parsedDate": null,
+      "parsedTime": null,
+      "rawSlotInput": "",
+      "patientMotif": "Mhm db db",
+      "receivedAt": "2026-09-26T22:32:32.098Z"
+    },
+    "created_at": "2026-09-26T22:32:32.098Z",
+    "resolved_at": "2026-09-26T22:34:42.588Z",
+    "resolved_by": null
+  },
+  {
+    "id": "wb_initial_1790459611768",
+    "patient_phone": "188321548484777",
+    "patient_name": "Patient WhatsApp",
+    "patient_motif": "Consultation médicale",
+    "request_type": "booking",
+    "raw_message": "[Message purgé pour confidentialité CNDP]",
+    "status": "confirmed",
+    "extracted_details": {
+      "extractedSlot": "Lundi matin",
+      "aiGeneratedReply": "Votre demande a été transmise au secrétariat. Vous recevrez une confirmation sous peu.",
+      "receivedAt": "2026-09-26T21:54:00.000Z"
+    },
+    "created_at": "2026-09-26T21:54:00.000Z",
+    "resolved_at": "2026-09-26T22:15:15.965Z",
+    "resolved_by": null
+  }
+]
