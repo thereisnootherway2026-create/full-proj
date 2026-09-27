@@ -4,7 +4,8 @@ import { useFacturesQuery } from './queries';
 import { filterFactures, getDebiteurs } from './selectors';
 import { Card, SectionTitle, Skeleton, ErrorState, StatutBadge } from './ui';
 import { dh, fmtDate, num } from './format';
-import { Facture, factureReste } from './data';
+import { Facture, factureReste, inconsistentFactures } from './data';
+import { ReconciliationWarning } from './ui';
 import { ChevronDown, ChevronUp, CreditCard } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { EncaisserModal } from './EncaisserModal';
@@ -14,7 +15,9 @@ export function DebiteursView() {
   const { data: factures = [], isLoading, isError, error, refetch } = useFacturesQuery();
   // Patient debt only: factureReste excludes the share an organism owes in tiers payant, which is
   // followed in the Tiers payant tab.
-  const debiteurs = getDebiteurs(filterFactures(factures, filters));
+  const scoped = filterFactures(factures, filters);
+  const inconsistent = inconsistentFactures(scoped);
+  const debiteurs = getDebiteurs(scoped.filter(f => !f.fin || f.fin.reconciled));
 
   const [expandedPatient, setExpandedPatient] = useState<string | null>(null);
   const [encaisserFacture, setEncaisserFacture] = useState<Facture | null>(null);
@@ -41,6 +44,8 @@ export function DebiteursView() {
 
   return (
     <div className="space-y-6 pb-12">
+
+      <ReconciliationWarning count={inconsistent.length} />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="bg-red-50/50 border-red-100">

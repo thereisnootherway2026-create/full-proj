@@ -7,7 +7,6 @@ import { Card, Ring } from './ui';
 import { dh, num, pct, fmtMonthShort } from './format';
 import { Reveal } from './chartTheme';
 import { Wallet, CalendarDays, Timer } from 'lucide-react';
-import { useClaimsQuery } from './tiersPayant';
 
 // The analytical cards of "Détail avancé": panier moyen, ce mois-ci, recouvrement, délai moyen de
 // paiement. Data logic is unchanged from the former Aperçu cards.
@@ -16,12 +15,11 @@ export function DetailKpis() {
   const { data: factures = [], isLoading, isError, error, refetch } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   const totals = getTotals(filteredFactures);
-  const { data: claims = [] } = useClaimsQuery();
   // Two collection rates, never blended: what patients paid of what they were billed, and what
-  // the cabinet collected (patients + organisms) of everything it billed.
-  const ids = new Set(filteredFactures.map(f => f.id));
-  const partPatientFacturee = filteredFactures.reduce((a, f) => a + f.montant - (f.partOrganisme || 0), 0);
-  const recuOrganismes = claims.filter(c => ids.has(c.invoiceId)).reduce((a, c) => a + c.received, 0);
+  // the cabinet collected (patients + organisms) of everything it billed. Organism figures come
+  // from the server's reconciliation (Facture.fin).
+  const partPatientFacturee = filteredFactures.reduce((a, f) => a + f.montant - (f.fin?.organismShare ?? f.partOrganisme ?? 0), 0);
+  const recuOrganismes = filteredFactures.reduce((a, f) => a + (f.fin?.organismReceived || 0), 0);
   const tauxPatients = partPatientFacturee > 0 ? totals.totalEncaisse / partPatientFacturee : 0;
   const tauxGlobal = totals.caNet > 0 ? (totals.totalEncaisse + recuOrganismes) / totals.caNet : 0;
   const dsoInfo = getDSO(filteredFactures);

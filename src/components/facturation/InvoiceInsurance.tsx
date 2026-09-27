@@ -1,6 +1,6 @@
 import Button from '../common/Button';
 import { dh } from './format';
-import { factureReste } from './data';
+import { factureReste, inconsistentFactures } from './data';
 import type { Facture } from './data';
 import { cn } from '../../lib/utils';
 import { ClaimBadge } from './ClaimDialogs';
@@ -30,19 +30,29 @@ export function InvoiceInsurance({ facture, canEdit, onOpenClaim, onAction, onCr
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const active = coverages.filter(c => isCoverageUsable(c));
   const orgName = (id: string | null) => organizations.find(o => o.id === id)?.name || '—';
-  const partOrganisme = facture.partOrganisme || 0;
+  // the split comes from the server's reconciliation of this invoice
+  const partOrganisme = facture.fin?.organismShare ?? facture.partOrganisme ?? 0;
   const partPatient = facture.montant - partOrganisme;
-  const canAddClaim = canEdit && Boolean(facture.visitId) && factureReste(facture) > 0 && active.length > 0;
+  const inconsistent = inconsistentFactures([facture]).length > 0;
+  // no new operation on an invoice whose figures do not reconcile
+  const canAddClaim = canEdit && !inconsistent && Boolean(facture.visitId) && factureReste(facture) > 0 && active.length > 0;
+
 
   return (
     <section>
       <p className={cn(LABEL, 'mb-1.5')}>Assurance</p>
 
+      {inconsistent ? (
+        <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[13px] font-medium text-red-700">
+          Montants incohérents sur cette facture : à vérifier avant toute opération.
+        </p>
+      ) : (
       <div className="grid grid-cols-3 gap-2 rounded-xl bg-slate-50 px-3 py-2 text-center">
         <div><p className="text-[11px] text-slate-400">Total facture</p><p className="text-[13.5px] font-bold tabular-nums text-slate-900">{dh(facture.montant)}</p></div>
         <div><p className="text-[11px] text-slate-400">Part patient</p><p className="text-[13.5px] font-bold tabular-nums text-slate-900">{dh(partPatient)}</p></div>
         <div><p className="text-[11px] text-slate-400">Part organisme{mine.length > 1 ? 's' : ''}</p><p className="text-[13.5px] font-bold tabular-nums text-blue-700">{dh(partOrganisme)}</p></div>
       </div>
+      )}
 
       {mine.length === 0 ? (
         <p className="mt-2 text-[13px] text-slate-500">
@@ -53,7 +63,7 @@ export function InvoiceInsurance({ facture, canEdit, onOpenClaim, onAction, onCr
         <ul className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-100">
           {mine.map(c => {
             const refused = unresolvedRejected(c);
-            const next = canEdit ? nextAction(c) : null;
+            const next = canEdit && !inconsistent ? nextAction(c) : null;
             return (
               <li key={c.id} className="px-3 py-2">
                 <div className="flex items-center justify-between gap-2">

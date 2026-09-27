@@ -5,8 +5,8 @@ import { Skeleton, ErrorState } from './ui';
 import { getTotals, filterFactures } from './selectors';
 import { Card } from './ui';
 import { dh, num, pct } from './format';
-import { factureReste } from './data';
-import { claimOutstanding, useClaimsQuery } from './tiersPayant';
+import { factureReste, inconsistentFactures } from './data';
+import { ReconciliationWarning } from './ui';
 import { TrendingUp, Banknote, Clock, AlertCircle, Landmark } from 'lucide-react';
 
 export function KpiCards() {
@@ -14,30 +14,31 @@ export function KpiCards() {
   const { data: factures = [], isLoading, isError, error, refetch } = useFacturesQuery();
   const filteredFactures = filterFactures(factures, filters);
   const totals = getTotals(filteredFactures);
-  const { data: claims = [] } = useClaimsQuery();
+  const inconsistent = inconsistentFactures(filteredFactures);
 
-  // Who owes / who paid, never mixed: patient figures come from the invoices' patient side,
-  // organism figures from the tiers-payant claims of the same (filtered) invoices.
+  // Who owes / who paid, never mixed. Every figure is the server's reconciliation of the invoice
+  // (Facture.fin); invoices that do not reconcile are left out and flagged above the cards.
   const split = useMemo(() => {
-    const ids = new Set(filteredFactures.map(f => f.id));
-    const mine = claims.filter(c => ids.has(c.invoiceId) && c.status !== 'CANCELLED');
-    const open = mine.filter(c => claimOutstanding(c) > 0 && ['DRAFT', 'READY', 'SUBMITTED', 'PROCESSING', 'PARTIALLY_SETTLED'].includes(c.status));
-    const creancesPatients = filteredFactures.filter(f => factureReste(f) > 0);
+    const ok = filteredFactures.filter(f => !f.fin || f.fin.reconciled);
+    const creancesPatients = ok.filter(f => factureReste(f) > 0);
+    const creancesOrganismes = ok.filter(f => (f.fin?.organismDue || 0) > 0);
     return {
-      encaissePatients: totals.totalEncaisse,
-      encaisseOrganismes: mine.reduce((a, c) => a + c.received, 0),
+      encaissePatients: ok.reduce((a, f) => a + f.paye, 0),
+      encaisseOrganismes: ok.reduce((a, f) => a + (f.fin?.organismReceived || 0), 0),
       creancesPatients: creancesPatients.reduce((a, f) => a + factureReste(f), 0),
       nbCreancesPatients: creancesPatients.length,
-      creancesOrganismes: open.reduce((a, c) => a + claimOutstanding(c), 0),
-      nbCreancesOrganismes: open.length,
+      creancesOrganismes: creancesOrganismes.reduce((a, f) => a + (f.fin?.organismDue || 0), 0),
+      nbCreancesOrganismes: creancesOrganismes.length,
     };
-  }, [filteredFactures, claims, totals.totalEncaisse]);
+  }, [filteredFactures]);
   const totalEncaisse = split.encaissePatients + split.encaisseOrganismes;
 
   if (isLoading) return <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4"><Skeleton className="h-24"/><Skeleton className="h-24"/><Skeleton className="h-24"/><Skeleton className="h-24"/><Skeleton className="h-24"/></div>;
   if (isError) return <ErrorState error={error as Error} onRetry={refetch} />;
 
   return (
+    <div className="space-y-3">
+    <ReconciliationWarning count={inconsistent.length} />
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
       
       {/* CA Net */}
@@ -97,7 +98,7 @@ export function KpiCards() {
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Créances organismes</p>
             <p className="text-2xl font-bold tracking-tight text-blue-700 mt-1">{dh(split.creancesOrganismes)}</p>
             <p className="text-sm text-slate-500 mt-1">
-              {num(split.nbCreancesOrganismes)} {split.nbCreancesOrganismes > 1 ? 'dossiers' : 'dossier'} en tiers payant
+              {num(split.nbCreancesOrganismes)} {split.nbCreancesOrganismes > 1 ? 'factures' : 'facture'} en tiers payant
             </p>
           </div>
         </div>
@@ -127,6 +128,7 @@ export function KpiCards() {
         </div>
       </Card>
 
+    </div>
     </div>
   );
 }

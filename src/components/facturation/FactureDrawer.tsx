@@ -45,7 +45,9 @@ export function FactureDetail({ facture, praticienNom, onClose, onPrint, onEncai
   const paye = facturePaye(facture);
   const reste = factureReste(facture);
   // In tiers payant the patient owes only their share; the organism's share is on its dossier.
-  const partPatient = facture.montant - (facture.partOrganisme || 0);
+  // Both come from the server's reconciliation (Facture.fin).
+  const partPatient = facture.montant - (facture.fin?.organismShare ?? facture.partOrganisme ?? 0);
+  const unreliable = Boolean(facture.fin && !facture.fin.reconciled);
   const ratio = partPatient > 0 ? Math.min(1, paye / partPatient) : 1;
   const retard = joursRetard(facture.dateEcheance);
   const isLate = facture.statut === 'en_retard' && reste > 0;
@@ -71,7 +73,12 @@ export function FactureDetail({ facture, praticienNom, onClose, onPrint, onEncai
       </div>
 
       <div className="min-h-0 space-y-6 overflow-y-auto px-6 pb-5 pt-5">
-        {/* Balance: one big number and a thin line */}
+        {/* Balance: one big number and a thin line (withheld when the server cannot reconcile it) */}
+        {unreliable ? (
+          <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] font-medium text-red-700">
+            Montants incohérents sur cette facture : solde non affiché, à vérifier.
+          </p>
+        ) : (
         <div>
           <div className="flex items-end justify-between gap-3">
             <div>
@@ -91,6 +98,7 @@ export function FactureDetail({ facture, praticienNom, onClose, onPrint, onEncai
           {isLate && <p className="mt-2 flex items-center gap-1 text-[12px] font-medium text-red-600"><AlertCircle className="h-3.5 w-3.5" /> En retard de {retard} jour{retard > 1 ? 's' : ''}</p>}
           {reste > 0 && !isLate && <p className="mt-2 text-[12px] text-slate-400">Échéance le {fmtDateLong(facture.dateEcheance)}</p>}
         </div>
+        )}
 
         {insurance}
 
@@ -146,7 +154,7 @@ export function FactureDetail({ facture, praticienNom, onClose, onPrint, onEncai
           <Printer className="h-4 w-4" /> Imprimer
         </Button>
         <div className="flex items-center gap-2">
-          {reste > 0 && (
+          {reste > 0 && !unreliable && (
             <Button variant="primary" onClick={onEncaisser}>
               <CreditCard className="h-4 w-4" /> Encaisser
             </Button>

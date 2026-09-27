@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { processVisitPayment } from '@/lib/visitService';
-import { DELAI_PAIEMENT_JOURS, Facture, FactureLigne, Mode, Paiement, Statut, factureReste, numeroFacture } from './data';
+import { DELAI_PAIEMENT_JOURS, Facture, FactureFinancials, FactureLigne, Mode, Paiement, Statut, factureReste, numeroFacture } from './data';
 
 const PAGE_SIZE = 1000;
 const MS_DAY = 86400000;
@@ -40,6 +40,27 @@ export const fetchFactures = async (clinicId: string, patientId?: string): Promi
     if (error) throw error;
     rows.push(...(data || []));
     if (!data || data.length < PAGE_SIZE) break;
+  }
+
+  // Authoritative balances: the server-side reconciliation of each invoice.
+  const finById = new Map<string, FactureFinancials>();
+  const ids = rows.map(r => r.id);
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data: fin, error: finError } = await supabase
+      .from('invoice_financials')
+      .select('invoice_id, patient_due, organism_share, organism_received, organism_due, rejected_unresolved, waived, reconciliation_status, reconciliation_problems')
+      .in('invoice_id', ids.slice(i, i + 200));
+    if (finError) throw finError;
+    (fin || []).forEach((r: any) => finById.set(r.invoice_id, {
+      patientDue: Number(r.patient_due) || 0,
+      organismShare: Number(r.organism_share) || 0,
+      organismReceived: Number(r.organism_received) || 0,
+      organismDue: Number(r.organism_due) || 0,
+      rejectedUnresolved: Number(r.rejected_unresolved) || 0,
+      waived: Number(r.waived) || 0,
+      reconciled: r.reconciliation_status === 'RECONCILED',
+      problems: r.reconciliation_problems || [],
+    }));
   }
 
   // Fetch itemized lines for any linked consultations
@@ -104,6 +125,7 @@ export const fetchFactures = async (clinicId: string, patientId?: string): Promi
       statut: computeStatut(p.status, montant, paye, p.created_at),
       paiements,
       lignes,
+      fin: finById.get(p.id),
     };
   });
 };

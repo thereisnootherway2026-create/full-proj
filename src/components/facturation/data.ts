@@ -7,6 +7,10 @@
 //   amount_paid        = collected from the patient so far     -> Facture.paye
 //   reste (patient)    = amount - third_party_amount - amount_paid
 // The organism's share is not a patient debt: it is tracked on its tiers-payant claim.
+//
+// Every balance below comes from the server's reconciliation (view invoice_financials), the single
+// authoritative model. Components read Facture.fin; they never recompute a balance themselves, and
+// never use a claim's patient_share (a historical snapshot taken when the claim was created).
 // Amounts are final (no VAT is added on top of what the doctor billed).
 
 export type Statut = 'payee' | 'partielle' | 'en_attente' | 'en_retard';
@@ -21,6 +25,19 @@ export interface FactureLigne {
   libelle: string;
   prixUnitaire: number;
   quantite: number;
+}
+
+// Server-side reconciliation of one invoice (invoice_financials). Every DH of an open invoice is in
+// exactly one bucket: paye + patientDue + organismReceived + organismDue + rejectedUnresolved + waived.
+export interface FactureFinancials {
+  patientDue: number;
+  organismShare: number;
+  organismReceived: number;
+  organismDue: number;
+  rejectedUnresolved: number;
+  waived: number;
+  reconciled: boolean; // false = INCONSISTENT: do not present the figures as reliable
+  problems: string[];
 }
 
 export interface Facture {
@@ -41,6 +58,7 @@ export interface Facture {
   statut: Statut;
   paiements: Paiement[];
   lignes?: FactureLigne[];
+  fin?: FactureFinancials; // authoritative balances (absent only if the reconciliation could not be read)
 }
 
 // Display number of a facture (payment row).
@@ -52,6 +70,20 @@ export const DELAI_PAIEMENT_JOURS = 30;
 
 export const factureNet = (f: Pick<Facture, 'montant'>) => f.montant;
 export const facturePaye = (f: Pick<Facture, 'paye'>) => f.paye;
-// What the patient still owes (the organism's share is excluded).
-export const factureReste = (f: Pick<Facture, 'montant' | 'paye'> & { partOrganisme?: number }) =>
-  Math.max(0, f.montant - (f.partOrganisme || 0) - f.paye);
+// What the patient still owes (the organism's share is excluded). Taken from the server's
+// reconciliation; the fallback (same formula) only covers a row the reconciliation did not return.
+export const factureReste = (f: Pick<Facture, 'montant' | 'paye'> & { partOrganisme?: number; fin?: FactureFinancials }) =>
+  f.fin ? Math.max(0, f.fin.patientDue) : Math.max(0, f.montant - (f.partOrganisme || 0) - f.paye);
+
+// Invoices whose figures do not reconcile. They are logged once and flagged in the UI instead of
+// being shown as plausible numbers.
+const reported = new Set<string>();
+export const inconsistentFactures = (factures: Facture[]) => {
+  const bad = factures.filter(f => f.fin && !f.fin.reconciled);
+  bad.forEach(f => {
+    if (reported.has(f.id)) return;
+    reported.add(f.id);
+    console.error('[facturation] invoice does not reconcile', { invoiceId: f.id, numero: f.numero, problems: f.fin?.problems, fin: f.fin });
+  });
+  return bad;
+};

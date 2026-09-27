@@ -101,3 +101,14 @@ export function ErrorState({ error, onRetry }: { error: Error; onRetry?: () => v
   );
 }
 
+
+// Shown when some invoices do not reconcile on the server (invoice_financials): their figures are
+// left out instead of being displayed as plausible numbers.
+export function ReconciliationWarning({ count, className }: { count: number; className?: string }) {
+  if (count <= 0) return null;
+  return (
+    <p className={cn('rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[13px] font-medium text-red-700', className)}>
+      {count} facture{count > 1 ? 's' : ''} à vérifier : montants incohérents, exclue{count > 1 ? 's' : ''} des totaux ci-dessous.
+    </p>
+  );
+}
