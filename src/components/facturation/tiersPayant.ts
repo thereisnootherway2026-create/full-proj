@@ -19,7 +19,13 @@ import { useAppContext } from '../../context/AppContext';
 // share (payments.third_party_amount) is derived from them by the database.
 //
 // A patient who pays everything and gets reimbursed later is not a claim: nothing is owed to the
-// cabinet. No reimbursement rate is computed anywhere: the organism's share is entered by the user.
+// cabinet.
+//
+//   insurance_claim_lines / insurance_calculations  a claim's per-line breakdown and the immutable
+//                            record of what the rules engine answered for each line. The engine only
+//                            applies VERIFIED rules; with none (today) it answers MANUAL_REQUIRED and
+//                            the organism's share is entered by the user, with a reason, and shown
+//                            as "Montant saisi manuellement". Nothing is estimated client-side.
 // Reads are plain selects (RLS scopes them to the clinic). Every write is a SECURITY DEFINER RPC.
 
 export type OrganizationType = 'AMO_MANAGER' | 'MUTUELLE' | 'PRIVATE_INSURER' | 'OTHER';
@@ -80,9 +86,50 @@ export interface Claim {
   rejectionReason: string;
   previousClaimId: string | null;
   rejections: Rejection[];
+  // where amount_claimed comes from (see AMOUNT_ORIGIN_LABEL)
+  amountOrigin: AmountOrigin;
   createdAt: string;
   submittedAt: string | null;
   receivedAt: string | null;
+}
+
+export type CalculationStatus = 'CALCULATED' | 'MANUAL_REQUIRED' | 'CONFLICT';
+// CALCULATED / MANUAL / MIXED: from the claim's lines. LEGACY: a claim created before claim lines
+// existed (its amount was typed by hand). REFILE: a re-filing, whose amount is the rejected amount.
+export type AmountOrigin = 'CALCULATED' | 'MANUAL' | 'MIXED' | 'LEGACY' | 'REFILE';
+
+// The engine's answer for one line, as shown to the user.
+export interface LineCalculation {
+  status: CalculationStatus;
+  reasonCode: string | null;
+  reason: string | null;
+  dateOfCare: string | null;
+  actLabel: string | null;
+  billed: number;
+  tnr: number | null;
+  basis: number | null;
+  organism: number | null;
+  patient: number | null;
+  ruleKey: string | null;
+  ruleVersion: number | null;
+  ruleEffectiveFrom: string | null;
+  sources: Array<{ title: string; issuingBody: string; publicationDate: string | null; version: string | null }>;
+  engineVersion: string;
+}
+
+export interface ClaimLine {
+  id: string;
+  lineNo: number;
+  label: string;
+  actCode: string | null;
+  dateOfCare: string;
+  billed: number;
+  organism: number;
+  amountSource: 'CALCULATED' | 'MANUAL';
+  calculationStatus: CalculationStatus;
+  manualReason: string;
+  enteredAt: string;
+  calculation: LineCalculation | null;
 }
 
 export interface Rejection {
@@ -163,6 +210,14 @@ export const OPEN_CLAIM_STATUSES: ClaimStatus[] = ['DRAFT', 'READY', 'SUBMITTED'
 export const AWAITING_SETTLEMENT_STATUSES: ClaimStatus[] = ['SUBMITTED', 'PROCESSING', 'PARTIALLY_SETTLED'];
 
 // What the organism still owes on a claim.
+export const AMOUNT_ORIGIN_LABEL: Record<AmountOrigin, string> = {
+  CALCULATED: 'Montant calculé',
+  MANUAL: 'Montant saisi manuellement',
+  MIXED: 'Montant en partie saisi manuellement',
+  LEGACY: 'Montant saisi manuellement',
+  REFILE: 'Montant repris du rejet',
+};
+
 export const claimOutstanding = (c: Pick<Claim, 'claimed' | 'received' | 'rejected'>) =>
   Math.max(0, c.claimed - c.received - c.rejected);
 
@@ -196,6 +251,10 @@ const ERRORS: Array<[RegExp, string]> = [
   [/coverage is not valid today/i, "La couverture choisie n'est pas valide à ce jour."],
   [/organization is inactive/i, "L'organisme de cette couverture est désactivé."],
   [/exceeds what is still unpaid/i, 'La part organisme dépasse le reste à payer de la facture.'],
+  [/manually entered amount needs a reason/i, 'Indiquez le motif de la saisie manuelle.'],
+  [/automatic calculation unavailable/i, 'Calcul automatique indisponible : saisissez le montant et son motif.'],
+  [/must be between 0 and the billed amount/i, 'La part organisme ne peut pas dépasser le montant facturé.'],
+  [/lines total .* exceeds the invoice amount/i, 'Le montant facturé dépasse le total de la facture.'],
   [/amount claimed must be positive/i, 'Saisissez la part prise en charge par l’organisme.'],
   [/must be submitted before a (settlement|rejection)/i, "Le dossier doit d'abord être déposé."],
   [/rejection .* exceeds the outstanding amount/i, "Le montant refusé dépasse ce que l'organisme doit encore."],
@@ -263,6 +322,58 @@ const fetchOrganizations = async (clinicId: string): Promise<Organization[]> => 
   return (data || []).map(toOrganization);
 };
 
+const amountOrigin = (lines: Array<{ amount_source: string }>, refile: boolean): AmountOrigin => {
+  if (lines.length === 0) return refile ? 'REFILE' : 'LEGACY';
+  if (lines.every(l => l.amount_source === 'CALCULATED')) return 'CALCULATED';
+  if (lines.every(l => l.amount_source === 'MANUAL')) return 'MANUAL';
+  return 'MIXED';
+};
+
+const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+
+const toLineCalculation = (r: any, dateOfCare: string | null): LineCalculation => ({
+  status: r.status,
+  reasonCode: r.reason_code ?? null,
+  reason: r.reason ?? null,
+  dateOfCare: r.date_of_care ?? dateOfCare,
+  actLabel: r.act?.label ?? null,
+  billed: Number(r.billed_amount),
+  tnr: num(r.tnr_amount),
+  basis: num(r.reimbursement_basis),
+  organism: num(r.organism_amount),
+  patient: num(r.patient_amount),
+  ruleKey: r.rule?.rule_key ?? null,
+  ruleVersion: r.rule?.version ?? null,
+  ruleEffectiveFrom: r.rule?.effective_from ?? null,
+  sources: (r.sources || []).map((s: any) => ({
+    title: s.title, issuingBody: s.issuing_body, publicationDate: s.publication_date ?? null, version: s.version ?? null,
+  })),
+  engineVersion: r.engine_version,
+});
+
+const fetchClaimLines = async (claimId: string): Promise<ClaimLine[]> => {
+  const { data, error } = await supabase
+    .from('insurance_claim_lines')
+    .select('id, line_no, label, act_code, date_of_care, billed_amount, organism_amount, amount_source, calculation_status, manual_reason, entered_at, insurance_calculations(result)')
+    .eq('claim_id', claimId)
+    .order('line_no');
+  if (error) throw error;
+  return (data || []).map((l: any): ClaimLine => ({
+    id: l.id,
+    lineNo: l.line_no,
+    label: l.label,
+    actCode: l.act_code,
+    dateOfCare: l.date_of_care,
+    billed: Number(l.billed_amount),
+    organism: Number(l.organism_amount),
+    amountSource: l.amount_source,
+    calculationStatus: l.calculation_status,
+    manualReason: l.manual_reason || '',
+    enteredAt: l.entered_at,
+    calculation: l.insurance_calculations?.result ? toLineCalculation(l.insurance_calculations.result, l.date_of_care) : null,
+  }));
+};
+
 const fetchClaims = async (clinicId: string): Promise<Claim[]> => {
   const { data: rej, error: rejError } = await supabase
     .from('insurance_claim_rejections')
@@ -284,7 +395,7 @@ const fetchClaims = async (clinicId: string): Promise<Claim[]> => {
   const { data, error } = await supabase
     .from('insurance_claims')
     // embedded through the same-clinic (composite) foreign keys, named explicitly
-    .select('*, patients:patients!insurance_claims_patient_fkey(nom, prenom), visits:visits!insurance_claims_visit_fkey(doctor_id)')
+    .select('*, patients:patients!insurance_claims_patient_fkey(nom, prenom), visits:visits!insurance_claims_visit_fkey(doctor_id), insurance_claim_lines(amount_source)')
     .eq('clinic_id', clinicId)
     .order('created_at', { ascending: false })
     .limit(2000);
@@ -313,6 +424,7 @@ const fetchClaims = async (clinicId: string): Promise<Claim[]> => {
     rejectionReason: r.rejection_reason || '',
     previousClaimId: r.previous_claim_id || null,
     rejections: rejectionsByClaim.get(r.id) || [],
+    amountOrigin: amountOrigin(r.insurance_claim_lines || [], Boolean(r.previous_claim_id)),
     createdAt: r.created_at,
     submittedAt: r.submitted_at,
     receivedAt: r.received_at,
@@ -367,6 +479,24 @@ export const useSettlementsQuery = () => {
   return useQuery({ queryKey: ['insurance-settlements', clinicId], queryFn: () => fetchSettlements(clinicId as string), enabled: Boolean(clinicId) });
 };
 
+export const useClaimLinesQuery = (claimId: string | null | undefined) =>
+  useQuery({ queryKey: ['claim-lines', claimId], queryFn: () => fetchClaimLines(claimId as string), enabled: Boolean(claimId) });
+
+// What the rules engine answers for an invoice taken as a single line (no act identified yet).
+// Server-side, read-only; it never proposes an amount without a verified rule.
+export const useInvoiceCalculation = (invoiceId: string | null | undefined, coverageId: string | null | undefined, billed: number, label: string) =>
+  useQuery({
+    queryKey: ['insurance-calculation', invoiceId, coverageId, billed],
+    queryFn: async () => {
+      const data = await rpc('calculate_insurance_lines', {
+        p_invoice_id: invoiceId, p_coverage_id: coverageId, p_lines: [{ label, billed_amount: billed }],
+      });
+      return toLineCalculation(data.lines[0], data.date_of_care);
+    },
+    enabled: Boolean(invoiceId && coverageId && billed > 0),
+    retry: false,
+  });
+
 export const usePatientCoveragesQuery = (patientId: string | null | undefined) => {
   const { clinicId } = useAppContext();
   return useQuery({
@@ -379,6 +509,7 @@ export const usePatientCoveragesQuery = (patientId: string | null | undefined) =
 // Claims move invoice balances (third-party share, invoice status), so factures refresh with them.
 const refreshAll = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['claims'] });
+  qc.invalidateQueries({ queryKey: ['claim-lines'] });
   qc.invalidateQueries({ queryKey: ['insurance-settlements'] });
   qc.invalidateQueries({ queryKey: ['insurance-organizations'] });
   qc.invalidateQueries({ queryKey: ['patient-coverages'] });
@@ -438,13 +569,24 @@ export const useSaveCoverage = () => {
   });
 };
 
+// Creates the claim with its line (the invoice as one line). The server recalculates the line:
+// without manualReason the engine's own amount is used (only possible when it CALCULATED one);
+// with it, `amount` is recorded as entered by hand, next to what the engine answered.
 export const useCreateClaim = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { invoiceId: string; coverageId: string; amount: number; status: 'DRAFT' | 'READY'; notes?: string }) =>
-      rpc('create_insurance_claim', {
-        p_invoice_id: v.invoiceId, p_coverage_id: v.coverageId, p_amount_claimed: v.amount,
-        p_status: v.status, p_notes: v.notes ?? null,
+    mutationFn: (v: {
+      invoiceId: string; coverageId: string; label: string; billed: number; amount: number;
+      manualReason: string | null; status: 'DRAFT' | 'READY'; notes?: string;
+    }) =>
+      rpc('create_insurance_claim_with_lines', {
+        p_invoice_id: v.invoiceId,
+        p_coverage_id: v.coverageId,
+        p_lines: [v.manualReason
+          ? { label: v.label, billed_amount: v.billed, manual_organism_amount: v.amount, manual_reason: v.manualReason }
+          : { label: v.label, billed_amount: v.billed }],
+        p_status: v.status,
+        p_notes: v.notes ?? null,
       }),
     onSuccess: () => refreshAll(qc),
   });

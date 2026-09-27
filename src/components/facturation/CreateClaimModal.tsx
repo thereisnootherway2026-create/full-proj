@@ -9,9 +9,10 @@ import { dh } from './format';
 import { factureReste } from './data';
 import type { Facture } from './data';
 import {
-  BENEFICIARY_LABEL, COVERAGE_TYPE_LABEL, isCoverageUsable, useClaimsQuery, useCreateClaim,
+  BENEFICIARY_LABEL, COVERAGE_TYPE_LABEL, isCoverageUsable, useClaimsQuery, useCreateClaim, useInvoiceCalculation,
   useOrganizationsQuery, usePatientCoveragesQuery,
 } from './tiersPayant';
+import { CalculationExplanation } from './InsuranceCalculation';
 
 const inputCls = 'h-[44px] w-full rounded-[10px] border border-[#E5E7EB] bg-white px-3 text-[14px] font-medium text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
 const labelCls = 'mb-1.5 block text-[12px] font-semibold uppercase tracking-wide text-slate-500';
@@ -25,8 +26,9 @@ export const isClaimEligible = (f: Facture) =>
 
 // Opens a tiers-payant dossier FROM an invoice: the invoice switches to tiers payant, the organism's
 // share becomes a receivable, the patient keeps only their share. A dossier always has a real
-// invoice (and its visit), the patient's coverage and that coverage's organization. The organism's
-// share is typed by the user from the applicable rules; nothing is computed from a percentage.
+// invoice (and its visit), the patient's coverage and that coverage's organization. The rules
+// engine is asked first: it only answers with an amount from a verified rule (none exist yet), so
+// the organism's share is normally typed by the user, with a reason, and recorded as such.
 export function CreateClaimModal({ open, onClose, facture: fixedFacture }: { open: boolean; onClose: () => void; facture?: Facture | null }) {
   const { data: factures = [] } = useFacturesQuery();
   const { data: claims = [] } = useClaimsQuery();
@@ -37,6 +39,7 @@ export function CreateClaimModal({ open, onClose, facture: fixedFacture }: { ope
   const [factureId, setFactureId] = useState('');
   const [coverageId, setCoverageId] = useState('');
   const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
 
@@ -54,7 +57,7 @@ export function CreateClaimModal({ open, onClose, facture: fixedFacture }: { ope
 
   useEffect(() => {
     if (!open) return;
-    setFactureId(''); setCoverageId(''); setAmount(''); setNotes(''); setError('');
+    setFactureId(''); setCoverageId(''); setAmount(''); setReason(''); setNotes(''); setError('');
   }, [open]);
   // A single usable coverage is the obvious choice (prefer AMO when there are several).
   useEffect(() => {
@@ -63,15 +66,26 @@ export function CreateClaimModal({ open, onClose, facture: fixedFacture }: { ope
   }, [usable, coverageId]);
 
   const reste = facture ? factureReste(facture) : 0;
-  const value = parseAmount(amount);
+  // the invoice goes to the engine as one line (no act identified yet)
+  const lineLabel = facture ? `Facture ${facture.numero}` : '';
+  const calcQ = useInvoiceCalculation(facture?.id, coverage?.id, facture?.montant ?? 0, lineLabel);
+  const calculated = calcQ.data?.status === 'CALCULATED' ? calcQ.data.organism : null;
+  const typed = amount.trim() !== '';
+  const value = !typed && calculated !== null ? calculated : parseAmount(amount);
+  // anything that is not the engine's own figure is a manual entry, which needs a reason
+  const manual = calculated === null || (typed && value !== calculated);
   const validAmount = Number.isFinite(value) && value > 0 && value <= reste;
 
   const submit = async (status: 'DRAFT' | 'READY') => {
     if (!facture) return setError('Choisissez une facture.');
     if (!coverage) return setError('Choisissez la couverture du patient.');
     if (!validAmount) return setError(value > reste ? `La part organisme dépasse le reste à payer (${dh(reste, true)}).` : "Saisissez la part prise en charge par l'organisme.");
+    if (manual && !reason.trim()) return setError('Indiquez le motif de la saisie manuelle.');
     try {
-      await create.mutateAsync({ invoiceId: facture.id, coverageId: coverage.id, amount: value, status, notes });
+      await create.mutateAsync({
+        invoiceId: facture.id, coverageId: coverage.id, label: lineLabel, billed: facture.montant, amount: value,
+        manualReason: manual ? reason.trim() : null, status, notes,
+      });
       showToast(status === 'READY'
         ? `Dossier créé : ${dh(value)} attendus de ${orgName(coverage.organizationId)}.`
         : 'Dossier enregistré en brouillon.');
@@ -137,11 +151,30 @@ export function CreateClaimModal({ open, onClose, facture: fixedFacture }: { ope
                     }))} />
                   {coverage && <p className="mt-1 text-xs text-slate-500">Bénéficiaire : {BENEFICIARY_LABEL[coverage.beneficiary]}</p>}
                 </div>
+                {coverage && (calcQ.data ? <CalculationExplanation calc={calcQ.data} />
+                  : calcQ.isError ? (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13px]">
+                      <p className="font-semibold text-slate-800">Calcul automatique indisponible</p>
+                      <p className="mt-0.5 text-slate-600">{(calcQ.error as Error).message}</p>
+                    </div>
+                  ) : null)}
                 <div>
-                  <label className={labelCls}>Part prise en charge par l'organisme (DH)</label>
-                  <input className={inputCls} inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} placeholder={`0 – ${reste}`} />
-                  <p className="mt-1 text-xs text-slate-500">Selon le tarif de référence et les règles de l'organisme pour ces actes.</p>
+                  <label className={labelCls}>{calculated === null ? 'Montant saisi manuellement (DH)' : "Part prise en charge par l'organisme (DH)"}</label>
+                  <input className={inputCls} inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)}
+                    placeholder={calculated === null ? `0 – ${reste}` : String(calculated)} />
+                  <p className="mt-1 text-xs text-slate-500">
+                    {calculated === null
+                      ? "Part de l'organisme telle que vous la connaissez : aucune estimation n'est proposée sans règle vérifiée."
+                      : 'Laissez vide pour retenir le montant calculé ; un autre montant sera enregistré comme saisi manuellement.'}
+                  </p>
                 </div>
+                {manual && (
+                  <div>
+                    <label className={labelCls}>Motif de la saisie manuelle</label>
+                    <input className={inputCls} value={reason} onChange={e => setReason(e.target.value)}
+                      placeholder="Ex. : montant indiqué par l'organisme" />
+                  </div>
+                )}
                 <div className="grid grid-cols-3 gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
                   <div><p className="text-[11px] font-semibold uppercase text-slate-400">Facture</p><p className="text-sm font-bold text-slate-900">{dh(facture.montant)}</p></div>
                   <div><p className="text-[11px] font-semibold uppercase text-slate-400">Ce dossier</p><p className="text-sm font-bold text-blue-700">{dh(validAmount ? value : 0)}</p></div>

@@ -6,8 +6,9 @@ import { useFacturationStore } from './store';
 import { numeroFacture } from './data';
 import { dh, fmtDate } from './format';
 import { cn } from '../../lib/utils';
+import { ClaimAmountOrigin } from './InsuranceCalculation';
 import {
-  CLAIM_STATUS, COVERAGE_TYPE_LABEL, RESOLUTION_LABEL, SETTLEMENT_METHODS, SETTLEMENT_METHOD_LABEL,
+  AMOUNT_ORIGIN_LABEL, CLAIM_STATUS, COVERAGE_TYPE_LABEL, RESOLUTION_LABEL, SETTLEMENT_METHODS, SETTLEMENT_METHOD_LABEL,
   canReceiveSettlement, claimOutstanding, isCoverageUsable, unresolvedRejected, useClaimStatus,
   useOrganizationsQuery, usePatientCoveragesQuery, useRecordSettlement, useRejectClaim, useResolveRejection,
 } from './tiersPayant';
@@ -41,7 +42,11 @@ export function ClaimFigures({ claim }: { claim: Claim }) {
   const reste = claimOutstanding(claim);
   return (
     <div className="grid grid-cols-3 gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
-      <div><p className="text-[11px] font-semibold uppercase text-slate-400">Montant demandé</p><p className="text-sm font-bold text-slate-900">{dh(claim.claimed, true)}</p></div>
+      <div>
+        <p className="text-[11px] font-semibold uppercase text-slate-400">Montant demandé</p>
+        <p className="text-sm font-bold text-slate-900">{dh(claim.claimed, true)}</p>
+        <p className="text-[11px] text-slate-500">{AMOUNT_ORIGIN_LABEL[claim.amountOrigin]}</p>
+      </div>
       <div><p className="text-[11px] font-semibold uppercase text-slate-400">Déjà reçu</p><p className="text-sm font-bold text-emerald-600">{dh(claim.received, true)}</p></div>
       <div><p className="text-[11px] font-semibold uppercase text-slate-400">Reste à recevoir</p><p className="text-sm font-bold text-blue-700">{dh(reste, true)}</p></div>
     </div>
@@ -363,6 +368,7 @@ export function ClaimDetailModal({ claim, claims, settlements, canEdit, onAction
           {claim.externalReference && <span className="text-xs text-slate-500">Réf. dépôt {claim.externalReference}</span>}
         </div>
         <ClaimFigures claim={claim} />
+        <ClaimAmountOrigin claim={claim} />
 
         {claim.rejections.length > 0 && (
           <section>

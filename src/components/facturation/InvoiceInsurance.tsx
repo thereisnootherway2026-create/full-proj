@@ -4,6 +4,7 @@ import { factureReste, inconsistentFactures } from './data';
 import type { Facture } from './data';
 import { cn } from '../../lib/utils';
 import { ClaimBadge } from './ClaimDialogs';
+import { AmountOriginTag } from './InsuranceCalculation';
 import type { ClaimAction } from './ClaimDialogs';
 import {
   COVERAGE_TYPE_LABEL, canReceiveSettlement, claimOutstanding, isCoverageUsable, unresolvedRejected,
@@ -76,7 +77,7 @@ export function InvoiceInsurance({ facture, canEdit, onOpenClaim, onAction, onCr
                   <ClaimBadge status={c.status} />
                 </div>
                 <p className="mt-0.5 text-[12.5px] tabular-nums text-slate-500">
-                  Demandé {dh(c.claimed)} · Reçu <span className="text-emerald-600">{dh(c.received)}</span> · Reste <span className="font-semibold text-slate-800">{dh(claimOutstanding(c))}</span>
+                  Demandé {dh(c.claimed)} <AmountOriginTag origin={c.amountOrigin} /> · Reçu <span className="text-emerald-600">{dh(c.received)}</span> · Reste <span className="font-semibold text-slate-800">{dh(claimOutstanding(c))}</span>
                 </p>
                 {(refused > 0 || next) && (
                   <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
