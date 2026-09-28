@@ -12,11 +12,12 @@ import type { BeneficiaryType, Coverage, CoverageType } from '../facturation/tie
 
 const inputCls = 'h-[44px] w-full rounded-[10px] border border-[#E5E7EB] bg-white px-3 text-[14px] font-medium text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
 const labelCls = 'mb-1.5 block text-[12px] font-semibold uppercase tracking-wide text-slate-500';
+const schemeLabel = (code: string | null) => (code ? `Régime ${code}` : 'Régime AMO non renseigné');
 const fmtDay = (d: string | null) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('fr-FR') : '');
 
 const EMPTY = {
   type: 'AMO' as CoverageType, organizationId: '', membershipNumber: '', beneficiary: 'ASSURE' as BeneficiaryType,
-  validFrom: '', validUntil: '', isActive: true, notes: '',
+  validFrom: '', validUntil: '', isActive: true, notes: '', schemeCode: '',
 };
 
 function CoverageModal({ open, onClose, patientId, coverages, readOnly = false }: {
@@ -37,6 +38,7 @@ function CoverageModal({ open, onClose, patientId, coverages, readOnly = false }
     setForm({
       type: c.type, organizationId: c.organizationId || '', membershipNumber: c.membershipNumber, beneficiary: c.beneficiary,
       validFrom: c.validFrom || '', validUntil: c.validUntil || '', isActive: c.isActive, notes: c.notes,
+      schemeCode: c.schemeCode || '',
     });
     setError('');
   };
@@ -49,6 +51,7 @@ function CoverageModal({ open, onClose, patientId, coverages, readOnly = false }
         id: editing?.id, patientId, type: form.type, organizationId: form.type === 'NONE' ? null : form.organizationId,
         membershipNumber: form.membershipNumber, beneficiary: form.type === 'NONE' ? 'UNKNOWN' : form.beneficiary,
         validFrom: form.validFrom || null, validUntil: form.validUntil || null, isActive: form.isActive, notes: form.notes,
+        schemeCode: form.type === 'AMO' ? form.schemeCode.trim().toUpperCase() || null : null,
       });
       reset();
     } catch (e: any) { setError(e.message); }
@@ -73,6 +76,7 @@ function CoverageModal({ open, onClose, patientId, coverages, readOnly = false }
                 {c.type !== 'NONE' && (
                   <span className="text-xs text-slate-500">
                     {c.membershipNumber ? `N° ${c.membershipNumber} · ` : ''}{BENEFICIARY_LABEL[c.beneficiary]}
+                    {c.type === 'AMO' && ` · ${schemeLabel(c.schemeCode)}`}
                   </span>
                 )}
               </span>
@@ -115,6 +119,16 @@ function CoverageModal({ open, onClose, patientId, coverages, readOnly = false }
                     options={(Object.keys(BENEFICIARY_LABEL) as BeneficiaryType[]).map(b => ({ value: b, label: BENEFICIARY_LABEL[b] }))} />
                 </div>
               </div>
+              {form.type === 'AMO' && (
+                <div>
+                  <label className={labelCls}>Régime AMO (code)</label>
+                  <input className={cn(inputCls, 'font-mono uppercase')} value={form.schemeCode}
+                    onChange={e => set('schemeCode', e.target.value.toUpperCase())} placeholder="Non renseigné" />
+                  <p className="mt-1 text-xs text-slate-400">
+                    Code du régime tel qu'il est configuré. Il n'est jamais déduit du numéro, de l'organisme ni du bénéficiaire.
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className={labelCls}>Valide du (optionnel)</label>
@@ -189,6 +203,7 @@ export function PatientCoverage({ patientId, mode, canEdit }: { patientId: strin
                 <p className="text-[12px] text-slate-500">
                   {c.membershipNumber ? `N° ${c.membershipNumber}` : 'N° non renseigné'} · {BENEFICIARY_LABEL[c.beneficiary]}
                 </p>
+                {c.type === 'AMO' && <p className="text-[12px] text-slate-500">{schemeLabel(c.schemeCode)}</p>}
                 {(c.validFrom || c.validUntil) && (
                   <p className="text-[12px] text-slate-400">
                     {c.validFrom ? `Du ${fmtDay(c.validFrom)}` : ''}{c.validUntil ? ` au ${fmtDay(c.validUntil)}` : ''}
@@ -236,6 +251,7 @@ export function PatientCoverageChip({ patientId, mode, canEdit, legacyLabel }: {
     `${COVERAGE_TYPE_LABEL[c.type]} : ${orgName(c.organizationId)}`,
     c.membershipNumber && `N° ${c.membershipNumber}`,
     BENEFICIARY_LABEL[c.beneficiary],
+    c.type === 'AMO' && schemeLabel(c.schemeCode),
   ].filter(Boolean).join(' · ')).join('\n') || label;
   const cls = cn(
     'inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[12.5px] font-semibold',

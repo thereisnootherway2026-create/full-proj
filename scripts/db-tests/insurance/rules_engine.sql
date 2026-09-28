@@ -96,6 +96,11 @@ values ('50000000-0000-4000-8000-000000000001', 'SRC-TEST-001', 'TEST', 'Fixture
        ('50000000-0000-4000-8000-000000000002', 'SRC-TEST-NOTARCHIVED', 'TEST', 'Fixture sans archive', 'TEST_FIXTURE', null, null, null, null, null, 'test only');
 insert into insurance_coverage_schemes (code, label, coverage_layer, notes) values ('TEST_SCHEME', 'Régime de test (fictif)', 'BASE', 'test only');
 update patient_coverages set scheme_code = 'TEST_SCHEME' where id in (:'cova', :'cova2');
+-- provider context (TEST-ONLY codes), written the way set_insurance_provider_context does
+select set_config('mm.provider_context_write', 'on', false);
+update cabinets set provider_sector_code = 'TEST_SECTOR' where id = :cA;
+update profiles set provider_category_code = 'TEST_CATEGORY' where id = :docA;
+select set_config('mm.provider_context_write', 'off', false);
 \set src '\'50000000-0000-4000-8000-000000000001\''
 \set rev '\'a0000000-0000-4000-8000-000000000001\''
 insert into insurance_act_catalog (nomenclature, code, label, category, effective_from, source_id, verification_status, verified_by, verified_at)
@@ -261,7 +266,7 @@ select t.lines(:'c5') as l, t.snap(:'c5') as s \gset c5_
 select t.check((:'c5_l'::jsonb)->0->>'amount_source' = 'CALCULATED' and ((:'c5_l'::jsonb)->0->>'organism_amount')::numeric = 120
   and ((:'c5_l'::jsonb)->0->>'tnr_amount')::numeric = 200 and (:'c5_l'::jsonb)->0->>'rule_id' = '70000000-0000-4000-8000-000000000002'
   and (:'c5_s'::jsonb)->0->>'rule_key' = 'TEST-CONS' and ((:'c5_s'::jsonb)->0->>'rule_version')::int = 2
-  and (:'c5_s'::jsonb)->0->>'engine_version' = '1' and (:'c5_s'::jsonb)->0->>'date_of_care' = '2026-09-27'
+  and (:'c5_s'::jsonb)->0->>'engine_version' = '2' and (:'c5_s'::jsonb)->0->>'date_of_care' = '2026-09-27'
   and (:'c5_s'::jsonb)->0->'source_ids' ? '50000000-0000-4000-8000-000000000001'
   and (:'c5_s'::jsonb)->0->'result'->'rule'->>'coverage_rate' is not null and (:'c5_s'::jsonb)->0->'result'->'tariff'->>'flat_amount' is not null
   and (:'c5_s'::jsonb)->0->'coverage_context'->>'membership_number' = 'T-123'

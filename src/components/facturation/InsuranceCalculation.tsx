@@ -1,6 +1,6 @@
 import { dh, fmtDate } from './format';
 import { cn } from '../../lib/utils';
-import { AMOUNT_ORIGIN_LABEL, useClaimLinesQuery } from './tiersPayant';
+import { AMOUNT_ORIGIN_LABEL, useClaimContextQuery, useClaimLinesQuery } from './tiersPayant';
 import type { AmountOrigin, Claim, LineCalculation } from './tiersPayant';
 
 // What the rules engine answered for a line. Without a verified rule it says so ("Calcul
@@ -56,13 +56,23 @@ export function AmountOriginTag({ origin }: { origin: AmountOrigin }) {
   );
 }
 
-// "Origine du montant" in the claim detail: each line, how its amount was obtained, and what the
-// engine said at the time (read from the immutable snapshot, not from today's rules).
+// "Origine du montant" in the claim detail: the context frozen at creation, each line (act, quantity),
+// how its amount was obtained, and what the engine said at the time (read from the immutable
+// snapshot, not from today's rules).
 export function ClaimAmountOrigin({ claim }: { claim: Claim }) {
   const { data: lines = [], isLoading } = useClaimLinesQuery(claim.id);
+  const { data: context } = useClaimContextQuery(claim.id);
+  const billedTotal = lines.reduce((s, l) => s + l.billed, 0);
+  const organismTotal = lines.reduce((s, l) => s + l.organism, 0);
   return (
     <section>
       <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Origine du montant</p>
+      {context && (
+        <p className="mb-2 text-xs text-slate-500">
+          Contexte au dépôt : soins du {fmtDate(context.dateOfCare)} · Régime {context.schemeCode || 'non renseigné'}
+          {' · '}Secteur {context.providerSector || 'non renseigné'} · Catégorie {context.providerCategory || 'non renseignée'}
+        </p>
+      )}
       {isLoading ? (
         <p className="py-2 text-sm text-slate-400">Chargement…</p>
       ) : lines.length === 0 ? (
@@ -76,7 +86,13 @@ export function ClaimAmountOrigin({ claim }: { claim: Claim }) {
           {lines.map(l => (
             <li key={l.id} className="rounded-lg border border-slate-100 px-3 py-2 text-sm">
               <div className="flex items-baseline justify-between gap-3">
-                <span className="text-slate-800">{l.label}<span className="text-slate-400"> · facturé {dh(l.billed, true)}</span></span>
+                <span className="text-slate-800">
+                  {l.label}{l.quantity > 1 ? ` × ${l.quantity}` : ''}
+                  {l.actCode
+                    ? <span className="ml-1 font-mono text-xs text-slate-500">{l.nomenclature} {l.actCode}</span>
+                    : <span className="ml-1 text-xs text-slate-400">(aucun acte identifié)</span>}
+                  <span className="text-slate-400"> · facturé {dh(l.billed, true)}</span>
+                </span>
                 <span className="shrink-0 font-semibold tabular-nums text-slate-900">{dh(l.organism, true)}</span>
               </div>
               {l.amountSource === 'MANUAL' ? (
@@ -89,6 +105,12 @@ export function ClaimAmountOrigin({ claim }: { claim: Claim }) {
               {l.calculation && <CalculationExplanation calc={l.calculation} className="mt-2" />}
             </li>
           ))}
+          {lines.length > 1 && (
+            <li className="flex items-baseline justify-between gap-3 px-3 pt-1 text-sm">
+              <span className="font-semibold text-slate-700">Total · {lines.length} lignes · facturé {dh(billedTotal, true)}</span>
+              <span className="font-bold tabular-nums text-slate-900">{dh(organismTotal, true)}</span>
+            </li>
+          )}
         </ul>
       )}
     </section>

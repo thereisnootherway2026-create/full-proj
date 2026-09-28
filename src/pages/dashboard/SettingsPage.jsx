@@ -29,6 +29,7 @@ import PinLock from '../../components/common/PinLock'
 import { supabase } from '../../lib/supabase'
 import { logoFileToDataUrl, LOGO_ACCEPT } from '../../lib/cabinetLogo'
 import { SPECIALITES } from '../../data/specialites'
+import { InsuranceProviderSettings } from '../../components/facturation/InsuranceProviderSettings'
 import { doctorSpecialite } from '../../lib/letterhead'
 
 function SettingsPage() {
@@ -522,6 +523,7 @@ function SettingsPage() {
                       </button>
                     </div>
                   </form>
+                  {canManageActes && <InsuranceProviderSettings />}
                 </div>
               )}
 

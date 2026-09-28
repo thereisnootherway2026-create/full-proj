@@ -43,13 +43,44 @@ row is never edited or deleted: it can only be closed (`effective_until`) or sup
    reviewed migration or a follow-up one.
 5. **Regression test.** For each rule, add a case to `scripts/db-tests/insurance/` that reproduces a
    worked example from the source, and run the Stage 3.5 and 4B matrices.
-6. **Record the inputs the rules need:**
-   - the scheme on patient coverages (`scheme_code`), with a field in the coverage form;
-   - the sector and provider category of the clinic or practitioner. Rules or tariffs scoped on
-     them cannot match until then; the engine reads them from its `context` argument.
-7. **Identify acts on invoices.** Link `actes_catalogue` or invoice lines to reference acts, so the
-   modal can send act codes. Today it sends the invoice as one line with no act, so the answer is
-   always `ACT_NOT_IDENTIFIED`.
+6. **Configure the inputs (Stage 4C, done).** The UI and RPCs exist, but configuration only makes
+   sense with verified codes:
+   - the patient's AMO scheme (`patient_coverages.scheme_code`, coverage form);
+   - the cabinet sector (`cabinets.provider_sector_code`) and the practitioner category
+     (`profiles.provider_category_code`), set in Paramètres → Contexte assurance.
+
+   When the reference data is loaded, these codes must match the codes used in
+   `insurance_coverage_schemes` and in the tariff and rule scopes.
+7. **Acts on claims (Stage 4C, done).** Claim lines reference a verified `insurance_act_catalog` act
+   selected by the user, or are manual lines. Nothing is inferred from free text.
 
 Conditional rules (ALD, etc.) cannot be VERIFIED until an engine version that evaluates
 `conditions` exists. The `insurance_rules_conditions_supported` check enforces this.
+
+## Stage 4C: insurance context and act capture
+
+Migration: `supabase/migrations/20261002000000_insurance_context_and_acts.sql` (still no regulatory
+data). Tests: `scripts/db-tests/insurance/context_and_acts.sql`.
+
+- **Scheme.** `patient_coverages.scheme_code` is a configurable code (no foreign key while the
+  national list is empty). It is edited in the coverage form through `upsert_patient_coverage`, and
+  only kept on AMO coverages. On a coverage already used by a claim, a scheme change creates a new
+  coverage version.
+- **Provider.** `cabinets.provider_sector_code` and `profiles.provider_category_code` are
+  configurable codes, changed only through `set_insurance_provider_context` (doctor or admin,
+  audited). The specialty is reported but never used to derive a category.
+- **Engine version 2** answers MANUAL_REQUIRED, with an explicit reason, when any of these is
+  missing: act ("acte non rattaché…"), scheme for the AMO layer ("Régime AMO non renseigné."), a
+  scheme absent from the reference, sector, or category. It also answers MANUAL_REQUIRED for any
+  quantity above 1 (stored, never multiplied). Every missing input is listed in `missing_context`.
+  An explicitly selected act stays identified whatever else is missing.
+- **Tiers payant.** The answer carries the establishment, practitioner and organization, and whether
+  a verified agreement is on file. It stays UNVERIFIED without a verified rule, so AMO, CNSS, CNOPS
+  or a complementary insurer never implies eligibility.
+- **Claim lines.** One line per act selected from the verified catalog (`search_insurance_acts`,
+  valid on the date of care), or a manual line. Each line has a quantity, fees, the organism amount
+  (calculated or "Montant saisi manuellement" with a reason) and the patient share. Σ organism =
+  `amount_claimed`. The act is recorded on a line only when the engine resolved a verified one.
+- **Claim context.** `insurance_claim_contexts` freezes the coverage (scheme, organization,
+  membership, beneficiary, validity) and the provider context of each new claim. Claims created
+  before this stage have none, and still read "Montant saisi manuellement, sans détail par acte".

@@ -59,6 +59,8 @@ export interface Coverage {
   validUntil: string | null;
   isActive: boolean;
   notes: string;
+  // AMO scheme (régime), a configurable code; never deduced from the number, organization or beneficiary
+  schemeCode: string | null;
 }
 
 export interface Claim {
@@ -115,13 +117,62 @@ export interface LineCalculation {
   ruleEffectiveFrom: string | null;
   sources: Array<{ title: string; issuingBody: string; publicationDate: string | null; version: string | null }>;
   engineVersion: string;
+  quantity: number;
+  // inputs the engine needed and did not have (SCHEME, PROVIDER_SECTOR, PROVIDER_CATEGORY, ACT)
+  missingContext: string[];
+}
+
+// A reference act (insurance_act_catalog), selectable only when verified and in force.
+export interface InsuranceAct {
+  id: string;
+  nomenclature: string;
+  code: string;
+  label: string;
+  category: string;
+}
+
+// What the engine would use for an invoice + coverage, and what is missing.
+export interface InsuranceContext {
+  dateOfCare: string;
+  schemeCode: string | null;
+  providerSector: string | null;
+  providerCategory: string | null;
+  specialty: string | null;
+  missing: string[];
+}
+
+export const MISSING_CONTEXT_LABEL: Record<string, string> = {
+  SCHEME: 'Régime AMO non renseigné',
+  PROVIDER_SECTOR: 'Secteur du cabinet non renseigné',
+  PROVIDER_CATEGORY: 'Catégorie du praticien non renseignée',
+  ACT: 'Acte non identifié',
+};
+
+// One line of a new claim, as sent to create_insurance_claim_with_lines.
+export interface ClaimLineInput {
+  actId: string | null;
+  label: string;
+  quantity: number;
+  billed: number;
+  manualAmount: number | null;   // set = "Montant saisi manuellement"
+  manualReason: string | null;
+}
+
+// Claim context frozen at creation (insurance_claim_contexts).
+export interface ClaimContext {
+  dateOfCare: string;
+  schemeCode: string | null;
+  providerSector: string | null;
+  providerCategory: string | null;
 }
 
 export interface ClaimLine {
   id: string;
   lineNo: number;
   label: string;
+  nomenclature: string | null;
   actCode: string | null;
+  quantity: number;
   dateOfCare: string;
   billed: number;
   organism: number;
@@ -251,6 +302,10 @@ const ERRORS: Array<[RegExp, string]> = [
   [/coverage is not valid today/i, "La couverture choisie n'est pas valide à ce jour."],
   [/organization is inactive/i, "L'organisme de cette couverture est désactivé."],
   [/exceeds what is still unpaid/i, 'La part organisme dépasse le reste à payer de la facture.'],
+  [/invalid scheme code/i, 'Code de régime invalide : lettres majuscules, chiffres et « _ » uniquement.'],
+  [/invalid (sector|category) code/i, 'Code invalide : lettres majuscules, chiffres et « _ » uniquement.'],
+  [/quantity must be between/i, 'La quantité doit être comprise entre 1 et 999.'],
+  [/label is required/i, "Chaque ligne doit avoir un libellé."],
   [/manually entered amount needs a reason/i, 'Indiquez le motif de la saisie manuelle.'],
   [/automatic calculation unavailable/i, 'Calcul automatique indisponible : saisissez le montant et son motif.'],
   [/must be between 0 and the billed amount/i, 'La part organisme ne peut pas dépasser le montant facturé.'],
@@ -310,6 +365,7 @@ const toCoverage = (r: any): Coverage => ({
   validUntil: r.valid_until,
   isActive: Boolean(r.is_active),
   notes: r.notes || '',
+  schemeCode: r.scheme_code || null,
 });
 
 const fetchOrganizations = async (clinicId: string): Promise<Organization[]> => {
@@ -349,12 +405,14 @@ const toLineCalculation = (r: any, dateOfCare: string | null): LineCalculation =
     title: s.title, issuingBody: s.issuing_body, publicationDate: s.publication_date ?? null, version: s.version ?? null,
   })),
   engineVersion: r.engine_version,
+  quantity: Number(r.quantity ?? 1),
+  missingContext: r.missing_context || [],
 });
 
 const fetchClaimLines = async (claimId: string): Promise<ClaimLine[]> => {
   const { data, error } = await supabase
     .from('insurance_claim_lines')
-    .select('id, line_no, label, act_code, date_of_care, billed_amount, organism_amount, amount_source, calculation_status, manual_reason, entered_at, insurance_calculations(result)')
+    .select('id, line_no, label, nomenclature, act_code, quantity, date_of_care, billed_amount, organism_amount, amount_source, calculation_status, manual_reason, entered_at, insurance_calculations(result)')
     .eq('claim_id', claimId)
     .order('line_no');
   if (error) throw error;
@@ -362,7 +420,9 @@ const fetchClaimLines = async (claimId: string): Promise<ClaimLine[]> => {
     id: l.id,
     lineNo: l.line_no,
     label: l.label,
+    nomenclature: l.nomenclature,
     actCode: l.act_code,
+    quantity: Number(l.quantity ?? 1),
     dateOfCare: l.date_of_care,
     billed: Number(l.billed_amount),
     organism: Number(l.organism_amount),
@@ -482,20 +542,98 @@ export const useSettlementsQuery = () => {
 export const useClaimLinesQuery = (claimId: string | null | undefined) =>
   useQuery({ queryKey: ['claim-lines', claimId], queryFn: () => fetchClaimLines(claimId as string), enabled: Boolean(claimId) });
 
-// What the rules engine answers for an invoice taken as a single line (no act identified yet).
-// Server-side, read-only; it never proposes an amount without a verified rule.
-export const useInvoiceCalculation = (invoiceId: string | null | undefined, coverageId: string | null | undefined, billed: number, label: string) =>
-  useQuery({
-    queryKey: ['insurance-calculation', invoiceId, coverageId, billed],
-    queryFn: async () => {
-      const data = await rpc('calculate_insurance_lines', {
-        p_invoice_id: invoiceId, p_coverage_id: coverageId, p_lines: [{ label, billed_amount: billed }],
-      });
-      return toLineCalculation(data.lines[0], data.date_of_care);
+const toLineParam = (l: Pick<ClaimLineInput, 'actId' | 'label' | 'quantity' | 'billed'>) =>
+  ({ ...(l.actId ? { act_id: l.actId } : {}), label: l.label, quantity: l.quantity, billed_amount: l.billed });
+
+// What the rules engine answers for each line (server-side, read-only, date of care = the visit's
+// day). It never proposes an amount without a verified rule.
+export const useLinesCalculation = (invoiceId: string | null | undefined, coverageId: string | null | undefined,
+  lines: Array<Pick<ClaimLineInput, 'actId' | 'label' | 'quantity' | 'billed'>>) => {
+  const params = lines.map(toLineParam);
+  return useQuery({
+    queryKey: ['insurance-calculation', invoiceId, coverageId, JSON.stringify(params)],
+    queryFn: async (): Promise<LineCalculation[]> => {
+      const data = await rpc('calculate_insurance_lines', { p_invoice_id: invoiceId, p_coverage_id: coverageId, p_lines: params });
+      return (data.lines || []).map((r: any) => toLineCalculation(r, data.date_of_care));
     },
-    enabled: Boolean(invoiceId && coverageId && billed > 0),
+    enabled: Boolean(invoiceId && coverageId && params.length > 0),
+    retry: false,
+    placeholderData: (prev) => prev,
+  });
+};
+
+export const useInsuranceContext = (invoiceId: string | null | undefined, coverageId: string | null | undefined) =>
+  useQuery({
+    queryKey: ['insurance-context', invoiceId, coverageId],
+    queryFn: async (): Promise<InsuranceContext> => {
+      const d = await rpc('get_insurance_context', { p_invoice_id: invoiceId, p_coverage_id: coverageId });
+      return {
+        dateOfCare: d.date_of_care, schemeCode: d.patient?.scheme_code ?? null,
+        providerSector: d.provider?.sector ?? null, providerCategory: d.provider?.provider_category ?? null,
+        specialty: d.provider?.specialty ?? null, missing: d.missing_context || [],
+      };
+    },
+    enabled: Boolean(invoiceId && coverageId),
     retry: false,
   });
+
+// Verified reference acts in force on the invoice's date of care (empty until real data exists).
+export const useInsuranceActsSearch = (invoiceId: string | null | undefined, query: string, enabled = true) =>
+  useQuery({
+    queryKey: ['insurance-acts', invoiceId, query.trim()],
+    queryFn: async (): Promise<InsuranceAct[]> =>
+      (await rpc('search_insurance_acts', { p_invoice_id: invoiceId, p_query: query.trim() || null }) || []).map((a: any) => ({
+        id: a.id, nomenclature: a.nomenclature, code: a.code, label: a.label, category: a.category,
+      })),
+    enabled: Boolean(invoiceId) && enabled,
+    retry: false,
+  });
+
+export const useClaimContextQuery = (claimId: string | null | undefined) =>
+  useQuery({
+    queryKey: ['claim-context', claimId],
+    queryFn: async (): Promise<ClaimContext | null> => {
+      const { data, error } = await supabase.from('insurance_claim_contexts')
+        .select('date_of_care, coverage, provider').eq('claim_id', claimId as string).maybeSingle();
+      if (error) throw error;
+      return data ? {
+        dateOfCare: data.date_of_care, schemeCode: data.coverage?.scheme_code ?? null,
+        providerSector: data.provider?.sector ?? null, providerCategory: data.provider?.provider_category ?? null,
+      } : null;
+    },
+    enabled: Boolean(claimId),
+  });
+
+// The signed-in practitioner's insurance provider context (cabinet sector + own category).
+export const useProviderContext = () => {
+  const { clinicId, user } = useAppContext();
+  return useQuery({
+    queryKey: ['provider-context', clinicId, user?.id],
+    queryFn: async () => {
+      const [{ data: cab, error: e1 }, { data: prof, error: e2 }] = await Promise.all([
+        supabase.from('cabinets').select('provider_sector_code').eq('id', clinicId as string).maybeSingle(),
+        supabase.from('profiles').select('provider_category_code, specialite').eq('id', user?.id as string).maybeSingle(),
+      ]);
+      if (e1) throw e1;
+      if (e2) throw e2;
+      return { sector: cab?.provider_sector_code ?? '', category: prof?.provider_category_code ?? '', specialty: prof?.specialite ?? '' };
+    },
+    enabled: Boolean(clinicId && user?.id),
+  });
+};
+
+export const useSetProviderContext = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { sector: string; category: string }) =>
+      rpc('set_insurance_provider_context', { p_sector_code: v.sector || null, p_category_code: v.category || null }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['provider-context'] });
+      qc.invalidateQueries({ queryKey: ['insurance-context'] });
+      qc.invalidateQueries({ queryKey: ['insurance-calculation'] });
+    },
+  });
+};
 
 export const usePatientCoveragesQuery = (patientId: string | null | undefined) => {
   const { clinicId } = useAppContext();
@@ -510,6 +648,8 @@ export const usePatientCoveragesQuery = (patientId: string | null | undefined) =
 const refreshAll = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['claims'] });
   qc.invalidateQueries({ queryKey: ['claim-lines'] });
+  qc.invalidateQueries({ queryKey: ['claim-context'] });
+  qc.invalidateQueries({ queryKey: ['insurance-context'] });
   qc.invalidateQueries({ queryKey: ['insurance-settlements'] });
   qc.invalidateQueries({ queryKey: ['insurance-organizations'] });
   qc.invalidateQueries({ queryKey: ['patient-coverages'] });
@@ -553,6 +693,7 @@ export interface CoverageInput {
   validUntil?: string | null;
   isActive?: boolean;
   notes?: string;
+  schemeCode?: string | null;
 }
 
 export const useSaveCoverage = () => {
@@ -564,27 +705,26 @@ export const useSaveCoverage = () => {
       p_membership_number: v.membershipNumber ?? null, p_beneficiary_type: v.beneficiary ?? 'UNKNOWN',
       p_valid_from: v.validFrom || null, p_valid_until: v.validUntil || null,
       p_is_active: v.isActive ?? true, p_notes: v.notes ?? null,
+      p_scheme_code: v.type === 'AMO' ? (v.schemeCode || null) : null,
     }),
     onSuccess: () => refreshAll(qc),
   });
 };
 
-// Creates the claim with its line (the invoice as one line). The server recalculates the line:
-// without manualReason the engine's own amount is used (only possible when it CALCULATED one);
-// with it, `amount` is recorded as entered by hand, next to what the engine answered.
+// Creates the claim with its lines (one per medical act, or manual lines). The server recalculates
+// every line: without a manual amount the engine's own amount is used (only possible when it
+// CALCULATED one); with it, the amount is recorded as entered by hand, next to the engine's answer.
 export const useCreateClaim = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: {
-      invoiceId: string; coverageId: string; label: string; billed: number; amount: number;
-      manualReason: string | null; status: 'DRAFT' | 'READY'; notes?: string;
-    }) =>
+    mutationFn: (v: { invoiceId: string; coverageId: string; lines: ClaimLineInput[]; status: 'DRAFT' | 'READY'; notes?: string }) =>
       rpc('create_insurance_claim_with_lines', {
         p_invoice_id: v.invoiceId,
         p_coverage_id: v.coverageId,
-        p_lines: [v.manualReason
-          ? { label: v.label, billed_amount: v.billed, manual_organism_amount: v.amount, manual_reason: v.manualReason }
-          : { label: v.label, billed_amount: v.billed }],
+        p_lines: v.lines.map(l => ({
+          ...toLineParam(l),
+          ...(l.manualAmount !== null ? { manual_organism_amount: l.manualAmount, manual_reason: l.manualReason } : {}),
+        })),
         p_status: v.status,
         p_notes: v.notes ?? null,
       }),
