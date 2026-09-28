@@ -269,3 +269,17 @@ source `SRC-TEST-*`), never in migrations.
    returning `MANUAL_REQUIRED`, full test suite on fictitious fixtures). This would not change what
    users see, apart from the "Montant saisi manuellement" label, and it lets verified data plug in
    later without new code. Per the brief, this is **not** started without your approval.
+
+---
+
+## Stage 4D attempt (2026-09-28): stopped, no source obtained
+
+- `docs/insurance/sources/` does not exist: no document was supplied.
+- Every official host still answers **403 on CONNECT** from the environment proxy: `www.anam.ma`,
+  `anam.ma`, `inpe.anam.ma`, `www.cnss.ma`, `www.cnops.org.ma`, `wtemps.cnops.org.ma`, `www.acaps.ma`,
+  `www.sgg.gov.ma`, `www.sante.gov.ma`, `www.maroc.ma`.
+- As the Stage 4D brief requires, nothing was loaded. Every register entry in §B stays
+  **SOURCE_NOT_OBTAINED**, and every candidate rule in §D stays out of the database.
+- Checked: production reference tables are empty after all migrations (sources, schemes, acts,
+  tariffs, rules, agreements = 0). No migration or application code references the TEST fixtures
+  (`TESTNOM`, `T-*`, `SRC-TEST-*`).
