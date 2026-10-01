@@ -33,3 +33,49 @@ export async function markAppointmentArrived(rdvId) {
   if (error) throw error
   return data
 }
+
+export async function fetchAgendaRange(cabinetId, rangeStartKey, rangeEndKey) {
+  if (!cabinetId) return []
+
+  const { data, error } = await supabase
+    .from('rdv')
+    .select(`
+      id,
+      patient_id,
+      date_rdv,
+      status,
+      notes,
+      created_at,
+      duree_minutes,
+      type_consultation_id,
+      patients (nom, prenom, telephone)
+    `)
+    .eq('cabinet_id', cabinetId)
+    .or(`and(date_rdv.gte.${rangeStartKey}T00:00:00,date_rdv.lte.${rangeEndKey}T23:59:59),and(appointment_day.gte.${rangeStartKey},appointment_day.lte.${rangeEndKey})`)
+    .order('date_rdv', { ascending: true })
+
+  if (error) {
+    const fallback = await supabase
+      .from('rdv')
+      .select(`
+        id,
+        patient_id,
+        date_rdv,
+        status,
+        notes,
+        created_at,
+        patients (nom, prenom, telephone)
+      `)
+      .eq('cabinet_id', cabinetId)
+      .or(`and(date_rdv.gte.${rangeStartKey}T00:00:00,date_rdv.lte.${rangeEndKey}T23:59:59),and(appointment_day.gte.${rangeStartKey},appointment_day.lte.${rangeEndKey})`)
+      .order('date_rdv', { ascending: true })
+
+    if (fallback.error) {
+      console.error('fetchAgendaRange error:', fallback.error)
+      return []
+    }
+    return fallback.data || []
+  }
+
+  return data || []
+}

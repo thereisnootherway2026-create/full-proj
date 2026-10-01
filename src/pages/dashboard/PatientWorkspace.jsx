@@ -56,6 +56,7 @@ import { computeAge } from '../../lib/clinical/age'
 import { VISIT_STATUSES } from '../../lib/workflow'
 import { useFocusMode } from '../../hooks/useFocusMode'
 import ConsultationSheet from '../../components/consultation/ConsultationSheet'
+import OrdonnancePreviewModal from '../../components/consultation/OrdonnancePreviewModal'
 import { printDocument, useDocumentHeader } from '../../components/consultation/DocumentComposer'
 import AddItemModal from '../../components/consultation/AddItemModal'
 import Button from '../../components/common/Button'
@@ -252,10 +253,14 @@ function encounterToEvent(enc) {
       ...treatments.map((r) => ({ type: 'medication', name: r.medicament, detail: [r.posologie, r.duree].filter(Boolean).join(' · '), status: null })),
       ...n.examens.map((x) => ({ type: 'exam', name: x, detail: '', status: null })),
     ],
+    hasOrdonnance: Boolean(n.ordonnance && treatments.length > 0),
+    rawNote: n,
+    encounterId: enc.id,
+    rawEncounter: enc,
   }
 }
 
-function TimelineEvent({ event, index, onViewDetails }) {
+function TimelineEvent({ event, index, onViewDetails, onViewOrdonnance }) {
   const [isExpanded, setIsExpanded] = useState(false)
 
   const getEventConfig = () => {
@@ -301,9 +306,31 @@ function TimelineEvent({ event, index, onViewDetails }) {
             </div>
             <span className="shrink-0 text-[12px] font-medium text-slate-400">{event.date}</span>
           </div>
-          <p className={`mt-1 pl-[22px] text-[12.5px] font-semibold ${config.color}`}>
-            {event.category || config.label}
-          </p>
+          <div className="mt-1 pl-[22px] flex items-center justify-between gap-2 pr-1">
+            <p className={`text-[12.5px] font-semibold ${config.color}`}>
+              {event.category || config.label}
+            </p>
+            {event.hasOrdonnance && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onViewOrdonnance?.(event)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.stopPropagation()
+                    onViewOrdonnance?.(event)
+                  }
+                }}
+                className="inline-flex items-center gap-1 rounded-md bg-blue-50 border border-blue-200/90 px-2 py-0.5 text-[11px] font-bold text-blue-700 hover:bg-blue-100 hover:border-blue-300 transition-colors shadow-2xs cursor-pointer"
+                title="Consulter et réimprimer l'ordonnance"
+              >
+                📄 Ordonnance
+              </span>
+            )}
+          </div>
           {event.diagnosis && (
             <p className="mt-1.5 pl-[22px] text-[13px] text-slate-500">
               Diagnostic : <span className="font-semibold text-slate-800">{event.diagnosis}</span>
@@ -361,14 +388,25 @@ function TimelineEvent({ event, index, onViewDetails }) {
               </div>
             )}
 
-            {event.details && (
-              <button
-                onClick={() => onViewDetails(event)}
-                className="text-[12.5px] font-semibold text-blue-600 hover:text-blue-700"
-              >
-                Voir la note complète →
-              </button>
-            )}
+            <div className="flex items-center justify-between pt-1">
+              {event.details ? (
+                <button
+                  onClick={() => onViewDetails(event)}
+                  className="text-[12.5px] font-semibold text-blue-600 hover:text-blue-700"
+                >
+                  Voir la note complète →
+                </button>
+              ) : <span />}
+              {event.hasOrdonnance && (
+                <button
+                  type="button"
+                  onClick={() => onViewOrdonnance?.(event)}
+                  className="inline-flex items-center gap-1 text-[12px] font-semibold text-blue-600 hover:text-blue-800 bg-blue-50/80 px-2.5 py-1 rounded-md border border-blue-200 hover:bg-blue-100 transition-colors"
+                >
+                  📄 Afficher l'ordonnance
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -811,6 +849,8 @@ export default function PatientWorkspace() {
   const [showPatientSidebar, setShowPatientSidebar] = useState(false)
   const [timerSeconds, setTimerSeconds] = useState(0)
   const [selectedEvent, setSelectedEvent] = useState(null)
+  const [ordoModalEvent, setOrdoModalEvent] = useState(null)
+  const documentHeader = useDocumentHeader()
   const [showModal, setShowModal] = useState(searchParams.get('action') || null)
   const acteScope = usageScope(profile?.clinic_id || profile?.cabinet_id, profile?.id)
   const acteSuggestionsQ = useActeSuggestions(showModal === 'addActe', acteScope)
@@ -1089,6 +1129,7 @@ export default function PatientWorkspace() {
     active: showConsultationModal && canManageConsultation,
     note,
     onHydrate: setNote,
+    userId: profile?.id,
   })
 
   // --- Derived Values ---
@@ -1447,6 +1488,7 @@ export default function PatientWorkspace() {
                             event={event}
                             index={index}
                             onViewDetails={setSelectedEvent}
+                            onViewOrdonnance={(ev) => setOrdoModalEvent(ev)}
                           />
                         ))}
                       </div>
@@ -1531,6 +1573,9 @@ export default function PatientWorkspace() {
         visitLinked={Boolean(visitId)}
         startInReview={reviewRequested}
         onAddActe={() => setShowModal('addActe')}
+        onViewFacture={() => {
+          navigate(`/facturation?patientId=${patientIdParam}${patient?.nom ? `&patientNom=${encodeURIComponent(`${patient?.prenom || ''} ${patient?.nom || ''}`.trim())}` : ''}`)
+        }}
         onOpenContext={() => setShowPatientSidebar(true)}
         onCompleted={(result) => {
           if (result?.handoff === 'none') {
@@ -1559,6 +1604,20 @@ export default function PatientWorkspace() {
       <AnimatePresence>
         {selectedEvent && (
           <EventDetailsModal event={selectedEvent} onClose={() => setSelectedEvent(null)} />
+        )}
+        {ordoModalEvent && (
+          <OrdonnancePreviewModal
+            isOpen={Boolean(ordoModalEvent)}
+            onClose={() => setOrdoModalEvent(null)}
+            note={ordoModalEvent.rawNote || {
+              traitements: ordoModalEvent.sections?.traitements || [],
+              ordonnance: ordoModalEvent.rawEncounter?.note?.ordonnance || { lines: ordoModalEvent.sections?.traitements || [] },
+            }}
+            patient={patient}
+            patientName={`${patient?.prenom || ''} ${patient?.nom || ''}`.trim()}
+            encounterId={ordoModalEvent.encounterId || ''}
+            header={documentHeader}
+          />
         )}
         {blocker.state === 'blocked' && (
           <SimpleModal

@@ -1,47 +1,98 @@
-import { motion } from 'framer-motion'
-import { Check } from 'lucide-react'
+import { Fragment } from 'react'
+import { Check, ChevronRight, Clock3 } from 'lucide-react'
 
-// Badge states, identical for every step (and mirrored in StageSection):
-//   complete -> green check      active -> dark/filled number      pending -> neutral grey number
 export function badgeClass(state, onDark = false) {
-  if (state === 'complete') return 'bg-green-600 text-white'
+  if (state === 'complete') return 'bg-emerald-600 text-white'
   if (state === 'active') return onDark ? 'bg-white text-blue-600' : 'bg-blue-600 text-white'
-  return 'bg-slate-200 text-slate-600'
+  return 'bg-slate-100 text-slate-500'
 }
 
 export function stepState(active, filled) {
   return filled ? 'complete' : active ? 'active' : 'pending'
 }
 
-// The one navigation pattern: a sticky bar that drives an animated scroll and
-// stays synced with the section in view. `filled` maps step id -> has data.
-// Progress is carried by the badges themselves (green check per completed
-// section) and by the sidebar's "Consultation en cours" panel; there is no
-// separate progress strip.
-// Below `sm` only the active tab shows its label so all tabs fit without a
-// horizontal scroll; every tab keeps an accessible name.
-export default function SectionStepper({ steps, activeId, filled, onSelect }) {
+function formatVisitDate(date) {
+  const d = date ? new Date(date) : new Date()
+  if (Number.isNaN(d.getTime())) {
+    return new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
+  }
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+export default function SectionStepper({ steps, activeId, filled = {}, onSelect, visitDate }) {
+  const formattedDate = formatVisitDate(visitDate)
+
   return (
-    <nav aria-label="Sections" className="sticky top-0 z-10 -mx-5 mb-6 border-b border-slate-200 bg-slate-50/95 px-5 pt-2.5 backdrop-blur lg:-mx-8 lg:px-8">
-      <div className="flex gap-1 overflow-x-auto pb-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div className="mb-6 flex flex-col gap-3">
+      <div
+        className="grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-2xl border border-slate-200/90 bg-white p-1.5 shadow-[0_1px_3px_rgba(15,23,42,0.03)]"
+        role="tablist"
+        aria-label="Étapes de la consultation"
+      >
         {steps.map((s, i) => {
-          const active = activeId === s.id
-          const state = stepState(active, filled[s.id])
+          const state = stepState(activeId === s.id, filled[s.id])
+          const active = state === 'active'
+          const isComplete = state === 'complete'
+          const subtitle = s.hint || (i === 0 ? 'Raison de la visite' : i === 1 ? 'Constantes et observations' : 'Diagnostic, traitement et suivi')
+
           return (
-            <button key={s.id} type="button" onClick={() => onSelect(s.id)} aria-current={active ? 'step' : undefined} aria-label={s.label} title={s.label} data-state={state}
-              className={`relative flex flex-shrink-0 items-center gap-2 rounded-full px-3 py-1.5 text-[13px] font-semibold transition-colors sm:px-3.5 ${active ? 'text-white' : 'text-slate-600 hover:bg-slate-200'}`}>
-              {active && (
-                <motion.span layoutId="stepper-active-pill" className="absolute inset-0 rounded-full bg-blue-600"
-                  transition={{ type: 'spring', stiffness: 420, damping: 34 }} />
-              )}
-              <span className={`relative flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10px] font-bold transition-colors ${badgeClass(state, active)}`}>
-                {state === 'complete' ? <Check className="h-3 w-3" /> : i + 1}
+            <button
+              key={s.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => onSelect(s.id)}
+              className={`group relative flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-left transition-all duration-150 ${
+                active
+                  ? 'bg-blue-50/80 border border-blue-200/80 shadow-2xs'
+                  : isComplete
+                    ? 'border border-transparent hover:bg-emerald-50/50'
+                    : 'border border-transparent hover:bg-slate-50'
+              }`}
+            >
+              {/* Step number badge */}
+              <span
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[12px] font-bold transition-all ${
+                  active
+                    ? 'bg-[#1A56DB] text-white shadow-xs'
+                    : isComplete
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200/80'
+                }`}
+              >
+                {isComplete && !active ? <Check className="h-4 w-4 stroke-[2.5]" /> : i + 1}
               </span>
-              <span className={`relative ${active ? '' : 'hidden sm:inline'}`}>{s.label}</span>
+
+              {/* Step label & subtitle */}
+              <div className="min-w-0 flex-1">
+                <p className={`truncate text-[13px] font-bold leading-tight ${
+                  active
+                    ? 'text-[#1A56DB]'
+                    : isComplete
+                      ? 'text-slate-900'
+                      : 'text-slate-700 group-hover:text-slate-900'
+                }`}>
+                  {s.label}
+                </p>
+                <p className={`truncate text-[11.5px] mt-0.5 leading-tight ${
+                  active
+                    ? 'text-blue-700/80 font-medium'
+                    : isComplete
+                      ? 'text-emerald-700 font-medium'
+                      : 'text-slate-600'
+                }`}>
+                  {subtitle}
+                </p>
+              </div>
+
+              {/* Active indicator dot/bar */}
+              {active && (
+                <span className="hidden sm:block absolute right-3 h-2 w-2 rounded-full bg-[#1A56DB]" aria-hidden="true" />
+              )}
             </button>
           )
         })}
       </div>
-    </nav>
+    </div>
   )
 }

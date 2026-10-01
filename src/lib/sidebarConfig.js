@@ -15,7 +15,6 @@ export function getSidebarForRole(role) {
         label: '',
         items: [
           { label: 'Tableau de bord', to: '/dashboard', icon: 'layout-dashboard' },
-          { label: 'Tâches', to: '/taches', icon: 'list-checks' },
           { label: 'Agenda (RDV)', to: '/agenda', icon: 'calendar-days' },
           { label: 'Patients', to: '/patients', icon: 'folder-heart' },
           { label: 'Facturation', to: '/facturation', icon: 'credit-card' },
@@ -31,7 +30,6 @@ export function getSidebarForRole(role) {
         label: '',
         items: [
           { label: 'Tableau de bord', to: '/dashboard', icon: 'layout-dashboard' },
-          { label: 'Tâches', to: '/taches', icon: 'list-checks' },
           { label: 'Agenda (RDV)', to: '/agenda', icon: 'calendar-days' },
           { label: 'Patients', to: '/patients', icon: 'folder-heart' },
           { label: 'Facturation', to: '/facturation', icon: 'credit-card' },

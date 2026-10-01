@@ -67,4 +67,13 @@ export function prefillRenewalEdit(note, ord) {
 // The ordonnance's lines as consultation treatment rows.
 export const ordonnanceToTreatments = (ord) => (ord?.lignes || [])
   .filter((l) => String(l.medicament || '').trim())
-  .map((l) => ({ medicament: String(l.medicament).trim(), posologie: String(l.posologie || '').trim(), duree: String(l.duree || '').trim() }))
+  .map((l) => {
+    const row = {
+      medicament: String(l.medicament).trim(),
+      posologie: String(l.posologie || '').trim(),
+      duree: String(l.duree || '').trim(),
+    }
+    if (l.dosage !== undefined) row.dosage = String(l.dosage).trim()
+    if (l.overrideAllergy !== undefined) row.overrideAllergy = Boolean(l.overrideAllergy)
+    return row
+  })

@@ -13,6 +13,10 @@ import { supabase } from '../lib/supabase'
 import { SidebarProvider, SidebarInset } from '../ui/sidebar'
 import { TooltipProvider } from '../ui/tooltip'
 import { PinProvider } from '../context/PinContext'
+import { useQueryClient } from '@tanstack/react-query'
+import { startOfWeek, endOfWeek, format } from 'date-fns'
+import { fetchAgendaConfig } from '../lib/agendaConfig'
+import { fetchAgendaRange } from '../lib/appointmentService'
 
 // Map the last path segment to a title, works for any role prefix
 const PAGE_TITLES = {
@@ -60,6 +64,7 @@ function DashboardLayout() {
     closeConfirmation,
   } = useAppContext()
   
+  const queryClient = useQueryClient()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const mainScrollRef = useRef(null)
   const [search, setSearch] = useState('')
@@ -89,6 +94,23 @@ function DashboardLayout() {
   // Load all data into cache on mount (and when cabinetId changes)
   useEffect(() => {
     if (!cabinetId) return
+
+    // Prefetch agenda settings and current week appointments so Agenda opens instantly
+    const weekStartKey = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
+    const weekEndKey = format(endOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
+
+    queryClient.prefetchQuery({
+      queryKey: ['agenda-config', cabinetId],
+      queryFn: () => fetchAgendaConfig(cabinetId),
+      staleTime: 5 * 60 * 1000,
+    })
+
+    queryClient.prefetchQuery({
+      queryKey: ['agenda-range', cabinetId, 'week', weekStartKey, weekEndKey],
+      queryFn: () => fetchAgendaRange(cabinetId, weekStartKey, weekEndKey),
+      staleTime: 5 * 60 * 1000,
+    })
+
     const load = async () => {
       try {
         const [pRes, rRes, cRes] = await Promise.all([

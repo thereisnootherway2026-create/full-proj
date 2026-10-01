@@ -65,7 +65,7 @@ const FeatureCard3D: React.FC<FeatureCard3DProps> = ({
       if (innerRef.current) {
         innerRef.current.style.transition =
           'transform 0.5s cubic-bezier(0.23, 1, 0.32, 1), background 0.3s, box-shadow 0.3s, border-color 0.3s';
-        innerRef.current.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)`;
+        innerRef.current.style.transform = 'none';
       }
     });
   };
@@ -92,9 +92,8 @@ const FeatureCard3D: React.FC<FeatureCard3DProps> = ({
         className="w-full h-full rounded-3xl p-6 sm:p-7 relative overflow-hidden flex flex-col justify-between transition-all duration-300"
         style={{
           transformStyle: 'preserve-3d',
-          willChange: 'transform',
-          backgroundColor: isHovered ? 'rgba(255, 255, 255, 0.98)' : 'rgba(255, 255, 255, 0.85)',
-          backdropFilter: 'blur(16px)',
+          willChange: isHovered ? 'transform' : 'auto',
+          backgroundColor: isHovered ? '#ffffff' : 'rgba(255, 255, 255, 0.98)',
           borderColor: isHovered ? 'rgba(0, 104, 95, 0.35)' : 'rgba(226, 232, 240, 0.8)',
           borderWidth: '1px',
           borderStyle: 'solid',
@@ -105,7 +104,7 @@ const FeatureCard3D: React.FC<FeatureCard3DProps> = ({
       >
         <div
           className="relative z-10 flex flex-col h-full pointer-events-none w-full"
-          style={{ transform: 'translateZ(30px)', transformStyle: 'preserve-3d' }}
+          style={{ transform: isHovered ? 'translateZ(30px)' : 'none', transformStyle: 'preserve-3d', transition: 'transform 0.3s ease-out' }}
         >
           {/* Top Row: Icon & Badge */}
           <div className="flex items-center justify-between mb-4">

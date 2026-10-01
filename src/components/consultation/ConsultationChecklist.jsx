@@ -310,9 +310,6 @@ export default function ConsultationChecklist({
           <div className="text-left">
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-bold text-gray-900">Checklist intelligente</h3>
-              {allergyItems.length > 0 && (
-                <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Alertes critiques" />
-              )}
             </div>
             <p className="text-xs text-gray-400 font-medium mt-0.5">
               Préparée automatiquement à partir du dossier médical

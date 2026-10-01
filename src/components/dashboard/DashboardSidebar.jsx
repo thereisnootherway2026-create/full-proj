@@ -16,7 +16,12 @@ import {
   ListChecks
 } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import { startOfWeek, endOfWeek, format } from 'date-fns'
 import { getSidebarForRole } from '../../lib/sidebarConfig'
+import { getPatients, getConsultations, getRdv } from '../../lib/api'
+import { fetchAgendaConfig } from '../../lib/agendaConfig'
+import { fetchAgendaRange } from '../../lib/appointmentService'
 import { useSidebar } from '../../ui/sidebar'
 import { Tooltip as TooltipPrimitive } from 'radix-ui'
 import { useEffect } from 'react'
@@ -54,7 +59,7 @@ const CustomHoverTooltip = ({ children, content }) => (
   </TooltipPrimitive.Provider>
 )
 
-function SidebarLink({ item, onClick, isCollapsed }) {
+function SidebarLink({ item, onClick, onPrefetch, isCollapsed }) {
   const Icon = iconMap[item.icon]
 
   const linkContent = (
@@ -62,6 +67,9 @@ function SidebarLink({ item, onClick, isCollapsed }) {
       to={item.to}
       end={item.to.endsWith('/dashboard')}
       onClick={onClick}
+      onMouseEnter={onPrefetch}
+      onFocus={onPrefetch}
+      onPointerDown={onPrefetch}
       className={({ isActive }) =>
         `group interactive relative flex items-center transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] outline-none box-border ${
           isCollapsed ? 'justify-center w-full px-2 py-2' : 'gap-2.5 px-4 py-2.5 w-full'
@@ -118,6 +126,7 @@ function SidebarLink({ item, onClick, isCollapsed }) {
 function DashboardSidebar({ mobile = false, onClose }) {
   const { state, toggleSidebar } = useSidebar()
   const { profile, cabinet } = useAppContext()
+  const queryClient = useQueryClient()
   const isCollapsed = !mobile && state === 'collapsed'
 
   useEffect(() => {
@@ -129,6 +138,41 @@ function DashboardSidebar({ mobile = false, onClose }) {
   const cabinetName = cabinet?.nom || 'Administration'
   const userName = profile?.nom_complet || 'Utilisateur'
   const userInitials = userName.slice(0, 2).toUpperCase()
+
+  const prefetchPatients = () => {
+    const cabinetId = profile?.cabinet_id
+    if (!cabinetId) return
+
+    queryClient.prefetchQuery({ queryKey: ['patients', cabinetId], queryFn: getPatients, staleTime: 5 * 60 * 1000 })
+    queryClient.prefetchQuery({ queryKey: ['consultations', cabinetId], queryFn: getConsultations, staleTime: 5 * 60 * 1000 })
+    queryClient.prefetchQuery({ queryKey: ['rdv', cabinetId], queryFn: getRdv, staleTime: 5 * 60 * 1000 })
+  }
+
+  const prefetchAgenda = () => {
+    const cabinetId = profile?.cabinet_id
+    if (!cabinetId) return
+
+    const weekStartKey = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
+    const weekEndKey = format(endOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
+
+    queryClient.prefetchQuery({
+      queryKey: ['agenda-config', cabinetId],
+      queryFn: () => fetchAgendaConfig(cabinetId),
+      staleTime: 5 * 60 * 1000,
+    })
+
+    queryClient.prefetchQuery({
+      queryKey: ['agenda-range', cabinetId, 'week', weekStartKey, weekEndKey],
+      queryFn: () => fetchAgendaRange(cabinetId, weekStartKey, weekEndKey),
+      staleTime: 5 * 60 * 1000,
+    })
+  }
+
+  useEffect(() => {
+    if (profile?.cabinet_id) {
+      prefetchAgenda()
+    }
+  }, [profile?.cabinet_id])
 
   return (
     <aside
@@ -201,7 +245,19 @@ function DashboardSidebar({ mobile = false, onClose }) {
 
             <div className="space-y-2">
               {section.items.map((item) => (
-                <SidebarLink key={item.to} item={item} onClick={onClose} isCollapsed={isCollapsed} />
+                <SidebarLink
+                  key={item.to}
+                  item={item}
+                  onClick={onClose}
+                  onPrefetch={
+                    item.to === '/patients'
+                      ? prefetchPatients
+                      : item.to === '/agenda'
+                      ? prefetchAgenda
+                      : undefined
+                  }
+                  isCollapsed={isCollapsed}
+                />
               ))}
             </div>
           </div>

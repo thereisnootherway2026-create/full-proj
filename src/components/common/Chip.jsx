@@ -7,9 +7,12 @@ import IconButton from './IconButton'
 //   unselected -> quiet grey     selected -> dark (or green for "already used")
 // Radio/checkbox/tab semantics are opt-in through `role`; otherwise it is a plain
 // toggle (aria-pressed). Removable dark tags (diagnoses, exams) are `Tag`.
-const SIZES = { sm: 'px-2.5 py-0.5 text-[11.5px]', md: 'px-3 py-1 text-[12.5px]' }
-const OFF = 'bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700'
-const ON = { dark: 'bg-blue-600 text-white shadow-sm', blue: 'bg-blue-600 text-white shadow-sm', success: 'bg-green-100 text-green-800 ring-1 ring-inset ring-green-600' }
+const OFF = 'bg-white text-gray-600 border border-gray-200 hover:border-gray-300'
+const ON = {
+  dark: 'bg-blue-50 text-blue-700 border border-blue-300 font-medium',
+  blue: 'bg-blue-50 text-blue-700 border border-blue-300 font-medium',
+  success: 'bg-green-100 text-green-800 ring-1 ring-inset ring-green-600',
+}
 
 const Chip = forwardRef(function Chip({ selected = false, tone = 'dark', size = 'sm', icon: Icon, role, className = '', children, ...rest }, ref) {
   const aria = role === 'radio' || role === 'checkbox' ? { role, 'aria-checked': selected } : role === 'tab' ? { role, 'aria-selected': selected } : { 'aria-pressed': selected }

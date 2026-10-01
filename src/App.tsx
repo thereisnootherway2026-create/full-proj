@@ -15,6 +15,7 @@ import SecretaryOnboardingGate from './components/common/SecretaryOnboardingGate
 import AiScribePage from './pages/AiScribePage'
 import ProductShowcase from './pages/ProductShowcase'
 import FeaturesPage from './pages/FeaturesPage'
+import ConsultationPreviewPage from './pages/ConsultationPreviewPage'
 
 // Shared Dashboard Components (Using the .jsx production versions)
 import AppointmentsPage from './pages/dashboard/AppointmentsPage'
@@ -52,6 +53,7 @@ const router = createBrowserRouter([
   { path: '/signup', element: <SignupPage /> },
   { path: '/verification', element: <VerificationPage /> },
   { path: '/bienvenue-secretaire', element: <SecretaryWelcomePage /> },
+  { path: '/consultation-preview', element: <ConsultationPreviewPage /> },
 
   // Protected Dashboard Routes
   {

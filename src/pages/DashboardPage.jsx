@@ -185,10 +185,9 @@ const PreviewRdvBar = forwardRef(function PreviewRdvBar({ rdv, index = 0, doctor
       // dashboard. This list (Prévisualisation) has its own AnimatePresence and its own keys, never
       // shared with the queue's — there was no travel risk here — it just used to pop in at full
       // opacity instead of appearing calmly like everything else.
-      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.99 }}
-      animate={{ opacity: 1, y: 0, scale: 1, transition: { duration: reduceMotion ? 0.12 : 0.2, ease: 'easeOut', delay: reduceMotion ? 0 : Math.min(index, 8) * 0.035 } }}
+      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0, transition: { duration: reduceMotion ? 0.12 : 0.2, ease: 'easeOut', delay: reduceMotion ? 0 : Math.min(index, 8) * 0.035 } }}
       exit={{ opacity: 0, height: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } }}
-      willChange="transform, opacity, height, margin, padding"
     >
       <div className="flex items-start gap-3">
         <div 
@@ -398,7 +397,6 @@ function CancelledRdvBar({ rdv }) {
       initial={{ opacity: 0, y: -20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: 'easeOut' }}
-      willChange="transform, opacity"
     >
       <div className="flex items-center gap-3">
         <div 
@@ -667,8 +665,6 @@ const UNDO_WINDOW_MS = 3 * 60 * 1000
 
 const PatientCard = forwardRef(function PatientCard({ rdv, index, isBusy, onAction, isDoctor, isAlertActive, onAcknowledgeAlert, onEncaisser, onViewReceipt, paidVisits, allPayments, onViewPaymentHistory, isHistoryCard = false, totalPaid = 0, onOpenDossier, onUndo, isUndoable, balanceChips = false }, ref) {
   const { can } = useAppContext()
-  console.log('=== PatientCard Debug ===');
-  console.log('rdv:', rdv);
   // Get status - normalize status
   const normalizedStatus = rdv.status || VISIT_STATUSES.WAITING;
   const isSecretary = !isDoctor;
@@ -719,25 +715,22 @@ const PatientCard = forwardRef(function PatientCard({ rdv, index, isBusy, onActi
   // A long list would otherwise queue up a very visible cascade; cap how many cards actually stagger.
   const staggerDelay = reduceMotion ? 0 : Math.min(index, 8) * 0.035;
   const cardVariants = {
-    initial: reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.99 },
+    initial: reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 },
     normal: {
       opacity: 1,
       y: 0,
-      scale: 1,
       boxShadow: '0 1px 2px 0 rgba(0,0,0,0.05)',
       transition: { duration: reduceMotion ? 0.12 : 0.2, ease: 'easeOut', delay: staggerDelay }
     },
     alert: {
       opacity: 1,
       y: -3,
-      scale: 1,
       boxShadow: '0 8px 20px rgba(0,0,0,0.18)',
       transition: { duration: 0.2, ease: 'easeOut' }
     },
     leave: {
       opacity: 0,
       y: reduceMotion ? 0 : 6,
-      scale: reduceMotion ? 1 : 0.99,
       transition: { duration: reduceMotion ? 0.1 : 0.15, ease: 'easeIn' }
     }
   };
@@ -1077,6 +1070,7 @@ export default function DashboardPage() {
   const undoTimersRef = useRef(new Map())
   const [localQueueVisits, setLocalQueueVisits] = useState([])
   const fileDattenteRef = useRef(null)
+  const [pendingConsultVisitId, setPendingConsultVisitId] = useState(null)
 
   const toggleWalkIn = () => setShowWalkIn((open) => !open)
 
@@ -1515,8 +1509,11 @@ export default function DashboardPage() {
   }, [localQueueVisits, visits, isDoctor, paidVisits, allPayments])
 
   const activeConsultation = useMemo(() => {
-    return (visits || []).find(visit => ['consultation', VISIT_STATUSES.CONSULTATION].includes(visit.status))
-  }, [visits])
+    return (visits || []).find(visit =>
+      visit.id !== pendingConsultVisitId &&
+      ['consultation', VISIT_STATUSES.CONSULTATION].includes(visit.status)
+    )
+  }, [visits, pendingConsultVisitId])
 
   const filteredHistory = useMemo(() => {
     const map = new Map()
@@ -1754,17 +1751,23 @@ export default function DashboardPage() {
       case 'call_patient':
       case 'open_consultation':
         setBusy(rdv.id, true)
-        // Optimistically update the visit status in AppContext and localQueueVisits
+        // 1. Mark this visit as "in transition" so the "Reprendre la consultation"
+        //    banner on the dashboard NEVER renders for this specific optimistic update
+        //    while navigation is in flight. Without this guard the banner would
+        //    visibly animate in for ~300ms before the route commits, which looks broken.
+        setPendingConsultVisitId(rdv.id)
+        const patientId = rdv.patient_id || rdv.patients?.id
+        // 2. Navigate FIRST. React Router 7 commits the route change synchronously
+        //    before the next paint, so the destination page is what gets rendered
+        //    alongside the optimistic status updates below.
+        navigate(`/patient-workspace/${patientId}?visitId=${rdv.id}`)
+        // 3. Optimistically update the visit status in AppContext and localQueueVisits.
+        //    They now apply "in the background" for the target page, not for the
+        //    dashboard page we are already leaving.
         updateVisitStatus(rdv.id, VISIT_STATUSES.CONSULTATION)
         setLocalQueueVisits(current => current.map(visit => 
           visit.id === rdv.id ? { ...visit, status: VISIT_STATUSES.CONSULTATION } : visit
         ))
-        // Get patient ID from rdv
-        const patientId = rdv.patient_id || rdv.patients?.id
-        // Land on the patient workspace (Historique first); the doctor opens the
-        // consultation sheet from "+ Nouvelle consultation".
-        navigate(`/patient-workspace/${patientId}?visitId=${rdv.id}`)
-        // We can release the busy state after navigation has been triggered
         setTimeout(() => setBusy(rdv.id, false), 100)
         break
       case 'view_file':
@@ -1889,12 +1892,7 @@ export default function DashboardPage() {
           {/* Secretary POV: same as before */}
           <section
             ref={fileDattenteRef}
-            className="main-content relative rounded-[21px] border border-slate-200 bg-white px-5 py-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)] xl:col-span-2"
-            style={{
-              width: '100%',
-              transition: 'transform 0.6s cubic-bezier(0.32, 0.72, 0, 1), width 0.6s cubic-bezier(0.32, 0.72, 0, 1), padding 0.6s cubic-bezier(0.32, 0.72, 0, 1)',
-              willChange: 'width, padding, transform'
-            }}
+            className="main-content relative rounded-[21px] border border-slate-200 bg-white px-5 py-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)] xl:col-span-2 w-full"
           >
             <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
               <div>

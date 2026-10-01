@@ -41,12 +41,29 @@ export const EVOLUTION_OPTIONS = ['Stable', 'En amélioration', 'En aggravation'
 const str = (x) => (typeof x === 'string' ? x : x == null ? '' : String(x))
 const strList = (x) => (Array.isArray(x) ? x.map(str).map((t) => t.trim().slice(0, MAX_TEXT)).filter(Boolean).slice(0, MAX_ROWS) : [])
 const treatmentRows = (x) => (Array.isArray(x)
-  ? x.filter((r) => r && typeof r === 'object').slice(0, MAX_ROWS).map((r) => ({
-      medicament: str(r.medicament).slice(0, MAX_TEXT),
-      posologie: str(r.posologie).slice(0, MAX_TEXT),
-      duree: str(r.duree).slice(0, MAX_TEXT),
-    }))
+  ? x.filter((r) => r && typeof r === 'object').slice(0, MAX_ROWS).map((r) => {
+      const row = {
+        medicament: str(r.medicament).slice(0, MAX_TEXT),
+        posologie: str(r.posologie).slice(0, MAX_TEXT),
+        duree: str(r.duree).slice(0, MAX_TEXT),
+      }
+      if (r.dosage !== undefined) row.dosage = str(r.dosage).slice(0, MAX_TEXT)
+      if (r.overrideAllergy !== undefined) row.overrideAllergy = Boolean(r.overrideAllergy)
+      return row
+    })
   : [])
+
+export function normalizeOrdonnance(x) {
+  if (!x) return false
+  if (x === true) return true
+  if (typeof x === 'object') {
+    return {
+      generated_at: str(x.generated_at) || null,
+      lines: treatmentRows(x.lines || []),
+    }
+  }
+  return false
+}
 
 // Canonical shape + key order, so JSON.stringify comparison is stable.
 // Blank treatment rows are kept while editing and removed by finalizeNote().
@@ -68,7 +85,7 @@ export function normalizeNote(raw) {
     diagnostics: strList(n.diagnostics?.length ? n.diagnostics : (str(n.diagnostic).trim() ? [n.diagnostic] : [])),
     conduite: str(n.conduite ?? n.traitement ?? n.plan),
     traitements: treatmentRows(n.traitements ?? (Array.isArray(n.ordonnance) ? n.ordonnance : [])),
-    ordonnance: n.ordonnance === true,
+    ordonnance: normalizeOrdonnance(n.ordonnance),
     examens: strList(n.examens),
     followUpDate: str(n.followUpDate),
     followUpNotes: str(n.followUpNotes) || (legacyFollowUp && legacyFollowUp !== 'Aucun' ? `Contrôle dans ${legacyFollowUp}` : ''),
@@ -85,6 +102,8 @@ export function normalizeNote(raw) {
     // Unusual vitals the doctor explicitly confirmed: { vitalKey: confirmedValue }.
     // A confirmation only holds while the value is unchanged.
     vitalsConfirmed: confirmedVitals(n.vitalsConfirmed),
+    billingAmount: n.billingAmount != null ? str(n.billingAmount) : '250,00',
+    billingDescription: str(n.billingDescription) || 'Consultation de suivi',
   }
 }
 
@@ -97,10 +116,25 @@ function confirmedVitals(x) {
   return out
 }
 
-export function finalizeNote(raw) {
+export function finalizeNote(raw, userContext = {}) {
   const n = normalizeNote(raw)
   const traitements = n.traitements.filter((r) => r.medicament.trim())
-  return { ...n, traitements, ordonnance: n.ordonnance && traitements.length > 0 }
+  const now = new Date().toISOString()
+  const ordonnance = (n.ordonnance && traitements.length > 0)
+    ? {
+        generated_at: n.ordonnance.generated_at || now,
+        lines: traitements,
+      }
+    : null
+  return {
+    ...n,
+    traitements,
+    ordonnance,
+    created_at: raw?.created_at || n.created_at || now,
+    updated_at: now,
+    validated_at: now,
+    user_id: userContext?.userId || raw?.user_id || n.user_id || null,
+  }
 }
 
 export function isNoteEmpty(note) {

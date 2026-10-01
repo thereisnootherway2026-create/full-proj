@@ -1,10 +1,9 @@
 import { useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Check, CheckCircle2, Eye, FileUp, FlaskConical, Loader2, Paperclip, Plus, Printer, ScanLine, Activity, X } from 'lucide-react'
 import Button from '../common/Button'
 import IconButton from '../common/IconButton'
-import Chip from '../common/Chip'
 import { useAppContext } from '../../context/AppContext'
 import {
   EXAM_CATEGORY, EXAM_FILE_ACCEPT, attachExamResult, cancelExam, createExams, groupExams, isMissingTable,
@@ -125,6 +124,7 @@ function ExamRow({ exam, canManage, onAttach, onView, onReview, onCancel, busy }
 // `fallback` (exams read from the consultation notes) is shown read-only until the
 // exam_orders migration is applied. `motifs`: encounterId -> motif, for the printed request.
 export default function ExamensPanel({ patient, patientId, fallback = [], motifs = {}, extra }) {
+  const reduceMotion = useReducedMotion()
   const { canonicalRole, notify } = useAppContext()
   const canManage = canonicalRole === 'doctor' || canonicalRole === 'admin'
   const header = useDocumentHeader()
@@ -171,16 +171,20 @@ export default function ExamensPanel({ patient, patientId, fallback = [], motifs
 
   const subtitle = legacy || q.isLoading ? 'Examens complémentaires prescrits en consultation'
     : exams.length === 0 ? 'Aucun examen prescrit'
-      : [counts.demande && `${counts.demande} en attente`, counts.resultat && `${counts.resultat} à revoir`, counts.revu && `${counts.revu} revu${counts.revu > 1 ? 's' : ''}`].filter(Boolean).join(' · ')
+      : `${exams.length} examen${exams.length > 1 ? 's' : ''}${counts.resultat ? ` · ${counts.resultat} à revoir` : ''}`
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-[16px] font-bold text-slate-900">Examens</h2>
           <p className={`mt-0.5 text-[13px] ${counts.resultat ? 'font-medium text-amber-700' : 'text-slate-500'}`}>{subtitle}</p>
         </div>
-        {canManage && !legacy && !adding && <Button variant="ghost" size="sm" className="!text-blue-600 hover:!bg-blue-50" onClick={() => setAdding(true)}><Plus className="h-4 w-4" /> Ajouter un examen</Button>}
+        {canManage && !legacy && !adding && (
+          <Button variant="accentOutline" size="sm" onClick={() => setAdding(true)}>
+            <Plus className="h-4 w-4" /> Ajouter un examen
+          </Button>
+        )}
       </div>
 
       <AnimatePresence initial={false}>
@@ -197,11 +201,53 @@ export default function ExamensPanel({ patient, patientId, fallback = [], motifs
       </AnimatePresence>
 
       {!legacy && exams.length > 0 && (
-        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filtrer les examens">
-          {FILTERS.map(([key, label]) => {
-            const n = key === 'all' ? exams.length : counts[key]
-            return <Chip key={key} role="tab" size="md" selected={filter === key} onClick={() => setFilter(key)}>{label}{n ? <span className="opacity-70"> {n}</span> : null}</Chip>
-          })}
+        <div className="flex items-center" role="tablist" aria-label="Filtrer les examens">
+          <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200/70 bg-slate-100/80 p-1 shadow-2xs">
+            {FILTERS.map(([key, label]) => {
+              const isSelected = filter === key
+              const count = key === 'all' ? exams.length : counts[key]
+              const isAttention = key === 'resultat' && counts.resultat > 0
+
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={isSelected}
+                  onClick={() => setFilter(key)}
+                  className={`relative flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] transition-colors duration-150 ${
+                    isSelected
+                      ? 'font-semibold text-slate-900'
+                      : 'font-medium text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {isSelected && (
+                    <motion.span
+                      layoutId="exam-filter-pill"
+                      transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 500, damping: 40 }}
+                      className="absolute inset-0 rounded-lg bg-white shadow-xs"
+                    />
+                  )}
+                  <span className="relative z-10">{label}</span>
+                  {count > 0 && (
+                    <span
+                      className={`relative z-10 inline-flex h-4.5 min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10.5px] font-bold tabular-nums transition-colors ${
+                        isSelected
+                          ? isAttention
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-blue-50 text-blue-700'
+                          : isAttention
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-slate-200/70 text-slate-600'
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
         </div>
       )}
 

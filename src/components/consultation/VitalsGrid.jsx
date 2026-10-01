@@ -1,41 +1,32 @@
-import { useEffect, useRef, useState } from 'react'
-import { BloodPressureField, ComputedField, VitalField } from './ConsultationFields'
-import { vitalFlag } from '../../lib/vitalsRanges'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { computeIMC, validateVital } from '../../lib/vitals/validateVital'
 
-const GROUP = { bloodPressureSystolic: 'bloodPressure', bloodPressureDiastolic: 'bloodPressure' }
-const groupOf = (key) => GROUP[key] || key
-
-// Today's vitals. Fixed field order (nothing jumps while typing), two rows at
-// desktop width. Hierarchy is visual: missing = dashed and quiet, normal =
-// recedes, abnormal = red left border + tag, impossible (validateVital error) =
-// red with the reason, unusual (warn) = amber until "Confirmer".
-// A value copied with "Utiliser" carries a "Valeur reportée" tag until edited.
-// Taille is prefilled from the last valid measurement ("dernière valeur");
-// Poids is never prefilled: it is measured at every visit.
-export default function VitalsGrid({ vitals, setVital, applyLast, lastVitals, when, age, review = {}, onConfirm }) {
+export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVitals, when, age }) {
   const v = vitals
-  const [reported, setReported] = useState({})
   const prefilled = useRef(false)
-  const flag = (key) => vitalFlag(key, v, age)
-  const last = (raw, suffix) => (raw != null && raw !== '' ? { text: `${raw}${suffix}`, when } : null)
-  const [lastSys, lastDia] = String(lastVitals?.blood_pressure || '').split('/')
-  const tag = when || 'visite précédente'
-  const imc = computeIMC(v.weight, v.height)
 
-  const clear = (group) => setReported((r) => {
-    if (!(group in r)) return r
-    const next = { ...r }
-    delete next[group]
-    return next
-  })
-  const edit = (key) => (e) => { clear(groupOf(key)); return setVital(key)(e) }
-  const use = (group, apply) => () => { apply(); setReported((r) => ({ ...r, [group]: tag })) }
-  const fix = (key) => (value) => { clear(key); applyLast(key, value) }
-  const confirm = (key) => () => onConfirm?.(key)
+  const num = (val) => {
+    const n = parseFloat(String(val ?? '').replace(',', '.'))
+    return Number.isFinite(n) ? n : null
+  }
 
-  // One-time Taille prefill, only from a plausible last value (never copies an
-  // impossible one such as the "20 cm" test data).
+  const editInt = (key) => (e) => {
+    const clean = e.target.value.replace(/\D/g, '')
+    setVital(key)({ target: { value: clean } })
+  }
+
+  const editDec = (key) => (e) => {
+    let clean = e.target.value.replace(/[^0-9.,]/g, '')
+    const parts = clean.split(/[.,]/)
+    if (parts.length > 2) {
+      clean = parts[0] + (clean.includes(',') ? ',' : '.') + parts.slice(1).join('')
+    }
+    setVital(key)({ target: { value: clean } })
+  }
+
+  const setVal = (key, val) => applyLast(key, val)
+
+  // Auto-prefill height from last vitals if missing
   useEffect(() => {
     if (prefilled.current || !lastVitals) return
     prefilled.current = true
@@ -43,43 +34,347 @@ export default function VitalsGrid({ vitals, setVital, applyLast, lastVitals, wh
     if (h == null || h === '' || String(v.height ?? '').trim() !== '') return
     if (validateVital('taille', String(h), { ageYears: age }).level !== 'ok') return
     applyLast('height', h)
-    setReported((r) => ({ ...r, height: 'dernière valeur' }))
   }, [lastVitals, v.height, age, applyLast])
 
-  const common = (key) => ({ check: review[key], onConfirm: confirm(key) })
+  // Threshold calculations (TA > 140/90, T >= 38, SpO2 < 95, EVA >= 7)
+  const sys = num(v.bloodPressureSystolic)
+  const dia = num(v.bloodPressureDiastolic)
+  const isTaAbnormal = (sys != null && sys > 140) || (dia != null && dia > 90)
+
+  const fc = num(v.heartRate)
+  const isFcAbnormal = fc != null && (fc > 100 || fc < 50)
+
+  const temp = num(v.temperature)
+  const isTempAbnormal = temp != null && temp >= 38
+
+  const spo2 = num(v.oxygenSaturation)
+  const isSpo2Abnormal = spo2 != null && spo2 > 0 && spo2 < 95
+
+  const fr = num(v.respiratoryRate)
+  const isFrAbnormal = fr != null && (fr > 24 || fr < 10)
+
+  const weight = num(v.weight)
+  const height = num(v.height)
+  const imc = computeIMC(v.weight, v.height)
+
+  const glyc = num(v.bloodSugar)
+  const isGlycAbnormal = glyc != null && (glyc > 1.26 || glyc < 0.7)
+
+  const eva = parseInt(v.painScore, 10)
+  const hasEva = !isNaN(eva) && eva >= 0 && eva <= 10
+  const isEvaAbnormal = hasEva && eva >= 7
+
+  const badgeAmber = (
+    <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 bg-amber-100/90 border border-amber-200/80">
+      ▲ Inhabituel
+    </span>
+  )
+
+  const [lastSys, lastDia] = String(lastVitals?.blood_pressure || '').split('/')
 
   return (
-    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-5">
-      <BloodPressureField systolic={v.bloodPressureSystolic} diastolic={v.bloodPressureDiastolic}
-        onSystolicChange={edit('bloodPressureSystolic')} onDiastolicChange={edit('bloodPressureDiastolic')}
-        flag={flag('bloodPressure')} reported={reported.bloodPressure} previousSystolic={lastSys}
-        last={lastVitals?.blood_pressure ? { text: `${lastVitals.blood_pressure}`, when } : null}
-        onUseLast={use('bloodPressure', () => { if (lastSys && lastDia) { applyLast('bloodPressureSystolic', lastSys.trim()); applyLast('bloodPressureDiastolic', lastDia.trim()) } })}
-        check={review.bloodPressure} onConfirm={confirm('bloodPressure')} />
-      <VitalField label="FC" unit="bpm" value={v.heartRate} onChange={edit('heartRate')} placeholder="ex. 72" {...common('heartRate')} onApplySuggestion={fix('heartRate')}
-        flag={flag('heartRate')} reported={reported.heartRate} previous={lastVitals?.heart_rate} last={last(lastVitals?.heart_rate, ' bpm')}
-        onUseLast={use('heartRate', () => applyLast('heartRate', lastVitals.heart_rate))} />
-      <VitalField label="Température" unit="°C" value={v.temperature} onChange={edit('temperature')} placeholder="ex. 37" {...common('temperature')} onApplySuggestion={fix('temperature')}
-        flag={flag('temperature')} reported={reported.temperature} previous={lastVitals?.temperature} last={last(lastVitals?.temperature, ' °C')}
-        onUseLast={use('temperature', () => applyLast('temperature', lastVitals.temperature))} />
-      <VitalField label="SpO₂" unit="%" value={v.oxygenSaturation} onChange={edit('oxygenSaturation')} placeholder="ex. 98" {...common('oxygenSaturation')} onApplySuggestion={fix('oxygenSaturation')}
-        flag={flag('oxygenSaturation')} reported={reported.oxygenSaturation} previous={lastVitals?.spo2} last={last(lastVitals?.spo2, ' %')}
-        onUseLast={use('oxygenSaturation', () => applyLast('oxygenSaturation', lastVitals.spo2))} />
-      <VitalField label="FR" unit="/min" value={v.respiratoryRate} onChange={edit('respiratoryRate')} placeholder="ex. 16" {...common('respiratoryRate')} onApplySuggestion={fix('respiratoryRate')}
-        reported={reported.respiratoryRate} previous={lastVitals?.fr} last={last(lastVitals?.fr, ' /min')}
-        onUseLast={use('respiratoryRate', () => applyLast('respiratoryRate', lastVitals.fr))} />
-      {/* Poids: measured each visit, so the last value is a hint only (no "Utiliser"). */}
-      <VitalField label="Poids" unit="kg" value={v.weight} onChange={edit('weight')} placeholder="ex. 70" {...common('weight')} onApplySuggestion={fix('weight')}
-        reported={reported.weight} previous={lastVitals?.weight} last={last(lastVitals?.weight, ' kg')} />
-      <VitalField label="Taille" unit="cm" value={v.height} onChange={edit('height')} placeholder="ex. 170" {...common('height')} onApplySuggestion={fix('height')}
-        reported={reported.height} previous={lastVitals?.height} last={last(lastVitals?.height, ' cm')}
-        onUseLast={use('height', () => applyLast('height', lastVitals.height))} />
-      <ComputedField label="IMC" value={imc} unit="kg/m²" hint={imc == null ? 'poids et taille valides requis' : 'calculé'} />
-      <VitalField label="Glycémie capillaire" unit="g/L" value={v.bloodSugar} onChange={edit('bloodSugar')} placeholder="ex. 1,05" {...common('bloodSugar')} onApplySuggestion={fix('bloodSugar')}
-        reported={reported.bloodSugar} previous={lastVitals?.blood_sugar} last={last(lastVitals?.blood_sugar, ' g/L')}
-        onUseLast={use('bloodSugar', () => applyLast('bloodSugar', lastVitals.blood_sugar))} />
-      <VitalField label="Douleur (EVA)" unit="/10" value={v.painScore} onChange={edit('painScore')} placeholder="0 à 10" {...common('painScore')}
-        reported={reported.painScore} previous={lastVitals?.douleur_eva} last={last(lastVitals?.douleur_eva, '/10')} />
+    <div className="rounded-lg border border-[#E5E7EB] bg-white p-4 space-y-4">
+      {/* Header: Label top-right */}
+      <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+        <span className="text-[12.5px] font-bold uppercase tracking-wider text-slate-700">
+          Constantes
+        </span>
+        <span className="text-[11.5px] font-medium text-slate-500">
+          Mesures d'aujourd'hui {when ? `· Référence\u202F: ${when}` : ''}
+        </span>
+      </div>
+
+      {/* ROW 1: SIGNES VITAUX — 5 compact inline fields in ONE responsive row */}
+      <div className="space-y-1.5">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+          Signes vitaux
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+          {/* 1. TA */}
+          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
+            isTaAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase text-slate-500">TA</span>
+              {isTaAbnormal ? badgeAmber : (
+                lastSys && (
+                  <button
+                    type="button"
+                    onClick={() => { setVal('bloodPressureSystolic', lastSys.trim()); if (lastDia) setVal('bloodPressureDiastolic', lastDia.trim()) }}
+                    className="text-[10px] text-slate-400 hover:text-[#2563EB]"
+                    title={`Rappeler dernière TA (${lastVitals?.blood_pressure})`}
+                  >
+                    Dern. {lastVitals?.blood_pressure}
+                  </button>
+                )
+              )}
+            </div>
+            <div className="flex items-baseline gap-1">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={v.bloodPressureSystolic || ''}
+                onChange={editInt('bloodPressureSystolic')}
+                placeholder="120"
+                className="w-11 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
+              />
+              <span className="text-slate-400 font-light text-sm">/</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={v.bloodPressureDiastolic || ''}
+                onChange={editInt('bloodPressureDiastolic')}
+                placeholder="80"
+                className="w-11 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
+              />
+              <span className="ml-auto text-[11px] text-slate-400">mmHg</span>
+            </div>
+          </div>
+
+          {/* 2. FC */}
+          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
+            isFcAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase text-slate-500">FC</span>
+              {isFcAbnormal && badgeAmber}
+            </div>
+            <div className="flex items-baseline justify-between">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={v.heartRate || ''}
+                onChange={editInt('heartRate')}
+                placeholder="72"
+                className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
+              />
+              <span className="text-[11px] text-slate-400">bpm</span>
+            </div>
+          </div>
+
+          {/* 3. Température */}
+          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
+            isTempAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase text-slate-500">T°</span>
+              {isTempAbnormal && badgeAmber}
+            </div>
+            <div className="flex items-baseline justify-between">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={v.temperature || ''}
+                onChange={editDec('temperature')}
+                placeholder="37,0"
+                className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
+              />
+              <span className="text-[11px] text-slate-400">°C</span>
+            </div>
+          </div>
+
+          {/* 4. SpO2 */}
+          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
+            isSpo2Abnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase text-slate-500">SpO₂</span>
+              {isSpo2Abnormal && badgeAmber}
+            </div>
+            <div className="flex items-baseline justify-between">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={v.oxygenSaturation || ''}
+                onChange={editInt('oxygenSaturation')}
+                placeholder="98"
+                className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
+              />
+              <span className="text-[11px] text-slate-400">%</span>
+            </div>
+          </div>
+
+          {/* 5. FR */}
+          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
+            isFrAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase text-slate-500">FR</span>
+              {isFrAbnormal && badgeAmber}
+            </div>
+            <div className="flex items-baseline justify-between">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={v.respiratoryRate || ''}
+                onChange={editInt('respiratoryRate')}
+                placeholder="16"
+                className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
+              />
+              <span className="text-[11px] text-slate-400">/min</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 2: MORPHOLOGIE & MÉTABOLISME */}
+      <div className="space-y-1.5 pt-1 border-t border-slate-100">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+          Morphologie & métabolisme
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+          {/* 1. Poids */}
+          <div className="rounded-lg border border-[#E5E7EB] bg-white p-2.5 min-w-[130px]">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase text-slate-500">Poids</span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={v.weight || ''}
+                onChange={editDec('weight')}
+                placeholder="70,5"
+                className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
+              />
+              <span className="text-[11px] text-slate-400">kg</span>
+            </div>
+          </div>
+
+          {/* 2. Taille */}
+          <div className="rounded-lg border border-[#E5E7EB] bg-white p-2.5 min-w-[130px]">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase text-slate-500">Taille</span>
+              {lastVitals?.height && (
+                <button
+                  type="button"
+                  onClick={() => setVal('height', String(lastVitals.height))}
+                  className="text-[10px] text-slate-400 hover:text-[#2563EB]"
+                  title={`Utiliser dernière taille (${lastVitals.height} cm)`}
+                >
+                  Dern. {lastVitals.height}
+                </button>
+              )}
+            </div>
+            <div className="flex items-baseline justify-between">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={v.height || ''}
+                onChange={editInt('height')}
+                placeholder="170"
+                className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
+              />
+              <span className="text-[11px] text-slate-400">cm</span>
+            </div>
+          </div>
+
+          {/* 3. IMC (Auto-calculated with "Calculé" badge) */}
+          <div className={`rounded-lg border p-2.5 min-w-[130px] transition-colors ${
+            imc != null
+              ? 'border-blue-200 bg-blue-50/30'
+              : 'border-[#E5E7EB] bg-slate-50/70 opacity-80'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase text-slate-500">IMC</span>
+              {imc != null ? (
+                <span className="rounded bg-blue-100 px-1.5 py-0.2 text-[9.5px] font-bold text-blue-700">
+                  Calculé
+                </span>
+              ) : (
+                <span className="text-[10px] text-slate-400">requis</span>
+              )}
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className={`text-[16px] font-bold ${imc != null ? 'text-slate-900' : 'text-slate-400'}`}>
+                {imc != null ? String(imc).replace('.', ',') : '—'}
+              </span>
+              <span className="text-[11px] text-slate-400">kg/m²</span>
+            </div>
+          </div>
+
+          {/* 4. Glycémie */}
+          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
+            isGlycAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase text-slate-500">Glycémie</span>
+              {isGlycAbnormal && badgeAmber}
+            </div>
+            <div className="flex items-baseline justify-between">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={v.bloodSugar || ''}
+                onChange={editDec('bloodSugar')}
+                placeholder="1,05"
+                className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
+              />
+              <span className="text-[11px] text-slate-400">g/L</span>
+            </div>
+          </div>
+
+          {/* 5. Douleur EVA */}
+          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
+            isEvaAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase text-slate-500">Douleur EVA</span>
+              {isEvaAbnormal && badgeAmber}
+            </div>
+            <div className="flex items-baseline justify-between mb-1">
+              <span className="text-[16px] font-bold text-slate-900">
+                {hasEva ? eva : '—'}
+              </span>
+              <span className="text-[11px] text-slate-400">/ 10</span>
+            </div>
+            <div
+              role="radiogroup"
+              aria-label="Échelle visuelle analogique de la douleur"
+              className="flex flex-wrap gap-0.5 justify-between"
+              onKeyDown={(e) => {
+                const current = hasEva ? eva : 0
+                if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  const next = hasEva ? Math.min(10, current + 1) : 0
+                  setVal('painScore', String(next))
+                } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  const prev = hasEva ? Math.max(0, current - 1) : 0
+                  setVal('painScore', String(prev))
+                }
+              }}
+            >
+              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => {
+                const isSelected = hasEva && eva === score
+                return (
+                  <button
+                    key={score}
+                    type="button"
+                    role="radio"
+                    aria-checked={isSelected}
+                    tabIndex={isSelected ? 0 : -1}
+                    onClick={() => setVal('painScore', isSelected ? '' : String(score))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setVal('painScore', isSelected ? '' : String(score))
+                      }
+                    }}
+                    className={`h-5 w-4 rounded text-[10px] font-bold transition-all flex items-center justify-center border ${
+                      isSelected
+                        ? 'bg-blue-600 text-white border-blue-600 font-bold shadow-2xs'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    {score}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
-}
+})

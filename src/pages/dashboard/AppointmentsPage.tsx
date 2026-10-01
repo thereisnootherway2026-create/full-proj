@@ -18,8 +18,8 @@ import {
   subWeeks,
 } from 'date-fns'
 import { fr } from 'date-fns/locale'
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Loader2, Plus, CalendarX } from 'lucide-react'
-import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, CalendarX } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { cn } from '../../lib/utils'
 
 import AgendaDayView from '../../components/agenda/AgendaDayView'
@@ -29,7 +29,7 @@ import CancelledAppointmentsDrawer from '../../components/agenda/CancelledAppoin
 import { useAppContext } from '../../context/AppContext'
 import { supabase } from '../../lib/supabase'
 import { useAgendaConfig } from '../../lib/agendaConfig'
-import { cancelAppointment, confirmAppointment, markAppointmentArrived } from '../../lib/appointmentService'
+import { cancelAppointment, confirmAppointment, markAppointmentArrived, fetchAgendaRange } from '../../lib/appointmentService'
 import WeeklyAgenda from '../../components/agenda/WeeklyAgenda'
 import MonthlyAgenda from '../../components/agenda/MonthlyAgenda'
 
@@ -391,40 +391,33 @@ const AppointmentsPage: React.FC = () => {
   const rangeEndKey = format(visibleRange.end, 'yyyy-MM-dd')
   const selectedDayKey = format(selectedDate, 'yyyy-MM-dd')
 
+  const queryKey = useMemo(
+    () => ['agenda-range', profile?.cabinet_id, view, rangeStartKey, rangeEndKey],
+    [profile?.cabinet_id, view, rangeStartKey, rangeEndKey]
+  )
+
   const {
     data: dailyRdvsRaw = [],
-    isLoading,
     isFetching,
     error,
   } = useQuery({
-    queryKey: ['agenda-range', profile?.cabinet_id, view, rangeStartKey, rangeEndKey, agenda.schemaReady],
-    enabled: Boolean(profile?.cabinet_id) && !agenda.isLoading,
-    placeholderData: keepPreviousData,
-    queryFn: async () => {
-      const { data, error: queryError } = await supabase
-        .from('rdv')
-        .select(`
-          id,
-          patient_id,
-          date_rdv,
-          status,
-          notes,
-          created_at,
-          ${agenda.schemaReady ? 'duree_minutes, type_consultation_id,' : ''}
-          patients (nom, prenom, telephone)
-        `)
-        .eq('cabinet_id', profile!.cabinet_id)
-        .or(`and(date_rdv.gte.${rangeStartKey}T00:00:00,date_rdv.lte.${rangeEndKey}T23:59:59),and(appointment_day.gte.${rangeStartKey},appointment_day.lte.${rangeEndKey})`)
-        .order('date_rdv', { ascending: true })
-
-      if (queryError) {
-        const errorMsg = queryError?.message || (typeof queryError === 'object' ? JSON.stringify(queryError) : String(queryError))
-        console.error('Agenda query error:', errorMsg)
-        return [] as DailyRdv[]
+    queryKey,
+    enabled: Boolean(profile?.cabinet_id),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    placeholderData: (previousData) => {
+      if (previousData && previousData.length > 0) return previousData
+      const cached = queryClient.getQueryData<DailyRdv[]>(queryKey)
+      if (cached && cached.length > 0) return cached
+      if (view === 'day') {
+        const weekStart = format(startOfWeek(selectedDate, { weekStartsOn: 1 }), 'yyyy-MM-dd')
+        const weekEnd = format(endOfWeek(selectedDate, { weekStartsOn: 1 }), 'yyyy-MM-dd')
+        const cachedWeek = queryClient.getQueryData<DailyRdv[]>(['agenda-range', profile?.cabinet_id, 'week', weekStart, weekEnd])
+        if (cachedWeek) return cachedWeek
       }
-
-      return (data || []) as DailyRdv[]
+      return previousData
     },
+    queryFn: () => fetchAgendaRange(profile!.cabinet_id, rangeStartKey, rangeEndKey) as Promise<DailyRdv[]>,
   })
 
   // Use real data directly
@@ -488,7 +481,7 @@ const AppointmentsPage: React.FC = () => {
     return taken
   }, [dailyRdvs, currentPeriodCancelledAppointments, agenda.settings.pasMinutes])
 
-  const stats = useMemo(() => {
+  const _stats = useMemo(() => {
     const confirmed = dailyRdvs.filter((a) => mapAgendaStatus(a) === 'CONFIRME').length
     const pending = dailyRdvs.filter((a) => mapAgendaStatus(a) === 'PLANIFIE' || mapAgendaStatus(a) === 'A_CONFIRMER').length
     const cancelled = dailyRdvs.filter((a) => mapAgendaStatus(a) === 'ANNULE').length
@@ -543,7 +536,6 @@ const AppointmentsPage: React.FC = () => {
     const rdv = dailyRdvs.find((item) => item.id === appointment.id)
     if (!rdv) return
 
-    const queryKey = ['agenda-range', profile?.cabinet_id, view, rangeStartKey, rangeEndKey, agenda.schemaReady]
     const previousData = queryClient.getQueryData(queryKey)
 
     if (status === 'ANNULE') {
@@ -847,7 +839,7 @@ const AppointmentsPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="animate-in fade-in duration-500">
+        <div>
           {error && (
             <div className="rounded-[22px] border border-rose-200 bg-white p-6 text-center shadow-sm">
               <p className="text-sm font-semibold text-rose-600">

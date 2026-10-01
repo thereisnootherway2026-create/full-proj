@@ -124,8 +124,8 @@ function OrdonnanceCard({ entry, canEmit, busy, onEmit, onCancel, onDuplicate, o
   const motif = !isReal && hasMotif(ord.motif) ? ord.motif : ''
 
   return (
-    <article className={`rounded-xl border bg-white px-5 py-4 shadow-sm ${isCancelled ? 'border-slate-100 opacity-60' : 'border-slate-200'}`}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+    <article className={`rounded-xl border bg-white px-5 py-3.5 shadow-sm ${isCancelled ? 'border-slate-100 opacity-60' : 'border-slate-200'}`}>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-slate-100 pb-2.5">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
           <h3 className={`text-[14px] font-semibold text-slate-900 ${isCancelled ? 'line-through decoration-slate-300' : ''}`}>
             {fmtDate(entry.date)}
@@ -134,14 +134,29 @@ function OrdonnanceCard({ entry, canEmit, busy, onEmit, onCancel, onDuplicate, o
             {[fromConsultation ? 'Consultation' : 'Rédigée', doctor, motif && `Motif : ${motif}`].filter(Boolean).join(' · ')}
           </span>
         </div>
-        {statut ? (
-          <span className={`inline-flex items-center gap-1.5 text-[12px] font-medium ${statut.text}`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${statut.dot}`} />
-            {statut.label}
-          </span>
-        ) : (
-          <span className="text-[12px] text-slate-400">Lecture seule</span>
-        )}
+
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+          {statut ? (
+            <span className={`inline-flex items-center gap-1.5 text-[12px] font-medium ${statut.text}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${statut.dot}`} />
+              {statut.label}
+            </span>
+          ) : (
+            <span className="text-[12px] text-slate-400">Lecture seule</span>
+          )}
+
+          {isReal && (
+            <>
+              <span className="hidden h-3.5 w-px bg-slate-200 sm:inline-block" aria-hidden />
+              <div className="flex items-center gap-0.5">
+                {isEmitted && <Button size="xs" variant="ghost" onClick={() => onPrint(ord)}><Printer className="h-3.5 w-3.5" /> Imprimer</Button>}
+                {isDraft && canEmit && <Button size="xs" variant="accentOutline" disabled={busy} onClick={() => onEmit(ord)}><Send className="h-3.5 w-3.5" /> Émettre</Button>}
+                <Button size="xs" variant="ghost" disabled={busy} onClick={() => onDuplicate(ord)}><Copy className="h-3.5 w-3.5" /> Dupliquer</Button>
+                {!isCancelled && canEmit && <Button size="xs" variant="ghost" className="!text-slate-500 hover:!bg-red-50 hover:!text-red-600" disabled={busy} onClick={() => onCancel(ord)}><XCircle className="h-3.5 w-3.5" /> Annuler</Button>}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <ol className="mt-3 space-y-2">
@@ -155,15 +170,6 @@ function OrdonnanceCard({ entry, canEmit, busy, onEmit, onCancel, onDuplicate, o
           </li>
         ))}
       </ol>
-
-      {isReal && (
-        <div className="mt-3 flex flex-wrap items-center justify-end gap-1 border-t border-slate-100 pt-3">
-          {isEmitted && <Button size="xs" variant="ghost" onClick={() => onPrint(ord)}><Printer className="h-3.5 w-3.5" /> Imprimer</Button>}
-          {isDraft && canEmit && <Button size="xs" variant="accentOutline" disabled={busy} onClick={() => onEmit(ord)}><Send className="h-3.5 w-3.5" /> Émettre</Button>}
-          <Button size="xs" variant="ghost" disabled={busy} onClick={() => onDuplicate(ord)}><Copy className="h-3.5 w-3.5" /> Dupliquer</Button>
-          {!isCancelled && canEmit && <Button size="xs" variant="ghost" className="!text-slate-500 hover:!bg-red-50 hover:!text-red-600" disabled={busy} onClick={() => onCancel(ord)}><XCircle className="h-3.5 w-3.5" /> Annuler</Button>}
-        </div>
-      )}
     </article>
   )
 }
