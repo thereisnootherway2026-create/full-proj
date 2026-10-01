@@ -65,7 +65,7 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
   const isEvaAbnormal = hasEva && eva >= 7
 
   const badgeAmber = (
-    <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 bg-amber-100/90 border border-amber-200/80">
+    <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9.5px] font-semibold text-amber-800 bg-amber-50 border border-amber-200/90">
       ▲ Inhabituel
     </span>
   )
@@ -73,10 +73,10 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
   const [lastSys, lastDia] = String(lastVitals?.blood_pressure || '').split('/')
 
   return (
-    <div className="rounded-lg border border-[#E5E7EB] bg-white p-4 space-y-4">
+    <div className="rounded-xl border border-slate-200/80 bg-white p-4 sm:p-5 space-y-4">
       {/* Header: Label top-right */}
       <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-        <span className="text-[12.5px] font-bold uppercase tracking-wider text-slate-700">
+        <span className="text-[12px] font-bold uppercase tracking-wider text-slate-700">
           Constantes
         </span>
         <span className="text-[11.5px] font-medium text-slate-500">
@@ -91,8 +91,8 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
           {/* 1. TA */}
-          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
-            isTaAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          <div className={`rounded-xl border p-2.5 transition-colors min-w-[130px] ${
+            isTaAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200/80 bg-white'
           }`}>
             <div className="flex items-center justify-between mb-1">
               <span className="text-[11px] font-bold uppercase text-slate-500">TA</span>
@@ -101,7 +101,7 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
                   <button
                     type="button"
                     onClick={() => { setVal('bloodPressureSystolic', lastSys.trim()); if (lastDia) setVal('bloodPressureDiastolic', lastDia.trim()) }}
-                    className="text-[10px] text-slate-400 hover:text-[#2563EB]"
+                    className="text-[10px] text-slate-400 hover:text-[#1A56DB]"
                     title={`Rappeler dernière TA (${lastVitals?.blood_pressure})`}
                   >
                     Dern. {lastVitals?.blood_pressure}
@@ -109,7 +109,7 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
                 )
               )}
             </div>
-            <div className="flex items-baseline gap-1">
+            <div className="flex items-baseline gap-1 font-mono">
               <input
                 type="text"
                 inputMode="numeric"
@@ -127,19 +127,20 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
                 placeholder="80"
                 className="w-11 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
               />
-              <span className="ml-auto text-[11px] text-slate-400">mmHg</span>
+              <span className="ml-auto text-[11px] text-slate-400 font-sans">mmHg</span>
             </div>
           </div>
 
           {/* 2. FC */}
-          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
-            isFcAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          {/* 2. FC */}
+          <div className={`rounded-xl border p-2.5 transition-colors min-w-[130px] ${
+            isFcAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200/80 bg-white'
           }`}>
             <div className="flex items-center justify-between mb-1">
               <span className="text-[11px] font-bold uppercase text-slate-500">FC</span>
               {isFcAbnormal && badgeAmber}
             </div>
-            <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline justify-between font-mono">
               <input
                 type="text"
                 inputMode="numeric"
@@ -148,19 +149,19 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
                 placeholder="72"
                 className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
               />
-              <span className="text-[11px] text-slate-400">bpm</span>
+              <span className="text-[11px] text-slate-400 font-sans">bpm</span>
             </div>
           </div>
 
           {/* 3. Température */}
-          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
-            isTempAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          <div className={`rounded-xl border p-2.5 transition-colors min-w-[130px] ${
+            isTempAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200/80 bg-white'
           }`}>
             <div className="flex items-center justify-between mb-1">
               <span className="text-[11px] font-bold uppercase text-slate-500">T°</span>
               {isTempAbnormal && badgeAmber}
             </div>
-            <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline justify-between font-mono">
               <input
                 type="text"
                 inputMode="decimal"
@@ -169,19 +170,19 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
                 placeholder="37,0"
                 className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
               />
-              <span className="text-[11px] text-slate-400">°C</span>
+              <span className="text-[11px] text-slate-400 font-sans">°C</span>
             </div>
           </div>
 
           {/* 4. SpO2 */}
-          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
-            isSpo2Abnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          <div className={`rounded-xl border p-2.5 transition-colors min-w-[130px] ${
+            isSpo2Abnormal ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200/80 bg-white'
           }`}>
             <div className="flex items-center justify-between mb-1">
               <span className="text-[11px] font-bold uppercase text-slate-500">SpO₂</span>
               {isSpo2Abnormal && badgeAmber}
             </div>
-            <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline justify-between font-mono">
               <input
                 type="text"
                 inputMode="numeric"
@@ -190,19 +191,19 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
                 placeholder="98"
                 className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
               />
-              <span className="text-[11px] text-slate-400">%</span>
+              <span className="text-[11px] text-slate-400 font-sans">%</span>
             </div>
           </div>
 
           {/* 5. FR */}
-          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
-            isFrAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          <div className={`rounded-xl border p-2.5 transition-colors min-w-[130px] ${
+            isFrAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200/80 bg-white'
           }`}>
             <div className="flex items-center justify-between mb-1">
               <span className="text-[11px] font-bold uppercase text-slate-500">FR</span>
               {isFrAbnormal && badgeAmber}
             </div>
-            <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline justify-between font-mono">
               <input
                 type="text"
                 inputMode="numeric"
@@ -211,7 +212,7 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
                 placeholder="16"
                 className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
               />
-              <span className="text-[11px] text-slate-400">/min</span>
+              <span className="text-[11px] text-slate-400 font-sans">/min</span>
             </div>
           </div>
         </div>
@@ -224,11 +225,11 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
           {/* 1. Poids */}
-          <div className="rounded-lg border border-[#E5E7EB] bg-white p-2.5 min-w-[130px]">
+          <div className="rounded-xl border border-slate-200/80 bg-white p-2.5 min-w-[130px]">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[11px] font-bold uppercase text-slate-500">Poids</span>
             </div>
-            <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline justify-between font-mono">
               <input
                 type="text"
                 inputMode="decimal"
@@ -237,26 +238,26 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
                 placeholder="70,5"
                 className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
               />
-              <span className="text-[11px] text-slate-400">kg</span>
+              <span className="text-[11px] text-slate-400 font-sans">kg</span>
             </div>
           </div>
 
           {/* 2. Taille */}
-          <div className="rounded-lg border border-[#E5E7EB] bg-white p-2.5 min-w-[130px]">
+          <div className="rounded-xl border border-slate-200/80 bg-white p-2.5 min-w-[130px]">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[11px] font-bold uppercase text-slate-500">Taille</span>
               {lastVitals?.height && (
                 <button
                   type="button"
                   onClick={() => setVal('height', String(lastVitals.height))}
-                  className="text-[10px] text-slate-400 hover:text-[#2563EB]"
+                  className="text-[10px] text-slate-400 hover:text-[#1A56DB]"
                   title={`Utiliser dernière taille (${lastVitals.height} cm)`}
                 >
                   Dern. {lastVitals.height}
                 </button>
               )}
             </div>
-            <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline justify-between font-mono">
               <input
                 type="text"
                 inputMode="numeric"
@@ -265,43 +266,43 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
                 placeholder="170"
                 className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
               />
-              <span className="text-[11px] text-slate-400">cm</span>
+              <span className="text-[11px] text-slate-400 font-sans">cm</span>
             </div>
           </div>
 
           {/* 3. IMC (Auto-calculated with "Calculé" badge) */}
-          <div className={`rounded-lg border p-2.5 min-w-[130px] transition-colors ${
+          <div className={`rounded-xl border p-2.5 min-w-[130px] transition-colors ${
             imc != null
               ? 'border-blue-200 bg-blue-50/30'
-              : 'border-[#E5E7EB] bg-slate-50/70 opacity-80'
+              : 'border-slate-200/80 bg-slate-50/70 opacity-80'
           }`}>
             <div className="flex items-center justify-between mb-1">
               <span className="text-[11px] font-bold uppercase text-slate-500">IMC</span>
               {imc != null ? (
-                <span className="rounded bg-blue-100 px-1.5 py-0.2 text-[9.5px] font-bold text-blue-700">
+                <span className="rounded bg-blue-100 px-1.5 py-0.2 text-[9.5px] font-semibold text-[#1A56DB]">
                   Calculé
                 </span>
               ) : (
-                <span className="text-[10px] text-slate-400">requis</span>
+                <span className="text-[10px] text-slate-400 font-sans">requis</span>
               )}
             </div>
-            <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline justify-between font-mono">
               <span className={`text-[16px] font-bold ${imc != null ? 'text-slate-900' : 'text-slate-400'}`}>
                 {imc != null ? String(imc).replace('.', ',') : '—'}
               </span>
-              <span className="text-[11px] text-slate-400">kg/m²</span>
+              <span className="text-[11px] text-slate-400 font-sans">kg/m²</span>
             </div>
           </div>
 
           {/* 4. Glycémie */}
-          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
-            isGlycAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          <div className={`rounded-xl border p-2.5 transition-colors min-w-[130px] ${
+            isGlycAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200/80 bg-white'
           }`}>
             <div className="flex items-center justify-between mb-1">
               <span className="text-[11px] font-bold uppercase text-slate-500">Glycémie</span>
               {isGlycAbnormal && badgeAmber}
             </div>
-            <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline justify-between font-mono">
               <input
                 type="text"
                 inputMode="decimal"
@@ -310,23 +311,23 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
                 placeholder="1,05"
                 className="w-16 min-w-0 bg-transparent text-[16px] font-bold text-slate-900 placeholder:text-slate-400 outline-none"
               />
-              <span className="text-[11px] text-slate-400">g/L</span>
+              <span className="text-[11px] text-slate-400 font-sans">g/L</span>
             </div>
           </div>
 
           {/* 5. Douleur EVA */}
-          <div className={`rounded-lg border p-2.5 transition-colors min-w-[130px] ${
-            isEvaAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-[#E5E7EB] bg-white'
+          <div className={`rounded-xl border p-2.5 transition-colors min-w-[130px] ${
+            isEvaAbnormal ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200/80 bg-white'
           }`}>
             <div className="flex items-center justify-between mb-1">
               <span className="text-[11px] font-bold uppercase text-slate-500">Douleur EVA</span>
               {isEvaAbnormal && badgeAmber}
             </div>
-            <div className="flex items-baseline justify-between mb-1">
+            <div className="flex items-baseline justify-between mb-1 font-mono">
               <span className="text-[16px] font-bold text-slate-900">
                 {hasEva ? eva : '—'}
               </span>
-              <span className="text-[11px] text-slate-400">/ 10</span>
+              <span className="text-[11px] text-slate-400 font-sans">/ 10</span>
             </div>
             <div
               role="radiogroup"
@@ -363,7 +364,7 @@ export default memo(function VitalsGrid({ vitals, setVital, applyLast, lastVital
                     }}
                     className={`h-5 w-4 rounded text-[10px] font-bold transition-all flex items-center justify-center border ${
                       isSelected
-                        ? 'bg-blue-600 text-white border-blue-600 font-bold shadow-2xs'
+                        ? 'bg-[#1A56DB] text-white border-[#1A56DB] font-bold shadow-2xs'
                         : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
                     }`}
                   >

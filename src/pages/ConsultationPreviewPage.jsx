@@ -103,6 +103,8 @@ export default function ConsultationPreviewPage() {
   const isEmpty = searchParams.get('state') === 'empty'
   const isEditing = searchParams.get('editing') === 'true'
   const isDocExpanded = searchParams.get('docExpanded') === 'true'
+  const isLeftCollapsed = searchParams.get('leftCollapsed') === 'true'
+  const isRightCollapsed = searchParams.get('rightCollapsed') === 'true'
 
   const [note, setNote] = useState(isEmpty ? EMPTY_NOTE : FILLED_NOTE)
   const [acts, setActs] = useState(isEmpty ? [] : FILLED_ACTES)
@@ -142,6 +144,8 @@ export default function ConsultationPreviewPage() {
         initialOpenGroup={railGroupParam}
         initialEditingIdx={isEditing ? 0 : null}
         initialActiveDoc={isDocExpanded ? 'Certificat médical' : null}
+        initialLeftCollapsed={isLeftCollapsed}
+        initialRightCollapsed={isRightCollapsed}
       />
     </div>
   )

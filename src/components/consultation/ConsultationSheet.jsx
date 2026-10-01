@@ -13,6 +13,8 @@ import {
   Loader2,
   Mic,
   PanelLeft,
+  PanelRight,
+  Pill,
   Plus,
   Search,
   Sparkles,
@@ -136,6 +138,8 @@ export default function ConsultationSheet({
   initialOpenGroup = 'ordonnance',
   initialEditingIdx = null,
   initialActiveDoc = null,
+  initialLeftCollapsed = false,
+  initialRightCollapsed = false,
 }) {
   const [mode, setMode] = useState('note')
   const [showFinalize, setShowFinalize] = useState(false)
@@ -150,6 +154,8 @@ export default function ConsultationSheet({
   const [forceFull, setForceFull] = useState(false)
   const [motifError, setMotifError] = useState(false)
   const [billToCaisse, setBillToCaisse] = useState(true)
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(initialLeftCollapsed)
+  const [rightRailCollapsed, setRightRailCollapsed] = useState(initialRightCollapsed)
 
   // Ordonnance modal & validation state
   const [showOrdonnanceModal, setShowOrdonnanceModal] = useState(false)
@@ -367,6 +373,11 @@ export default function ConsultationSheet({
   const allergyHits = note.traitements.map((r) => allergyMatch(r.medicament, tokens)).filter(Boolean)
 
   const patientName = `${patient?.prenom || ''} ${patient?.nom || ''}`.trim() || 'Patient'
+  const totalActionsCount =
+    (note.traitements || []).filter((r) => r.medicament?.trim()).length +
+    (note.examens || []).length +
+    (note.documents || []).length +
+    acts.length
 
   // Section status determinations
   const section1Status = motifError
@@ -779,7 +790,7 @@ export default function ConsultationSheet({
               STICKY FULL-WIDTH HEADER
              ═══════════════════════════════════════ */}
           <header className="sticky top-0 z-30 flex h-14 w-full flex-shrink-0 items-center justify-between border-b border-slate-200/90 bg-white px-4 sm:px-6 shadow-2xs">
-            {/* Left side */}
+            {/* Left side: Back to dossier + Left sidebar toggle */}
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -789,12 +800,31 @@ export default function ConsultationSheet({
                 <ArrowLeft className="h-4 w-4" />
                 <span>Retour au dossier</span>
               </button>
+
+              <div className="hidden lg:block h-4 w-px bg-slate-200" />
+
+              {/* Desktop left sidebar toggle */}
+              <button
+                type="button"
+                onClick={() => setLeftSidebarCollapsed(!leftSidebarCollapsed)}
+                className={`hidden lg:inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border text-[12px] font-medium transition-colors shadow-2xs ${
+                  leftSidebarCollapsed
+                    ? 'border-blue-200 bg-blue-50/70 text-[#1A56DB] hover:bg-blue-100/70'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                }`}
+                title={leftSidebarCollapsed ? 'Afficher le volet patient' : 'Masquer le volet patient'}
+                aria-label={leftSidebarCollapsed ? 'Afficher le volet patient' : 'Masquer le volet patient'}
+              >
+                <PanelLeft className="h-3.5 w-3.5 text-slate-500" />
+                <span>{leftSidebarCollapsed ? patientName : 'Volet patient'}</span>
+              </button>
             </div>
 
-            {/* Right side */}
-            <div className="flex items-center gap-2 sm:gap-3.5">
+            {/* Right side: SaveStatus, Actions toggle, Abandonner, Finaliser */}
+            <div className="flex items-center gap-2 sm:gap-3">
               <SaveStatus draft={draft} />
 
+              {/* Mobile Drawer Trigger */}
               <button
                 type="button"
                 onClick={() => setContextOpen(true)}
@@ -802,6 +832,22 @@ export default function ConsultationSheet({
               >
                 <PanelLeft className="h-3.5 w-3.5" />
                 <span>Contexte</span>
+              </button>
+
+              {/* Desktop right rail toggle */}
+              <button
+                type="button"
+                onClick={() => setRightRailCollapsed(!rightRailCollapsed)}
+                className={`hidden xl:inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border text-[12px] font-medium transition-colors shadow-2xs ${
+                  rightRailCollapsed
+                    ? 'border-blue-200 bg-blue-50/70 text-[#1A56DB] hover:bg-blue-100/70'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                }`}
+                title={rightRailCollapsed ? 'Afficher les actions cliniques' : 'Masquer les actions cliniques'}
+                aria-label={rightRailCollapsed ? 'Afficher les actions cliniques' : 'Masquer les actions cliniques'}
+              >
+                <PanelRight className="h-3.5 w-3.5 text-slate-500" />
+                <span>{rightRailCollapsed ? `Actions (${totalActionsCount})` : 'Actions rapides'}</span>
               </button>
 
               <Button
@@ -817,7 +863,7 @@ export default function ConsultationSheet({
                 variant="primary"
                 size="sm"
                 disabled={!draft.ready}
-                className="!bg-[#2563EB] hover:!bg-blue-700 !text-white !font-medium !px-4 !py-2 !rounded-xl shadow-xs"
+                className="!bg-[#1A56DB] hover:!bg-blue-700 !text-white !font-semibold !px-4 !py-2 !rounded-xl shadow-xs"
                 onClick={openFinalize}
               >
                 Finaliser la visite
@@ -826,7 +872,7 @@ export default function ConsultationSheet({
           </header>
 
           {/* ═══════════════════════════════════════
-              MAIN AREA (320px Left Sidebar + Content Area)
+              MAIN AREA (Left Sidebar + Content Area)
              ═══════════════════════════════════════ */}
           <div className="flex min-h-0 flex-1 relative overflow-hidden">
             {/* Left Sidebar */}
@@ -840,7 +886,9 @@ export default function ConsultationSheet({
               vitalsState={vitalsQ.isLoading ? 'loading' : vitalsQ.isError ? 'error' : 'ok'}
               encounters={encountersQ.data || []}
               encountersState={encountersQ.isLoading ? 'loading' : encountersQ.isError ? 'error' : 'ok'}
-              className="hidden lg:flex w-[320px] flex-shrink-0"
+              isCollapsed={leftSidebarCollapsed}
+              onToggleCollapse={() => setLeftSidebarCollapsed(!leftSidebarCollapsed)}
+              className={leftSidebarCollapsed ? 'hidden lg:flex w-14 flex-shrink-0' : 'hidden lg:flex w-[320px] flex-shrink-0'}
             />
 
             {/* Center Content Workspace */}
@@ -875,7 +923,7 @@ export default function ConsultationSheet({
                   <Loader2 className="h-4 w-4 animate-spin text-[#2563EB]" /> Chargement de la consultation…
                 </div>
               ) : (
-                <div className="grid grid-cols-1 xl:grid-cols-[1fr_20px_320px] items-start px-4 py-4 pb-20 sm:px-6 lg:px-8 max-w-[1480px] mx-auto w-full">
+                <div className={`grid grid-cols-1 ${rightRailCollapsed ? 'xl:grid-cols-[1fr_20px_56px]' : 'xl:grid-cols-[1fr_20px_320px]'} items-start px-4 py-4 pb-20 sm:px-6 lg:px-8 max-w-[1520px] mx-auto w-full transition-all`}>
                   {/* ── COLUMN 1: MAIN CONTENT ── */}
                   <div className="min-w-0 col-span-1">
                   {/* Offline / Local Mode Banner */}
@@ -901,7 +949,7 @@ export default function ConsultationSheet({
                   {draft.existingDraft && (
                     <div className="mb-3.5 flex h-10 items-center justify-between gap-3 rounded-xl border border-blue-200/90 bg-blue-50/90 px-3.5 text-blue-950 shadow-2xs">
                       <div className="flex items-center gap-2 min-w-0">
-                        <Clock className="h-4 w-4 text-[#2563EB] shrink-0" />
+                        <Clock className="h-4 w-4 text-[#1A56DB] shrink-0" />
                         <span className="font-semibold text-slate-800 text-[12.5px] truncate">
                           Reprendre le brouillon de {draft.existingDraft.time}&nbsp;?
                         </span>
@@ -919,7 +967,7 @@ export default function ConsultationSheet({
                           variant="primary"
                           size="xs"
                           onClick={draft.clearExistingDraft}
-                          className="!bg-[#2563EB] hover:!bg-blue-700 !px-3 !py-1 text-[12px]"
+                          className="!bg-[#1A56DB] hover:!bg-blue-700 !px-3 !py-1 text-[12px]"
                         >
                           Reprendre
                         </Button>
@@ -936,71 +984,80 @@ export default function ConsultationSheet({
                   )}
 
                   {/* ═══════════════════════════════════════
-                      STICKY 3-PILL SECTION NAVIGATOR (h-8, text-sm, gap-2)
+                      STICKY 3-STAGE CLINICAL PROGRESS NAVIGATOR
                      ═══════════════════════════════════════ */}
                   <nav
-                    aria-label="Sections de la consultation"
-                    className="sticky top-0 z-20 py-2 bg-[#F8FAFC]/95 backdrop-blur-xs border-b border-slate-200/70 mb-4"
+                    aria-label="Progression de la consultation"
+                    className="sticky top-0 z-20 py-2.5 bg-[#F8FAFC]/95 backdrop-blur-xs border-b border-slate-200/80 mb-5"
                   >
-                    <div className="flex items-center gap-2 overflow-x-auto pb-0.5 scrollbar-none">
-                      {/* Pill 1: Motif & symptômes */}
-                      <button
-                        type="button"
-                        onClick={() => handleSelectSection(1)}
-                        title={section1Summary !== '—' ? section1Summary : 'Motif & symptômes'}
-                        className={`inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full text-sm font-semibold transition-all whitespace-nowrap shadow-2xs ${
-                          activeSection === 1
-                            ? 'bg-[#2563EB] text-white shadow-xs'
-                            : 'bg-white text-slate-700 border border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        <span>1 Motif & symptômes</span>
-                        {s1Completed && (
-                          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-green-500">
-                            <Check className="h-2.5 w-2.5 text-white stroke-[3]" />
-                          </span>
-                        )}
-                      </button>
-
-                      {/* Pill 2: Examen clinique */}
-                      {!lightweight && (
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 overflow-x-auto pb-0.5 scrollbar-none">
+                        {/* Step 1: Motif & symptômes */}
                         <button
                           type="button"
-                          onClick={() => handleSelectSection(2)}
-                          title={section2Summary !== '—' ? section2Summary : 'Examen clinique'}
-                          className={`inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full text-sm font-semibold transition-all whitespace-nowrap shadow-2xs ${
-                            activeSection === 2
-                              ? 'bg-[#2563EB] text-white shadow-xs'
+                          onClick={() => handleSelectSection(1)}
+                          title={section1Summary !== '—' ? section1Summary : 'Motif & symptômes'}
+                          className={`inline-flex items-center gap-2 h-8 px-3.5 rounded-xl text-[13px] font-semibold transition-all whitespace-nowrap shadow-2xs ${
+                            activeSection === 1
+                              ? 'bg-[#1A56DB] text-white shadow-xs font-semibold'
                               : 'bg-white text-slate-700 border border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                           }`}
                         >
-                          <span>2 Examen clinique</span>
-                          {s2HasContent && (
-                            <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-green-500">
+                          <span>1 · Motif & symptômes</span>
+                          {s1Completed && (
+                            <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500">
+                              <Check className="h-2.5 w-2.5 text-white stroke-[3]" />
+                            </span>
+                          )}
+                          {s1RequiredEmpty && activeSection !== 1 && (
+                            <span className="h-2 w-2 rounded-full bg-amber-500 shrink-0" title="Motif obligatoire" />
+                          )}
+                        </button>
+
+                        {/* Step 2: Examen clinique */}
+                        {!lightweight && (
+                          <button
+                            type="button"
+                            onClick={() => handleSelectSection(2)}
+                            title={section2Summary !== '—' ? section2Summary : 'Examen clinique'}
+                            className={`inline-flex items-center gap-2 h-8 px-3.5 rounded-xl text-[13px] font-semibold transition-all whitespace-nowrap shadow-2xs ${
+                              activeSection === 2
+                                ? 'bg-[#1A56DB] text-white shadow-xs font-semibold'
+                                : 'bg-white text-slate-700 border border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span>2 · Examen clinique</span>
+                            {s2HasContent && (
+                              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500">
+                                <Check className="h-2.5 w-2.5 text-white stroke-[3]" />
+                              </span>
+                            )}
+                          </button>
+                        )}
+
+                        {/* Step 3: Évaluation & conduite */}
+                        <button
+                          type="button"
+                          onClick={() => handleSelectSection(3)}
+                          title={section3Summary !== '—' ? section3Summary : 'Évaluation & conduite'}
+                          className={`inline-flex items-center gap-2 h-8 px-3.5 rounded-xl text-[13px] font-semibold transition-all whitespace-nowrap shadow-2xs ${
+                            activeSection === 3
+                              ? 'bg-[#1A56DB] text-white shadow-xs font-semibold'
+                              : 'bg-white text-slate-700 border border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span>3 · Évaluation & conduite</span>
+                          {s3HasContent && (
+                            <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500">
                               <Check className="h-2.5 w-2.5 text-white stroke-[3]" />
                             </span>
                           )}
                         </button>
-                      )}
+                      </div>
 
-                      {/* Pill 3: Évaluation & conduite */}
-                      <button
-                        type="button"
-                        onClick={() => handleSelectSection(3)}
-                        title={section3Summary !== '—' ? section3Summary : 'Évaluation & conduite'}
-                        className={`inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full text-sm font-semibold transition-all whitespace-nowrap shadow-2xs ${
-                          activeSection === 3
-                            ? 'bg-[#2563EB] text-white shadow-xs'
-                            : 'bg-white text-slate-700 border border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        <span>3 Évaluation & conduite</span>
-                        {s3HasContent && (
-                          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-green-500">
-                            <Check className="h-2.5 w-2.5 text-white stroke-[3]" />
-                          </span>
-                        )}
-                      </button>
+                      <div className="hidden sm:flex items-center gap-1.5 text-[11.5px] font-medium text-slate-400 shrink-0">
+                        <span>Étape {activeSection} sur {lightweight ? '2' : '3'}</span>
+                      </div>
                     </div>
                   </nav>
 
@@ -1117,7 +1174,7 @@ export default function ConsultationSheet({
                             e.target.style.height = `${Math.max(96, e.target.scrollHeight)}px`
                           }}
                           placeholder="Début, évolution, intensité, facteurs aggravants ou soulageants, traitements déjà essayés..."
-                          className="w-full resize-y min-h-[96px] max-h-[320px] rounded-xl border border-slate-200/90 bg-white p-3 text-[13.5px] text-slate-800 placeholder:text-slate-400 focus:border-[#2563EB] focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs transition-all leading-relaxed"
+                          className="w-full resize-y min-h-[96px] max-h-[320px] rounded-xl border border-slate-200/90 bg-white p-3.5 text-[13.5px] text-slate-800 placeholder:text-slate-400 focus:border-[#1A56DB] focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs transition-all leading-relaxed"
                         />
 
                         {/* DEPUIS & ÉVOLUTION chips directly under textarea (smaller 28px height, 12px labels without colon) */}
@@ -1302,7 +1359,7 @@ export default function ConsultationSheet({
                             value={note.examen || ''}
                             onChange={(e) => setField('examen')(e.target.value)}
                             placeholder="Observations et éléments pertinents de l'examen clinique..."
-                            className="w-full resize-y min-h-[96px] max-h-[220px] rounded-lg border border-[#E5E7EB] bg-white p-3 text-[13.5px] text-slate-800 placeholder:text-slate-400 focus:border-[#2563EB] focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all leading-relaxed"
+                            className="w-full resize-y min-h-[100px] max-h-[260px] rounded-xl border border-slate-200/90 bg-white p-3.5 text-[13.5px] text-slate-800 placeholder:text-slate-400 focus:border-[#1A56DB] focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs transition-all leading-relaxed"
                           />
                         </div>
                       </StageSection>
@@ -1334,57 +1391,61 @@ export default function ConsultationSheet({
                         footerClassName="xl:hidden"
                       >
                         {/* SINGLE COLUMN: Decision clinique & suivi */}
-                        <div className="space-y-4">
-                          {/* Diagnostic & Conduite à tenir Card */}
-                          <Panel>
-                            <BlockHeader
-                              icon={Stethoscope}
-                              title="Diagnostic & Conduite à tenir"
-                              count={note.diagnostics?.length || 0}
-                            />
-                            <div className="p-4 space-y-3.5">
-                              {/* Diagnostic typeahead */}
-                              <DiagnosisPicker
-                                items={note.diagnostics || []}
-                                onChange={setField('diagnostics')}
-                              />
-
-                              {/* Conduite à tenir */}
-                              <div className="pt-2 border-t border-slate-100">
-                                <div className="flex items-center justify-between mb-1.5">
-                                  <label className="text-[12.5px] font-semibold text-slate-800">
-                                    Conduite à tenir
-                                  </label>
-                                  <SuggestionsTrigger
-                                    kind="plan"
-                                    value={note.conduite}
-                                    onChange={setField('conduite')}
-                                    open={suggConduiteOpen}
-                                    onOpenChange={setSuggConduiteOpen}
-                                    group={suggConduiteGroup}
-                                    onGroupChange={setSuggConduiteGroup}
-                                  />
-                                </div>
-                                <textarea
-                                  rows={4}
-                                  value={note.conduite || ''}
-                                  onChange={(e) => setField('conduite')(e.target.value)}
-                                  placeholder="Décision clinique, recommandations, surveillance..."
-                                  className="w-full resize-none min-h-[120px] rounded-lg border border-[#E5E7EB] bg-white p-3 text-[13.5px] text-slate-800 placeholder:text-slate-400 focus:border-[#2563EB] focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all leading-relaxed"
-                                />
-                              </div>
+                        <div className="space-y-6">
+                          {/* Diagnostic picker */}
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-700">
+                                Diagnostic(s) retenu(s)
+                              </label>
+                              {note.diagnostics?.length > 0 && (
+                                <span className="inline-flex items-center rounded-full bg-blue-50 text-[#1A56DB] px-2 py-0.5 text-[10.5px] font-bold">
+                                  {note.diagnostics.length} diagnostic{note.diagnostics.length > 1 ? 's' : ''}
+                                </span>
+                              )}
                             </div>
-                          </Panel>
+                            <DiagnosisPicker
+                              items={note.diagnostics || []}
+                              onChange={setField('diagnostics')}
+                            />
+                          </div>
+
+                          {/* Conduite à tenir */}
+                          <div className="pt-2 border-t border-slate-100">
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-700">
+                                Conduite à tenir & recommandations
+                              </label>
+                              <SuggestionsTrigger
+                                kind="plan"
+                                value={note.conduite}
+                                onChange={setField('conduite')}
+                                open={suggConduiteOpen}
+                                onOpenChange={setSuggConduiteOpen}
+                                group={suggConduiteGroup}
+                                onGroupChange={setSuggConduiteGroup}
+                              />
+                            </div>
+                            <textarea
+                              rows={4}
+                              value={note.conduite || ''}
+                              onChange={(e) => setField('conduite')(e.target.value)}
+                              placeholder="Décision clinique, conduite à tenir, consignes données au patient..."
+                              className="w-full resize-y min-h-[120px] max-h-[300px] rounded-xl border border-slate-200/90 bg-white p-3.5 text-[13.5px] text-slate-800 placeholder:text-slate-400 focus:border-[#1A56DB] focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs transition-all leading-relaxed"
+                            />
+                          </div>
 
                           {/* Suivi & rendez-vous de contrôle */}
-                          <FollowUpBlock
-                            date={note.followUpDate}
-                            notes={note.followUpNotes}
-                            onDate={setField('followUpDate')}
-                            onNotes={setField('followUpNotes')}
-                            reminder={note.followUpReminder}
-                            onReminder={setField('followUpReminder')}
-                          />
+                          <div className="pt-2 border-t border-slate-100">
+                            <FollowUpBlock
+                              date={note.followUpDate}
+                              notes={note.followUpNotes}
+                              onDate={setField('followUpDate')}
+                              onNotes={setField('followUpNotes')}
+                              reminder={note.followUpReminder}
+                              onReminder={setField('followUpReminder')}
+                            />
+                          </div>
                         </div>
                       </StageSection>
                     </motion.div>
@@ -1420,6 +1481,8 @@ export default function ConsultationSheet({
                       initialOpenGroup={initialOpenGroup}
                       initialEditingIdx={initialEditingIdx}
                       initialActiveDoc={initialActiveDoc}
+                      isCollapsed={rightRailCollapsed}
+                      onToggleCollapse={() => setRightRailCollapsed(!rightRailCollapsed)}
                     />
                   </div>
                 </div>

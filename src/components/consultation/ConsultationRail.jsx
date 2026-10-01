@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
+  Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   FileText,
   FlaskConical,
@@ -259,6 +262,7 @@ function RailBody({
   prescribingGate,
   initialEditingIdx = null,
   initialActiveDoc = null,
+  onToggleCollapse,
 }) {
   const counts = {
     ordonnance: (note.traitements || []).filter((r) => r.medicament?.trim()).length,
@@ -269,8 +273,34 @@ function RailBody({
 
   const obadge = ordonnanceBadge(note.traitements, note.ordonnance, isOrdonnanceDirty)
 
+  const safeSetField = (key) => {
+    if (typeof setField === 'function') {
+      const fn = setField(key)
+      if (typeof fn === 'function') return fn
+    }
+    return () => {}
+  }
+
   return (
     <div className="flex flex-col h-full">
+      {/* Header with title + collapse button on desktop */}
+      {onToggleCollapse && (
+        <div className="hidden xl:flex items-center justify-between px-3.5 py-2.5 border-b border-gray-100 bg-slate-50/50">
+          <span className="text-[12px] font-bold uppercase tracking-wider text-slate-700">
+            Actions cliniques
+          </span>
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            title="Réduire les actions cliniques"
+            aria-label="Réduire les actions cliniques"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Accordion groups */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {/* 1. Ordonnance */}
@@ -284,10 +314,10 @@ function RailBody({
         >
           <TreatmentEditor
             rows={note.traitements}
-            onChange={setField('traitements')}
+            onChange={safeSetField('traitements')}
             allergies={patient?.allergies}
             ordonnance={note.ordonnance}
-            onOrdonnance={setField('ordonnance')}
+            onOrdonnance={safeSetField('ordonnance')}
             onGenerateOrdonnance={handleGenerateOrdonnance}
             isOrdonnanceDirty={isOrdonnanceDirty}
             hasGeneratedOrdonnance={Boolean(note.ordonnance?.generated_at)}
@@ -309,7 +339,7 @@ function RailBody({
         >
           <ExamOrders
             items={note.examens}
-            onChange={setField('examens')}
+            onChange={safeSetField('examens')}
             patient={patient}
             renseignements={[note.motif?.trim(), (note.diagnostics || []).join(', ')].filter(Boolean).join(' — ')}
           />
@@ -399,6 +429,8 @@ export default function ConsultationRail({
   initialOpenGroup = 'ordonnance',
   initialEditingIdx = null,
   initialActiveDoc = null,
+  isCollapsed = false,
+  onToggleCollapse,
   className = '',
 }) {
   const { profile } = useAppContext()
@@ -431,11 +463,18 @@ export default function ConsultationRail({
 
   const toggleGroup = (id) => setOpenGroup((prev) => (prev === id ? null : id))
 
+  const counts = {
+    ordonnance: (note.traitements || []).filter((r) => r.medicament?.trim()).length,
+    examens: (note.examens || []).length,
+    documents: (note.documents || []).length,
+    actes: effectiveActs.length,
+  }
+
   const totalCount =
-    (note.traitements || []).filter((r) => r.medicament?.trim()).length +
-    (note.examens || []).length +
-    (note.documents || []).length +
-    effectiveActs.length
+    counts.ordonnance +
+    counts.examens +
+    counts.documents +
+    counts.actes
 
   // Close drawer on Escape
   useEffect(() => {
@@ -469,17 +508,133 @@ export default function ConsultationRail({
     prescribingGate,
     initialEditingIdx,
     initialActiveDoc,
+    onToggleCollapse,
   }
 
   return (
     <>
-      {/* ── Full rail: shown on xl+ on ALL sections ── */}
-      <aside
-        className={`hidden xl:flex flex-col w-80 shrink-0 sticky top-20 max-h-[calc(100vh-6rem)] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xs ${className}`}
-        aria-label="Actions rapides"
-      >
-        <RailBody {...commonProps} onFinalize={onFinalize} />
-      </aside>
+      {/* ── Collapsed micro-rail for desktop (xl+) ── */}
+      {isCollapsed && (
+        <aside
+          className={`hidden xl:flex flex-col items-center justify-between py-3.5 bg-white border border-gray-200 rounded-2xl w-14 shrink-0 shadow-xs sticky top-20 max-h-[calc(100vh-6rem)] select-none ${className}`}
+          aria-label="Actions rapides réduites"
+        >
+          <div className="flex flex-col items-center gap-3 w-full">
+            {/* Expand toggle */}
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+              title="Agrandir les actions rapides"
+              aria-label="Agrandir les actions rapides"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+
+            <div className="w-6 border-b border-slate-100" />
+
+            {/* Ordonnance */}
+            <button
+              type="button"
+              onClick={() => {
+                setOpenGroup('ordonnance')
+                onToggleCollapse?.()
+              }}
+              className="relative flex h-9 w-9 items-center justify-center rounded-xl text-slate-600 hover:text-[#1A56DB] hover:bg-blue-50 transition-colors"
+              title={`Ordonnance (${counts.ordonnance})`}
+            >
+              <Pill className="h-4 w-4" />
+              {counts.ordonnance > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#1A56DB] text-[9px] font-bold text-white shadow-2xs">
+                  {counts.ordonnance}
+                </span>
+              )}
+            </button>
+
+            {/* Examens */}
+            <button
+              type="button"
+              onClick={() => {
+                setOpenGroup('examens')
+                onToggleCollapse?.()
+              }}
+              className="relative flex h-9 w-9 items-center justify-center rounded-xl text-slate-600 hover:text-[#1A56DB] hover:bg-blue-50 transition-colors"
+              title={`Examens complémentaires (${counts.examens})`}
+            >
+              <FlaskConical className="h-4 w-4" />
+              {counts.examens > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#1A56DB] text-[9px] font-bold text-white shadow-2xs">
+                  {counts.examens}
+                </span>
+              )}
+            </button>
+
+            {/* Documents */}
+            <button
+              type="button"
+              onClick={() => {
+                setOpenGroup('documents')
+                onToggleCollapse?.()
+              }}
+              className="relative flex h-9 w-9 items-center justify-center rounded-xl text-slate-600 hover:text-[#1A56DB] hover:bg-blue-50 transition-colors"
+              title={`Documents médicaux (${counts.documents})`}
+            >
+              <FileText className="h-4 w-4" />
+              {counts.documents > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#1A56DB] text-[9px] font-bold text-white shadow-2xs">
+                  {counts.documents}
+                </span>
+              )}
+            </button>
+
+            {/* Actes & Caisse */}
+            <button
+              type="button"
+              onClick={() => {
+                setOpenGroup('actes')
+                onToggleCollapse?.()
+              }}
+              className="relative flex h-9 w-9 items-center justify-center rounded-xl text-slate-600 hover:text-[#1A56DB] hover:bg-blue-50 transition-colors"
+              title={`Actes & Caisse (${counts.actes} · ${totalActes} ${currency})`}
+            >
+              <Receipt className="h-4 w-4" />
+              {counts.actes > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#1A56DB] text-[9px] font-bold text-white shadow-2xs">
+                  {counts.actes}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Bottom quick CTA */}
+          <div className="flex flex-col items-center">
+            {totalActes > 0 ? (
+              <span className="text-[10px] font-bold text-slate-700 font-mono tracking-tight text-center px-1">
+                {Math.round(totalActes)}{currency}
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={onFinalize}
+                className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-[#1A56DB] hover:bg-blue-100 transition-colors"
+                title="Finaliser la visite"
+              >
+                <Check className="h-4 w-4 stroke-[2.5]" />
+              </button>
+            )}
+          </div>
+        </aside>
+      )}
+
+      {/* ── Full rail: shown on xl+ when not collapsed ── */}
+      {!isCollapsed && (
+        <aside
+          className={`hidden xl:flex flex-col w-80 shrink-0 sticky top-20 max-h-[calc(100vh-6rem)] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xs ${className}`}
+          aria-label="Actions rapides"
+        >
+          <RailBody {...commonProps} onFinalize={onFinalize} />
+        </aside>
+      )}
 
       {/* ── Floating Action Button for < xl screens (same position, all sections) ── */}
       <div className="fixed bottom-6 right-6 z-40 xl:hidden">

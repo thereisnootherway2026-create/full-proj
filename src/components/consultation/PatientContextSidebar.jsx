@@ -1,5 +1,16 @@
 import { memo, useState, useEffect } from 'react'
-import { AlertTriangle, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
+import {
+  Activity,
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  History,
+  Stethoscope,
+  X,
+} from 'lucide-react'
 import { normalizeNote } from '../../lib/encounterService'
 import { resolveClinicalStatus, splitClinicalList } from '../../lib/clinical/clinicalStatus'
 import { computeIMC } from '../../lib/vitals/validateVital'
@@ -228,6 +239,8 @@ export default memo(function PatientContextSidebar({
   vitalsState,
   encounters = [],
   encountersState,
+  isCollapsed = false,
+  onToggleCollapse,
   className = '',
 }) {
   const { canonicalRole } = useAppContext()
@@ -304,27 +317,133 @@ export default memo(function PatientContextSidebar({
     setEditingSection((prev) => (prev === kind ? null : kind))
   }
 
+  // ── COLLAPSED MICRO-RAIL (w-14) ──
+  if (isCollapsed) {
+    return (
+      <aside
+        aria-label="Contexte patient réduit"
+        className={`hidden lg:flex flex-col items-center justify-between py-3.5 bg-white border-r border-slate-200/90 w-14 shrink-0 select-none ${className}`}
+      >
+        <div className="flex flex-col items-center gap-3 w-full">
+          {/* Expand toggle */}
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+            title="Agrandir le contexte patient"
+            aria-label="Agrandir le contexte patient"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+
+          <div className="w-6 border-b border-slate-100" />
+
+          {/* Patient avatar */}
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-[#EDE9FE] text-[#7C3AED] font-bold text-[13px] shadow-2xs hover:ring-2 hover:ring-purple-300 transition-all"
+            title={`${name} · ${identityLine || 'Patient'}`}
+          >
+            {initials}
+            <span className="sr-only">{name}</span>
+          </button>
+
+          {/* Safety alert */}
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className={`flex h-9 w-9 items-center justify-center rounded-xl transition-colors ${
+              isProfileVerified
+                ? 'text-emerald-600 hover:bg-emerald-50'
+                : 'text-amber-600 bg-amber-50 hover:bg-amber-100'
+            }`}
+            title={isProfileVerified ? 'Profil vérifié ✓' : `À vérifier (${unconfirmedCount})`}
+          >
+            {isProfileVerified ? (
+              <Check className="h-4 w-4 stroke-[2.5]" />
+            ) : (
+              <AlertTriangle className="h-4 w-4" />
+            )}
+          </button>
+
+          {/* Previous visits */}
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="relative flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+            title={`${encounters.length} consultation(s) antérieure(s)`}
+          >
+            <History className="h-4 w-4" />
+            {encounters.length > 0 && (
+              <span className="absolute top-1 right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-200 text-[9px] font-bold text-slate-700">
+                {encounters.length > 9 ? '9+' : encounters.length}
+              </span>
+            )}
+          </button>
+
+          {/* Vitals */}
+          {lastVitals && (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+              title={`Dernières constantes (${fmtDate(lastVitals.date_mesure)})`}
+            >
+              <Activity className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Bottom icon */}
+        <div className="flex flex-col items-center">
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 hover:text-[#1A56DB] hover:bg-blue-50 transition-colors"
+            title="Agrandir le volet patient"
+          >
+            <Stethoscope className="h-4 w-4" />
+          </button>
+        </div>
+      </aside>
+    )
+  }
+
   return (
     <aside aria-label="Contexte patient" className={`flex flex-col bg-white border-r border-slate-200/90 ${className}`}>
       <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
         {/* 1. PATIENT CARD */}
         <div>
           <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs">
-            <div className="flex items-center gap-3.5">
-              {/* Circular initials avatar (lavender) */}
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#EDE9FE] text-[#7C3AED] font-bold text-[16px] shadow-2xs">
-                {initials}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-3.5 min-w-0">
+                {/* Circular initials avatar (lavender) */}
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#EDE9FE] text-[#7C3AED] font-bold text-[16px] shadow-2xs">
+                  {initials}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="truncate text-[15px] font-bold text-slate-900 tracking-tight leading-snug capitalize">
+                    {name}
+                  </h3>
+                  {identityLine && (
+                    <p className="text-[12px] font-medium text-slate-500 mt-0.5">
+                      {identityLine}
+                    </p>
+                  )}
+                </div>
               </div>
-              <div className="min-w-0 flex-1">
-                <h3 className="truncate text-[16px] font-bold text-slate-900 tracking-tight leading-snug capitalize">
-                  {name}
-                </h3>
-                {identityLine && (
-                  <p className="text-[12.5px] font-medium text-slate-500 mt-0.5">
-                    {identityLine}
-                  </p>
-                )}
-              </div>
+              {onToggleCollapse && (
+                <button
+                  type="button"
+                  onClick={onToggleCollapse}
+                  className="hidden lg:flex p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors shrink-0"
+                  title="Réduire le volet patient"
+                  aria-label="Réduire le volet patient"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+              )}
             </div>
           </div>
           {/* Tiny gray caption under the card */}
